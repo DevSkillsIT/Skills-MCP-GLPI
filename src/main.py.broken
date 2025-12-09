@@ -1,0 +1,199 @@
+"""
+MCP GLPI - Servidor FastAPI principal.
+"""
+
+from fastapi import FastAPI, HTTPException, Request
+from contextlib import asynccontextmanager
+from datetime import datetime
+import uvicorn
+
+from src.config import settings
+from src.logger import logger
+from src.tools import get_all_tools
+from src.handlers import mcp_handler as tool_handler
+from src.http_client import http_client
+from src.models import GLPIError
+from src.auth.session_manager import session_manager
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Context manager para gerenciar ciclo de vida da aplicação."""
+    # Startup
+    logger.info("MCP GLPI starting...")
+    try:
+        await http_client.connect()
+        logger.info("Connected to GLPI successfully")
+    except Exception as e:
+        logger.error(f"Failed to connect to GLPI: {e}")
+        # Continuar mesmo sem conexão - pode ser apenas de testes
+
+    yield
+
+    # Shutdown
+    logger.info("MCP GLPI shutting down...")
+    await http_client.disconnect()
+
+
+# Criar aplicação FastAPI
+app = FastAPI(
+    title="MCP GLPI",
+    description="Model Context Protocol server for GLPI ITSM integration",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+
+@app.get("/health", tags=["Health"])
+async def health_check():
+    """Health check endpoint para monitoramento."""
+    logger.debug("Health check requested")
+    return {
+        "status": "healthy",
+        "service": "mcp-glpi",
+        "version": "1.0.0",
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@app.post("/mcp", tags=["MCP"])
+async def mcp_handler_http(request: Request) -> dict:
+    """
+    Handler JSON-RPC do protocolo MCP.
+    Recebe requisições e roteia para handlers apropriados.
+    """
+    # Extrair IP do cliente
+    client_ip = request.scope.get("client")[0] if request.scope.get("client") else "0.0.0.0"
+    
+    # Compor chave composta para rate limit
+    user_key = session_manager._compose_user_key(dict(request.headers), client_ip)
+    
+    # Verificar rate limit com chave composta
+    session_manager._check_rate_limit(user_key)
+    
+    # Parse request body
+    body = await request.json()
+    logger.info(f"MCP request: method={body.get('method')}")
+
+    try:
+        # Lista de tools disponíveis
+        if body.get("method") == "tools/list":
+            tools = get_all_tools()
+            result = {
+                "tools": [
+                    {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "inputSchema": tool.inputSchema
+                    }
+                    for tool in tools
+                ]
+            }
+            return {
+                jsonrpc="2.0",
+                result=result,
+                id=body.get("id")
+            )
+
+        # Executar tool específica
+        elif body.get("method") == "tools/call":
+            params = body.get("params") or {}
+            tool_name = params.get("name")
+            tool_arguments = params.get("arguments", {})
+
+            if not tool_name:
+                raise GLPIError(400, "Tool name is required")
+
+            logger.info(f"Calling tool: {tool_name}")
+            result = await tool_handler.handle_tool(tool_name, tool_arguments)
+
+            return {
+                jsonrpc="2.0",
+                result=result,
+                id=body.get("id")
+            )
+
+        else:
+            raise GLPIError(400, f"Unknown method: {body.get('method')}")
+
+    except GLPIError as e:
+        logger.error(f"GLPI error: {e.message}")
+        return {
+            jsonrpc="2.0",
+            error={
+                "code": e.code,
+                "message": e.message,
+                "data": e.details
+            },
+            id=request.id
+        )
+
+    except Exception as e:
+        logger.error(f"Unexpected error: {str(e)}", exc_info=True)
+        return {
+            jsonrpc="2.0",
+            error={
+                "code": 500,
+                "message": "Internal server error",
+                "data": {"error": str(e)}
+            },
+            id=request.id
+        )
+
+
+@app.post("/glpi-mcp", tags=["MCP"])
+async def glpi_mcp_handler(request: MCPRequest) -> MCPResponse:
+    """Alias para /mcp endpoint."""
+    return await mcp_handler(request)
+
+
+@app.get("/", tags=["Info"])
+async def root():
+    """Informações sobre o serviço."""
+    return {
+        "name": "MCP GLPI",
+        "version": "1.0.0",
+        "description": "Model Context Protocol server for GLPI ITSM",
+        "endpoints": {
+            "health": "/health",
+            "mcp": "/mcp",
+            "docs": "/docs",
+            "openapi": "/openapi.json"
+        },
+        "glpi_url": settings.glpi_base_url
+    }
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """Handler para HTTPException."""
+    logger.error(f"HTTP error: {exc.status_code} - {exc.detail}")
+    return {
+        "error": {
+            "code": exc.status_code,
+            "message": exc.detail
+        }
+    }
+
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    """Handler para exceções gerais."""
+    logger.error(f"Unhandled exception: {str(exc)}", exc_info=True)
+    return {
+        "error": {
+            "code": 500,
+            "message": "Internal server error"
+        }
+    }
+
+
+if __name__ == "__main__":
+    logger.info(f"Starting MCP GLPI server on {settings.mcp_host}:{settings.mcp_port}")
+    uvicorn.run(
+        "src.main:app",
+        host=settings.mcp_host,
+        port=settings.mcp_port,
+        reload=False,
+        log_level="info"
+    )

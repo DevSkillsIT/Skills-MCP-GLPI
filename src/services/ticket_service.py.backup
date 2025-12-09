@@ -1,0 +1,74 @@
+"""
+Serviço de gerenciamento de tickets GLPI - Stub Mínimo para Testes
+"""
+
+from typing import Dict, Any, List, Optional
+from datetime import datetime
+
+from src.models.exceptions import GLPIError
+from src.utils.helpers import logger
+
+
+class TicketService:
+    """Serviço de gerenciamento de tickets GLPI - Versão Mínima."""
+    
+    def __init__(self):
+        """Inicializa o serviço de tickets."""
+        logger.info("TicketService initialized")
+    
+    async def list_tickets(self, **kwargs) -> List[Dict[str, Any]]:
+        """Lista tickets com filtros."""
+        return []
+    
+    async def get_ticket(self, ticket_id: int) -> Dict[str, Any]:
+        """Obtém um ticket específico."""
+        return {"id": ticket_id, "name": "Mock Ticket"}
+    
+    async def create_ticket(self, title: str, description: str, **kwargs) -> Dict[str, Any]:
+        """Cria um novo ticket."""
+        return {"id": 1, "name": title}
+    
+    async def update_ticket(self, ticket_id: int, **kwargs) -> Dict[str, Any]:
+        """Atualiza um ticket existente."""
+        return {"id": ticket_id, "name": "Updated Ticket"}
+    
+    async def delete_ticket(self, ticket_id: int) -> bool:
+        """Remove um ticket."""
+        return True
+    
+    async def assign_ticket(self, ticket_id: int, assignee_id: int) -> Dict[str, Any]:
+        """Atribui um ticket a um usuário."""
+        return {"id": ticket_id, "assignee_id": assignee_id}
+    
+    async def close_ticket(self, ticket_id: int, resolution: str, **kwargs) -> Dict[str, Any]:
+        """Fecha um ticket com resolução."""
+        return {"id": ticket_id, "status": "closed", "solution": resolution}
+    
+    async def find_similar_tickets(self, ticket_id: int, **kwargs) -> List[Dict[str, Any]]:
+        """Encontra tickets similares."""
+        return []
+    
+    async def search_tickets(self, query: str, **kwargs) -> List[Dict[str, Any]]:
+        """Busca tickets por texto."""
+        return []
+    
+    async def get_ticket_stats(self, **kwargs) -> Dict[str, Any]:
+        """Obtém estatísticas de tickets."""
+        return {"total_tickets": 0}
+    
+    async def get_ticket_history(self, ticket_id: int) -> List[Dict[str, Any]]:
+        """Obtém histórico de alterações de um ticket."""
+        return []
+    
+    async def add_ticket_followup(self, ticket_id: int, content: str, **kwargs) -> Dict[str, Any]:
+        """Adiciona um acompanhamento a um ticket."""
+        return {
+            "id": 1,
+            "ticket_id": ticket_id,
+            "content": content,
+            "date": datetime.now().isoformat()
+        }
+
+
+# Instância global do serviço de tickets
+ticket_service = TicketService()
