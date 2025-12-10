@@ -83,6 +83,24 @@ The `list_computers` tool returns complete data without additional calls:
 
 ---
 
+> 💼 **Need Help with GLPI or AI?**
+>
+> **Skills IT - Technology Solutions** specializes in IT infrastructure and has deep expertise in **GLPI IT Service Management**. Our team has expertise in **Artificial Intelligence** and **Model Context Protocol (MCP)**, offering complete solutions for automation and system integration.
+>
+> **Our Services:**
+> - ✅ GLPI consulting and implementation
+> - ✅ Custom MCP development for your infrastructure
+> - ✅ AI integration with corporate systems
+> - ✅ Ticket and asset management automation
+> - ✅ Specialized training and support
+>
+> 📞 **WhatsApp/Phone:** +55 63 3224-4925 - Brazil
+> 🌐 **Website:** skillsit.com.br 📧 **Email:** contato@skillsit.com.br
+>
+> *"Transforming infrastructure into intelligence"*
+
+---
+
 ## 🏗️ Architecture
 
 ```
