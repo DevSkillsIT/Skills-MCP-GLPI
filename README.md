@@ -94,8 +94,9 @@ The `list_computers` tool returns complete data without additional calls:
 > - ✅ Ticket and asset management automation
 > - ✅ Specialized training and support
 >
-> 📞 **WhatsApp/Phone:** +55 63 3224-4925 - Brazil
-> 🌐 **Website:** skillsit.com.br 📧 **Email:** contato@skillsit.com.br
+> 📞 **WhatsApp/Phone:** +55 63 3224-4925 - Brazil 🇧🇷
+> 🌐 **Website:** [skillsit.com.br](https://skillsit.com.br)
+> 📧 **Email:** contato@skillsit.com.br
 >
 > *"Transforming infrastructure into intelligence"*
 
