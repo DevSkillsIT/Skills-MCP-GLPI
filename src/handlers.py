@@ -13,6 +13,7 @@ from src.tools.assets import asset_tools
 from src.tools.admin import admin_tools
 from src.tools.webhooks import webhook_tools
 from src.tools.ai_tools import ai_tools
+from src.prompts_handlers.prompts import prompt_handler
 from src.models.exceptions import (
     GLPIError,
     NotFoundError,
@@ -176,8 +177,44 @@ class MCPHandler:
                 "handler": method,
                 "category": "ai"
             }
-        
-        logger.info(f"Registered {len(tools)} MCP tools across 4 categories")
+
+        # ============= PROMPTS (2 tools - sistema de prompts profissionais) =============
+        # Importar catálogo de prompts
+        from src.prompts_handlers.prompts import PROMPTS_CATALOG, handle_list_prompts, handle_get_prompt
+
+        # Tool 1: prompts/list
+        tools["prompts_list"] = {
+            "name": "prompts_list",
+            "description": "Lista todos os 15 prompts profissionais disponíveis para gestores e analistas. Retorna nome, descrição, categoria (gestao/suporte), audience (público-alvo) e argumentos de cada prompt. USE para descobrir quais prompts existem antes de executar",
+            "input_schema": {"type": "object"},
+            "handler": handle_list_prompts,
+            "category": "prompts"
+        }
+
+        # Tool 2: prompts/get (executa prompt específico)
+        tools["prompts_get"] = {
+            "name": "prompts_get",
+            "description": "Executa um prompt específico com argumentos. Retorna resultado em 2 formatos: 'compact' (10 linhas, ideal para WhatsApp/Teams) e 'detailed' (Markdown completo). Prompts disponíveis: glpi_sla_performance, glpi_ticket_trends, glpi_asset_roi, glpi_technician_productivity, glpi_cost_per_ticket, glpi_recurring_problems, glpi_client_satisfaction (gestão) | glpi_ticket_summary, glpi_user_ticket_history, glpi_asset_lookup, glpi_onboarding_checklist, glpi_incident_investigation, glpi_change_management, glpi_hardware_request, glpi_knowledge_base_search (suporte)",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Nome do prompt (ex: glpi_sla_performance)",
+                        "enum": [p["name"] for p in PROMPTS_CATALOG]
+                    },
+                    "arguments": {
+                        "type": "object",
+                        "description": "Argumentos do prompt (varia por prompt - veja prompts_list para detalhes)"
+                    }
+                },
+                "required": ["name", "arguments"]
+            },
+            "handler": handle_get_prompt,
+            "category": "prompts"
+        }
+
+        logger.info(f"Registered {len(tools)} MCP tools across 6 categories (tickets, assets, admin, webhooks, ai, prompts)")
         return tools
     
     def _get_tool_description(self, tool_name: str) -> str:
@@ -265,7 +302,11 @@ class MCPHandler:
             # ============= AI TOOLS (3 tools) =============
             "trigger_ai_analysis": "Dispara análise de IA nos tickets pendentes. Analisa conteúdo, sugere categorização, prioridade e possíveis soluções baseado em histórico",
             "get_ai_analysis_result": "Obtém resultado da última análise de IA. Retorna: tickets analisados, sugestões de categorização, priorização, soluções similares",
-            "publish_ai_response": "Publica resposta gerada por IA em um ticket. Adiciona como followup com marcação de origem IA"
+            "publish_ai_response": "Publica resposta gerada por IA em um ticket. Adiciona como followup com marcação de origem IA",
+
+            # ============= PROMPTS (2 tools - sistema de prompts profissionais) =============
+            "prompts_list": "Lista todos os 15 prompts profissionais disponíveis para gestores e analistas. Retorna nome, descrição, categoria (gestao/suporte), audience (público-alvo) e argumentos de cada prompt. USE para descobrir quais prompts existem antes de executar",
+            "prompts_get": "Executa um prompt específico com argumentos. Retorna resultado em 2 formatos: 'compact' (10 linhas, ideal para WhatsApp/Teams) e 'detailed' (Markdown completo). Prompts disponíveis: glpi_sla_performance, glpi_ticket_trends, glpi_asset_roi, glpi_technician_productivity, glpi_cost_per_ticket, glpi_recurring_problems, glpi_client_satisfaction (gestão) | glpi_ticket_summary, glpi_user_ticket_history, glpi_asset_lookup, glpi_onboarding_checklist, glpi_incident_investigation, glpi_change_management, glpi_hardware_request, glpi_knowledge_base_search (suporte)"
         }
 
         return descriptions.get(tool_name, f"Tool MCP: {tool_name}")
@@ -1014,7 +1055,8 @@ class MCPHandler:
                         "version": "1.0.0"
                     },
                     "capabilities": {
-                        "tools": {}
+                        "tools": {},
+                        "prompts": {}
                     }
                 }
             elif method == "tools/list":
@@ -1027,6 +1069,22 @@ class MCPHandler:
                     raise ValidationError("Tool name is required", "name")
 
                 result = await self.handle_call_tool(tool_name, arguments)
+            elif method == "prompts/list":
+                # Redirecionar para o tool prompts_list e parsear resultado
+                import json
+                tool_result = await self.handle_call_tool("prompts_list", {})
+                # tool_result é uma lista [{"type": "text", "text": "..."}]
+                text_content = tool_result["content"][0]["text"]
+                prompts_data = json.loads(text_content)
+                result = {"prompts": prompts_data["prompts"]}
+            elif method == "prompts/get":
+                # Redirecionar para o tool prompts_get
+                prompt_name = params.get("name")
+                prompt_args = params.get("arguments", {})
+                result = await self.handle_call_tool("prompts_get", {
+                    "name": prompt_name,
+                    "arguments": prompt_args
+                })
             elif method == "notifications/initialized" or method == "initialized":
                 # MCP Protocol: confirmação de inicialização (notificação, retorna vazio)
                 result = {}
