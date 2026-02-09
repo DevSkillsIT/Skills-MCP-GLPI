@@ -632,11 +632,12 @@ pytest tests/test_handlers.py -v
 - [ ] `/mcp` com `tools/list` retorna 68 ferramentas (todas com prefixo glpi_)
 - [ ] Requisição sem User Token retorna erro claro de autenticação
 - [ ] Requisição com User Token válido funciona corretamente
-- [ ] Todas as 12 ticket tools funcionam
-- [ ] Todas as 12 asset tools funcionam
-- [ ] Todas as 13 user/group tools funcionam
-- [ ] Todas as 5 entity tools funcionam
-- [ ] Todas as 6 location tools funcionam
+- [ ] Todas as 18 ticket tools funcionam
+- [ ] Todas as 20 asset tools funcionam
+- [ ] Todas as 13 admin tools funcionam (users, groups, entities, locations)
+- [ ] Todas as 12 webhook tools funcionam
+- [ ] Todas as 3 AI tools funcionam
+- [ ] Todas as 2 prompt tools funcionam
 - [ ] Mensagens de erro seguem JSON-RPC
 - [ ] Logs são gerados corretamente
 - [ ] PM2 consegue gerenciar o serviço
@@ -655,5 +656,5 @@ ab -n 100 -c 10 -p data.json -T application/json http://localhost:8824/mcp
 
 ---
 
-**Última atualização**: Dezembro 2025
-**Versão**: 1.0.0
+**Ultima atualizacao**: Fevereiro 2026
+**Versao**: 1.1.1

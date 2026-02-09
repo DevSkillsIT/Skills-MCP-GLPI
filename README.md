@@ -277,6 +277,7 @@ curl -X POST http://localhost:8824/mcp \
 |------|-------------|
 | `glpi_list_tickets` | List tickets with advanced filters (status, entity_id, entity_name) |
 | `glpi_get_ticket` | Complete ticket details by ID |
+| `glpi_get_ticket_by_id` | Get ticket by internal ID (alternative lookup) |
 | `glpi_get_ticket_by_number` | Find ticket by number (not ID) |
 | `glpi_create_ticket` | Create new ticket with validation |
 | `glpi_update_ticket` | Update ticket fields |
@@ -1377,7 +1378,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 *We are an MSP empowering other MSPs with intelligent automation.*
 
-**Version:** 1.1.0 | **Last Updated:** December 2025
+**Version:** 1.1.1 | **Last Updated:** February 2026
 
 🇧🇷 **Proudly Made in Brazil**
 
