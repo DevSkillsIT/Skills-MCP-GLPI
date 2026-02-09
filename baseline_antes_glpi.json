@@ -1,0 +1,1678 @@
+{
+  "timestamp": "2026-02-09T16:48:17.857945",
+  "phase": "ANTES",
+  "total_tools": 68,
+  "tool_names": [
+    "list_tickets",
+    "get_ticket",
+    "get_ticket_by_id",
+    "get_ticket_by_number",
+    "create_ticket",
+    "update_ticket",
+    "delete_ticket",
+    "assign_ticket",
+    "close_ticket",
+    "find_similar_tickets",
+    "search_similar_tickets",
+    "search_tickets",
+    "get_ticket_stats",
+    "get_ticket_history",
+    "add_ticket_followup",
+    "post_private_note",
+    "get_ticket_followups",
+    "resolve_ticket",
+    "list_assets",
+    "get_asset",
+    "create_asset",
+    "update_asset",
+    "delete_asset",
+    "search_assets",
+    "get_asset_reservations",
+    "create_reservation",
+    "list_reservations",
+    "list_reservable_items",
+    "update_reservation",
+    "get_asset_stats",
+    "list_computers",
+    "get_computer_details",
+    "list_monitors",
+    "get_monitor",
+    "list_software",
+    "get_software",
+    "list_devices",
+    "get_device",
+    "list_users",
+    "search_users",
+    "get_user",
+    "create_user",
+    "update_user",
+    "delete_user",
+    "list_groups",
+    "get_group",
+    "create_group",
+    "list_entities",
+    "get_entity",
+    "list_locations",
+    "get_location",
+    "list_webhooks",
+    "get_webhook",
+    "create_webhook",
+    "update_webhook",
+    "delete_webhook",
+    "test_webhook",
+    "get_webhook_deliveries",
+    "trigger_webhook",
+    "get_webhook_stats",
+    "enable_webhook",
+    "disable_webhook",
+    "retry_failed_deliveries",
+    "trigger_ai_analysis",
+    "get_ai_analysis_result",
+    "publish_ai_response",
+    "prompts_list",
+    "prompts_get"
+  ],
+  "tools_detail": [
+    {
+      "name": "list_tickets",
+      "description": "Lista todos os tickets com filtros opcionais. Suporta entity_name para filtrar por cliente (ex: entity_name='GSM')",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "Filtrar por status (new, processing, pending, solved, closed)"
+          },
+          "entity_id": {
+            "type": "integer",
+            "description": "ID da entidade/cliente"
+          },
+          "entity_name": {
+            "type": "string",
+            "description": "Nome da entidade/cliente (ex: 'GSM', 'Skills IT')"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000,
+            "default": 50
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "get_ticket",
+      "description": "Obtém detalhes completos de um ticket específico por ID. Retorna: id, name (título), content (descrição), status (1=Novo, 2=Em Atendimento, 3=Pendente, 4=Solucionado, 5=Fechado), priority (1-5), urgency (1-5), date (abertura), solvedate, closedate, users_id_recipient (solicitante), entities_id, itilcategories_id, slas_id_ttr, time_to_resolve",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "ticket_id": {
+            "type": "integer",
+            "description": "ID do ticket"
+          }
+        },
+        "required": [
+          "ticket_id"
+        ]
+      }
+    },
+    {
+      "name": "get_ticket_by_id",
+      "description": "Obtém detalhes completos de um ticket pelo ID numérico. Retorna os mesmos campos de get_ticket. USE quando tiver o ID do ticket (ex: 'detalhes do ticket 42')",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "ticket_id": {
+            "type": "integer",
+            "description": "ID do ticket"
+          }
+        },
+        "required": [
+          "ticket_id"
+        ]
+      }
+    },
+    {
+      "name": "get_ticket_by_number",
+      "description": "Obtém detalhes de um ticket pelo NÚMERO (string). ATENÇÃO: Em alguns sistemas GLPI o número pode ser diferente do ID. USE quando o usuário mencionar 'ticket número X' ou 'chamado #X'",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "ticket_number": {
+            "type": "string",
+            "description": "Número do ticket"
+          }
+        },
+        "required": [
+          "ticket_number"
+        ]
+      }
+    },
+    {
+      "name": "create_ticket",
+      "description": "Cria um novo ticket. Parâmetros: title (obrigatório), description (obrigatório), priority (1-5, default 3), entity_id ou entity_name (cliente), category_id, requester_id. Retorna: id do ticket criado",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Título do ticket"
+          },
+          "description": {
+            "type": "string",
+            "description": "Descrição detalhada do problema"
+          },
+          "priority": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5,
+            "default": 3
+          },
+          "entity_id": {
+            "type": "integer",
+            "description": "ID da entidade/cliente"
+          },
+          "entity_name": {
+            "type": "string",
+            "description": "Nome da entidade/cliente"
+          },
+          "category_id": {
+            "type": "integer",
+            "description": "ID da categoria"
+          },
+          "requester_id": {
+            "type": "integer",
+            "description": "ID do solicitante"
+          }
+        },
+        "required": [
+          "title",
+          "description"
+        ]
+      }
+    },
+    {
+      "name": "update_ticket",
+      "description": "Atualiza um ticket existente. Pode alterar: status, priority, assignee_id (técnico atribuído). Retorna ticket atualizado",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "ticket_id": {
+            "type": "integer",
+            "description": "ID do ticket"
+          },
+          "status": {
+            "type": "string",
+            "description": "Novo status"
+          },
+          "priority": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5
+          },
+          "assignee_id": {
+            "type": "integer",
+            "description": "ID do técnico atribuído"
+          }
+        },
+        "required": [
+          "ticket_id"
+        ]
+      }
+    },
+    {
+      "name": "delete_ticket",
+      "description": "Deleta um ticket PERMANENTEMENTE. OPERAÇÃO DESTRUTIVA - use com cuidado. Requer ticket_id",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "ticket_id": {
+            "type": "integer",
+            "description": "ID do ticket"
+          }
+        },
+        "required": [
+          "ticket_id"
+        ]
+      }
+    },
+    {
+      "name": "assign_ticket",
+      "description": "Atribui um ticket a um técnico específico. Parâmetros: ticket_id, user_id (ID do técnico). USE para distribuir tickets ou reatribuir",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "ticket_id": {
+            "type": "integer",
+            "description": "ID do ticket"
+          },
+          "user_id": {
+            "type": "integer",
+            "description": "ID do usuário/técnico para atribuir"
+          }
+        },
+        "required": [
+          "ticket_id",
+          "user_id"
+        ]
+      }
+    },
+    {
+      "name": "close_ticket",
+      "description": "Fecha um ticket COM RESOLUÇÃO. Parâmetros: ticket_id, resolution (texto da solução). O ticket será marcado como fechado e a resolução ficará registrada",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "ticket_id": {
+            "type": "integer",
+            "description": "ID do ticket"
+          },
+          "resolution": {
+            "type": "string",
+            "description": "Texto da solução/resolução"
+          }
+        },
+        "required": [
+          "ticket_id",
+          "resolution"
+        ]
+      }
+    },
+    {
+      "name": "find_similar_tickets",
+      "description": "Encontra tickets similares usando algoritmos de similaridade textual. Parâmetros: title (obrigatório), description (opcional), threshold (0-1, default 0.6). USE para encontrar tickets com problemas parecidos e reutilizar soluções",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Título para buscar similares"
+          },
+          "description": {
+            "type": "string",
+            "description": "Descrição para buscar similares"
+          },
+          "threshold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0.6
+          }
+        },
+        "required": [
+          "title"
+        ]
+      }
+    },
+    {
+      "name": "search_similar_tickets",
+      "description": "Busca tickets similares por título e descrição. Versão simplificada de find_similar_tickets. Parâmetros: title (obrigatório), description (opcional)",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Título para buscar similares"
+          },
+          "description": {
+            "type": "string",
+            "description": "Descrição para buscar similares"
+          }
+        },
+        "required": [
+          "title"
+        ]
+      }
+    },
+    {
+      "name": "search_tickets",
+      "description": "Busca tickets por texto livre (busca no título e conteúdo). Parâmetros: query (mín 2 chars), entity_name (filtro cliente), limit, offset. USE para encontrar tickets por palavras-chave",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Texto para buscar nos tickets (mínimo 2 caracteres)"
+          },
+          "entity_id": {
+            "type": "integer",
+            "description": "ID da entidade/cliente"
+          },
+          "entity_name": {
+            "type": "string",
+            "description": "Nome da entidade/cliente"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000,
+            "default": 50
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    },
+    {
+      "name": "get_ticket_stats",
+      "description": "Obtém estatísticas agregadas de tickets: total, por status (abertos, pendentes, resolvidos, fechados), por prioridade, por entidade. Filtro opcional: entity_name. USE para relatórios e dashboards",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "entity_id": {
+            "type": "integer",
+            "description": "ID da entidade/cliente"
+          },
+          "entity_name": {
+            "type": "string",
+            "description": "Nome da entidade/cliente"
+          }
+        }
+      }
+    },
+    {
+      "name": "get_ticket_history",
+      "description": "Obtém histórico COMPLETO de alterações de um ticket: mudanças de status, atribuições, atualizações de campos, quem fez e quando. Parâmetro: ticket_id",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "ticket_id": {
+            "type": "integer",
+            "description": "ID do ticket"
+          }
+        },
+        "required": [
+          "ticket_id"
+        ]
+      }
+    },
+    {
+      "name": "add_ticket_followup",
+      "description": "Adiciona acompanhamento/comentário a um ticket. Parâmetros: ticket_id, content (texto), is_private (true/false). USE para registrar interações, atualizações e comunicação",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "ticket_id": {
+            "type": "integer",
+            "description": "ID do ticket"
+          },
+          "content": {
+            "type": "string",
+            "description": "Conteúdo do acompanhamento"
+          },
+          "is_private": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": [
+          "ticket_id",
+          "content"
+        ]
+      }
+    },
+    {
+      "name": "post_private_note",
+      "description": "Adiciona nota PRIVADA a um ticket (visível apenas para técnicos). Parâmetros: ticket_id, content. USE para anotações internas que o solicitante não deve ver",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "ticket_id": {
+            "type": "integer",
+            "description": "ID do ticket"
+          },
+          "content": {
+            "type": "string",
+            "description": "Conteúdo da nota privada"
+          }
+        },
+        "required": [
+          "ticket_id",
+          "content"
+        ]
+      }
+    },
+    {
+      "name": "get_ticket_followups",
+      "description": "Obtém todos os acompanhamentos/comentários de um ticket. Parâmetro: ticket_id. Retorna lista com: id, content, date, users_id, is_private",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "ticket_id": {
+            "type": "integer",
+            "description": "ID do ticket"
+          }
+        },
+        "required": [
+          "ticket_id"
+        ]
+      }
+    },
+    {
+      "name": "resolve_ticket",
+      "description": "Resolve um ticket adicionando uma SOLUÇÃO. Parâmetros: ticket_id, solution (texto da solução). O ticket será marcado como solucionado (status 4). Diferente de close_ticket que fecha (status 5)",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "ticket_id": {
+            "type": "integer",
+            "description": "ID do ticket"
+          },
+          "solution": {
+            "type": "string",
+            "description": "Texto da solução"
+          }
+        },
+        "required": [
+          "ticket_id",
+          "solution"
+        ]
+      }
+    },
+    {
+      "name": "list_assets",
+      "description": "Lista todos os assets (ativos de TI) com filtros. Parâmetros: asset_type (Computer, Monitor, Printer, NetworkEquipment, Phone, Peripheral), entity_name (cliente), limit, offset. Retorna lista básica de assets",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "asset_type": {
+            "type": "string",
+            "description": "Tipo: Computer, Monitor, Printer, NetworkEquipment, Phone, Peripheral"
+          },
+          "entity_id": {
+            "type": "integer",
+            "description": "ID da entidade/cliente"
+          },
+          "entity_name": {
+            "type": "string",
+            "description": "Nome da entidade/cliente"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000,
+            "default": 50
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "get_asset",
+      "description": "Obtém detalhes completos de um asset específico. Parâmetros: asset_type, asset_id. Retorna: id, name, serial, status, location, manufacturer, model, user responsável",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "asset_type": {
+            "type": "string",
+            "description": "Tipo do asset"
+          },
+          "asset_id": {
+            "type": "integer",
+            "description": "ID do asset"
+          }
+        },
+        "required": [
+          "asset_type",
+          "asset_id"
+        ]
+      }
+    },
+    {
+      "name": "create_asset",
+      "description": "Cria um novo asset. Parâmetros: asset_type (obrigatório), name (obrigatório), serial_number, entity_id ou entity_name. Retorna asset criado com ID",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "asset_type": {
+            "type": "string",
+            "description": "Tipo do asset"
+          },
+          "name": {
+            "type": "string",
+            "description": "Nome do asset"
+          },
+          "serial_number": {
+            "type": "string",
+            "description": "Número de série"
+          },
+          "entity_id": {
+            "type": "integer",
+            "description": "ID da entidade"
+          },
+          "entity_name": {
+            "type": "string",
+            "description": "Nome da entidade"
+          }
+        },
+        "required": [
+          "asset_type",
+          "name"
+        ]
+      }
+    },
+    {
+      "name": "update_asset",
+      "description": "Atualiza um asset existente. Parâmetros: asset_type, asset_id, campos a atualizar (name, serial_number, status, etc)",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "asset_type": {
+            "type": "string",
+            "description": "Tipo do asset"
+          },
+          "asset_id": {
+            "type": "integer",
+            "description": "ID do asset"
+          },
+          "name": {
+            "type": "string"
+          },
+          "serial_number": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "asset_type",
+          "asset_id"
+        ]
+      }
+    },
+    {
+      "name": "delete_asset",
+      "description": "Deleta um asset PERMANENTEMENTE. OPERAÇÃO DESTRUTIVA. Parâmetros: asset_type, asset_id",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "asset_type": {
+            "type": "string",
+            "description": "Tipo do asset"
+          },
+          "asset_id": {
+            "type": "integer",
+            "description": "ID do asset"
+          }
+        },
+        "required": [
+          "asset_type",
+          "asset_id"
+        ]
+      }
+    },
+    {
+      "name": "search_assets",
+      "description": "Busca assets por texto livre com Smart Search v2.0. Busca em: Nome, Serial, Contact (Nome Alternativo do Usuário), e usuarios_id vinculados. FALLBACK AUTOMÁTICO: Se usuário foi DELETADO (sync LDAP), busca em deletados e retorna 'smart_search_warning'. Parâmetros: query (texto), asset_type, entity_name",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Texto para buscar (Nome, Serial, Contact/Nome Alternativo, ou Nome de Usuário associado). Aceita caracteres especiais como '.' e '@' (ex: joana.rodrigues@DOMINIO)"
+          },
+          "asset_type": {
+            "type": "string",
+            "description": "Tipo do asset"
+          },
+          "entity_id": {
+            "type": "integer"
+          },
+          "entity_name": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 50
+          }
+        },
+        "description": "Busca assets por texto livre com Smart Search v2.0: busca em múltiplos campos (Nome, Serial, Contact/Nome Alternativo, users_id). Se o usuário foi DELETADO (ex: removido do AD/LDAP), busca automaticamente nos deletados como fallback. Retorna 'smart_search_warning' quando encontrado via usuário deletado. Sempre retorna ID do asset.",
+        "required": [
+          "query"
+        ]
+      }
+    },
+    {
+      "name": "get_asset_reservations",
+      "description": "Obtém reservas de um asset específico. Parâmetros: asset_type, asset_id. Retorna lista de reservas com datas, usuário, comentário",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "asset_type": {
+            "type": "string"
+          },
+          "asset_id": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "asset_type",
+          "asset_id"
+        ]
+      }
+    },
+    {
+      "name": "create_reservation",
+      "description": "Cria uma reserva para um asset. Parâmetros: asset_type, asset_id, start_date (YYYY-MM-DD HH:MM), end_date, comment. Valida conflitos automaticamente",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "asset_type": {
+            "type": "string"
+          },
+          "asset_id": {
+            "type": "integer"
+          },
+          "start_date": {
+            "type": "string",
+            "description": "Data início (YYYY-MM-DD HH:MM)"
+          },
+          "end_date": {
+            "type": "string",
+            "description": "Data fim (YYYY-MM-DD HH:MM)"
+          },
+          "comment": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "asset_type",
+          "asset_id",
+          "start_date",
+          "end_date"
+        ]
+      }
+    },
+    {
+      "name": "list_reservations",
+      "description": "Lista todas as reservas de assets. Parâmetros: entity_name (filtro), limit. Retorna reservas com: id, asset, usuário, período, status",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "entity_id": {
+            "type": "integer"
+          },
+          "entity_name": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 50
+          }
+        }
+      }
+    },
+    {
+      "name": "list_reservable_items",
+      "description": "Lista itens configurados como RESERVÁVEIS no GLPI. Nem todo asset é reservável - precisa ser habilitado. Parâmetros: entity_name, limit",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "entity_id": {
+            "type": "integer"
+          },
+          "entity_name": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 50
+          }
+        }
+      }
+    },
+    {
+      "name": "update_reservation",
+      "description": "Atualiza uma reserva existente. Parâmetros: reservation_id, start_date, end_date, comment",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "reservation_id": {
+            "type": "integer"
+          },
+          "start_date": {
+            "type": "string"
+          },
+          "end_date": {
+            "type": "string"
+          },
+          "comment": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "reservation_id"
+        ]
+      }
+    },
+    {
+      "name": "get_asset_stats",
+      "description": "Estatísticas agregadas de assets: total por tipo (computadores, monitores, etc), por status, por localização, por fabricante. Filtro: entity_name",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "entity_id": {
+            "type": "integer"
+          },
+          "entity_name": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "list_computers",
+      "description": "Lista computadores COM DADOS ENRIQUECIDOS em uma única chamada. Retorna para CADA computador: id, name, serial, memory_info (ex: '16.0 GB'), cpu_info (ex: '1x Intel Core i7-8550U'), anydesk_id, contact (Nome Alternativo), last_inventory_update, users_id, user_info (nome completo, email), locations_id, manufacturers_id, models_id, types_id, states_id. USE ESTA TOOL para listar máquinas - NÃO use get_computer_details para cada uma! Para filtrar por memória (ex: <8GB), processe o campo memory_info do resultado. Filtros: entity_name, location_id, manufacturer_id, user_id/username, limit, offset",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "entity_id": {
+            "type": "integer",
+            "description": "ID da entidade/cliente"
+          },
+          "entity_name": {
+            "type": "string",
+            "description": "Nome da entidade/cliente (ex: 'Ramada', 'Grupo Wink', 'GSM')"
+          },
+          "location_id": {
+            "type": "integer",
+            "description": "Filtrar por localização"
+          },
+          "manufacturer_id": {
+            "type": "integer",
+            "description": "Filtrar por fabricante"
+          },
+          "user_id": {
+            "type": "integer",
+            "description": "Filtrar por ID do usuário responsável"
+          },
+          "username": {
+            "type": "string",
+            "description": "Filtrar por nome do usuário"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000,
+            "default": 50
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0
+          }
+        },
+        "description": "RETORNA DADOS ENRIQUECIDOS para cada computador: id, name, serial, memory_info (ex: '16.0 GB', '8.0 GB'), cpu_info (ex: '1x Intel Core i7-8550U'), anydesk_id, contact (Nome Alternativo), last_inventory_update, users_id, locations_id, manufacturers_id, models_id, types_id, states_id. NÃO USE get_computer_details para listar - esta tool já traz os dados necessários! Para filtrar por memória (ex: <8GB), processe o campo memory_info do resultado."
+      }
+    },
+    {
+      "name": "get_computer_details",
+      "description": "Obtém detalhes GRANULARES de UM computador específico (por ID). Retorna: componentes individuais de memória (cada pente), processadores (cada core), discos (cada HD/SSD), placas de rede, sistema operacional (versão, arquitetura), software instalado (lista completa), histórico de alterações, remote_management (AnyDesk, TeamViewer). USE APENAS quando precisar de informações detalhadas de UMA máquina (ex: 'qual pente de RAM está no computador X?', 'quais softwares estão instalados?'). Para LISTAR múltiplos computadores, use list_computers",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "computer_id": {
+            "type": "integer",
+            "description": "ID do computador"
+          }
+        },
+        "required": [
+          "computer_id"
+        ]
+      }
+    },
+    {
+      "name": "list_monitors",
+      "description": "Lista monitores com filtros. Parâmetros: entity_name, limit, offset. Retorna: id, name, serial, manufacturer, model, size, entity",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "entity_id": {
+            "type": "integer"
+          },
+          "entity_name": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 50
+          },
+          "offset": {
+            "type": "integer",
+            "default": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "get_monitor",
+      "description": "Obtém detalhes completos de um monitor por ID. Retorna: id, name, serial, manufacturer, model, size (polegadas), comment, entity, location, user",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "monitor_id": {
+            "type": "integer",
+            "description": "ID do monitor"
+          }
+        },
+        "required": [
+          "monitor_id"
+        ]
+      }
+    },
+    {
+      "name": "list_software",
+      "description": "Lista softwares cadastrados no GLPI. Parâmetros: entity_name, limit. Retorna: id, name, publisher, is_valid (licença válida), installations_count",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "entity_id": {
+            "type": "integer"
+          },
+          "entity_name": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 50
+          }
+        }
+      }
+    },
+    {
+      "name": "get_software",
+      "description": "Obtém detalhes de um software por ID. Retorna: id, name, publisher, versions, installations, licenças vinculadas",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "software_id": {
+            "type": "integer",
+            "description": "ID do software"
+          }
+        },
+        "required": [
+          "software_id"
+        ]
+      }
+    },
+    {
+      "name": "list_devices",
+      "description": "Lista dispositivos por tipo: NetworkEquipment (switches, roteadores), Phone (telefones), Peripheral (periféricos). Parâmetros: device_type, entity_name, limit",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "device_type": {
+            "type": "string",
+            "description": "Tipo: NetworkEquipment, Phone, Peripheral"
+          },
+          "entity_id": {
+            "type": "integer"
+          },
+          "entity_name": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 50
+          }
+        }
+      }
+    },
+    {
+      "name": "get_device",
+      "description": "Obtém detalhes de um dispositivo por tipo e ID. Parâmetros: device_type, device_id. Retorna dados específicos do tipo de dispositivo",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "device_type": {
+            "type": "string"
+          },
+          "device_id": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "device_type",
+          "device_id"
+        ]
+      }
+    },
+    {
+      "name": "list_users",
+      "description": "Lista todos os usuários com filtros. Parâmetros: entity_name (cliente), group_id, profile_id, is_active (true/false), limit, offset. Retorna lista de usuários com: id, name (login), firstname, realname, email, is_active",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "entity_id": {
+            "type": "integer",
+            "description": "ID da entidade/cliente"
+          },
+          "entity_name": {
+            "type": "string",
+            "description": "Nome da entidade/cliente"
+          },
+          "group_id": {
+            "type": "integer",
+            "description": "ID do grupo"
+          },
+          "profile_id": {
+            "type": "integer",
+            "description": "ID do perfil"
+          },
+          "is_active": {
+            "type": "boolean",
+            "description": "Filtrar ativos/inativos"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000,
+            "default": 50
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "search_users",
+      "description": "Busca usuários por nome, sobrenome, email ou username. RETORNA TODOS OS 20+ CAMPOS: id, name (login), firstname, realname, email, phone, phone2, mobile, locations_id, usertitles_id (cargo), usercategories_id (categoria), entities_id, groups_id, profiles_id, comment, is_active, is_deleted. FALLBACK AUTOMÁTICO: Se nenhum ativo encontrado, busca em DELETADOS (ex: usuários removidos do AD/LDAP), retorna 'deleted_users_warning' e 'is_deleted: true'. USE para encontrar usuários por qualquer critério",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Login/username do usuário"
+          },
+          "firstname": {
+            "type": "string",
+            "description": "Nome"
+          },
+          "realname": {
+            "type": "string",
+            "description": "Sobrenome"
+          },
+          "email": {
+            "type": "string",
+            "description": "Email"
+          },
+          "entity_name": {
+            "type": "string",
+            "description": "Nome da entidade/cliente para filtrar"
+          },
+          "entity_id": {
+            "type": "integer",
+            "description": "ID da entidade para filtrar"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000,
+            "default": 250
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0
+          }
+        },
+        "description": "Busca usuários por login, nome, sobrenome ou email. Retorna TODOS os campos: ID, nome completo, contatos, status ativo, localização, título, categoria, entidade, grupo, perfil, comentários, etc. FALLBACK AUTOMÁTICO: Se nenhum usuário ativo for encontrado, busca automaticamente nos DELETADOS (ex: removidos do AD/LDAP), retornando 'deleted_users_warning' e 'is_deleted: true' em cada usuário deletado."
+      }
+    },
+    {
+      "name": "get_user",
+      "description": "Obtém detalhes completos de um usuário por ID. Retorna TODOS os campos: dados pessoais, contatos (phone, phone2, mobile), email, localização, cargo, categoria, entidade, grupo, perfil, status ativo/deletado, comentários",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "user_id": {
+            "type": "integer",
+            "description": "ID do usuário"
+          }
+        },
+        "required": [
+          "user_id"
+        ]
+      }
+    },
+    {
+      "name": "create_user",
+      "description": "Cria novo usuário com todos os campos disponíveis. Parâmetros: name (login, obrigatório), password (se auth local), firstname, realname, email, phone, phone2, mobile, location_id, usertitle_id (cargo), usercategory_id, entity_id/entity_name, group_id, profile_id, authtype (1=Local, 2=Mail, 3=LDAP), is_active",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Login do usuário"
+          },
+          "password": {
+            "type": "string",
+            "description": "Senha (obrigatório para authtype=1)"
+          },
+          "password2": {
+            "type": "string",
+            "description": "Confirmação da senha"
+          },
+          "firstname": {
+            "type": "string",
+            "description": "Primeiro nome"
+          },
+          "realname": {
+            "type": "string",
+            "description": "Sobrenome"
+          },
+          "email": {
+            "type": "string",
+            "description": "Email"
+          },
+          "phone": {
+            "type": "string",
+            "description": "Telefone principal"
+          },
+          "phone2": {
+            "type": "string",
+            "description": "Telefone secundário"
+          },
+          "mobile": {
+            "type": "string",
+            "description": "Celular"
+          },
+          "location_id": {
+            "type": "integer",
+            "description": "ID da localização"
+          },
+          "usertitle_id": {
+            "type": "integer",
+            "description": "ID do título/cargo"
+          },
+          "usercategory_id": {
+            "type": "integer",
+            "description": "ID da categoria"
+          },
+          "registration_number": {
+            "type": "string",
+            "description": "Número administrativo/matrícula"
+          },
+          "comment": {
+            "type": "string",
+            "description": "Comentários"
+          },
+          "entity_id": {
+            "type": "integer",
+            "description": "ID da entidade"
+          },
+          "entity_name": {
+            "type": "string",
+            "description": "Nome da entidade/cliente"
+          },
+          "profile_id": {
+            "type": "integer",
+            "description": "ID do perfil"
+          },
+          "group_id": {
+            "type": "integer",
+            "description": "ID do grupo"
+          },
+          "authtype": {
+            "type": "integer",
+            "description": "Tipo de autenticação (1=Local, 2=Mail, 3=LDAP)",
+            "default": 1
+          },
+          "is_active": {
+            "type": "boolean",
+            "description": "Status ativo",
+            "default": true
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    },
+    {
+      "name": "update_user",
+      "description": "Atualiza usuário existente. Parâmetros: user_id (obrigatório), campos a atualizar: firstname, realname, email, phone, phone2, mobile, location_id, usertitle_id, usercategory_id, comment, is_active",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "user_id": {
+            "type": "integer",
+            "description": "ID do usuário"
+          },
+          "firstname": {
+            "type": "string",
+            "description": "Primeiro nome"
+          },
+          "realname": {
+            "type": "string",
+            "description": "Sobrenome"
+          },
+          "email": {
+            "type": "string",
+            "description": "Email"
+          },
+          "phone": {
+            "type": "string",
+            "description": "Telefone principal"
+          },
+          "phone2": {
+            "type": "string",
+            "description": "Telefone secundário"
+          },
+          "mobile": {
+            "type": "string",
+            "description": "Celular"
+          },
+          "location_id": {
+            "type": "integer",
+            "description": "ID da localização"
+          },
+          "usertitle_id": {
+            "type": "integer",
+            "description": "ID do título/cargo"
+          },
+          "usercategory_id": {
+            "type": "integer",
+            "description": "ID da categoria"
+          },
+          "registration_number": {
+            "type": "string",
+            "description": "Número administrativo/matrícula"
+          },
+          "comment": {
+            "type": "string",
+            "description": "Comentários"
+          },
+          "is_active": {
+            "type": "boolean",
+            "description": "Status ativo"
+          }
+        },
+        "required": [
+          "user_id"
+        ]
+      }
+    },
+    {
+      "name": "delete_user",
+      "description": "Deleta ou desativa um usuário. Parâmetro: user_id. ATENÇÃO: Pode ser desativação lógica ou exclusão física dependendo da configuração GLPI",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "user_id": {
+            "type": "integer",
+            "description": "ID do usuário"
+          }
+        },
+        "required": [
+          "user_id"
+        ]
+      }
+    },
+    {
+      "name": "list_groups",
+      "description": "Lista grupos de usuários. Parâmetros: entity_name (filtro cliente), limit, offset. Retorna: id, name, comment, entity, membros_count",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "entity_id": {
+            "type": "integer"
+          },
+          "entity_name": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 50
+          },
+          "offset": {
+            "type": "integer",
+            "default": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "get_group",
+      "description": "Obtém detalhes de um grupo por ID. Retorna: id, name, comment, entity, membros (lista de usuários)",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "integer",
+            "description": "ID do grupo"
+          }
+        },
+        "required": [
+          "group_id"
+        ]
+      }
+    },
+    {
+      "name": "create_group",
+      "description": "Cria novo grupo. Parâmetros: name (obrigatório), comment (descrição), entity_id/entity_name",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Nome do grupo"
+          },
+          "comment": {
+            "type": "string",
+            "description": "Descrição"
+          },
+          "entity_id": {
+            "type": "integer"
+          },
+          "entity_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    },
+    {
+      "name": "list_entities",
+      "description": "Lista entidades (clientes/organizações). Parâmetros: parent_id (filtrar sub-entidades), limit, offset. Retorna: id, name, completename (caminho completo), parent, address, phone",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "parent_id": {
+            "type": "integer",
+            "description": "ID da entidade pai"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 50
+          },
+          "offset": {
+            "type": "integer",
+            "default": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "get_entity",
+      "description": "Obtém detalhes de uma entidade por ID. Retorna: id, name, completename, parent, address, phone, email, website, configurações de SLA",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "entity_id": {
+            "type": "integer",
+            "description": "ID da entidade"
+          }
+        },
+        "required": [
+          "entity_id"
+        ]
+      }
+    },
+    {
+      "name": "list_locations",
+      "description": "Lista localizações (escritórios, filiais). Parâmetros: entity_name (filtro), limit, offset. Retorna: id, name, completename, entity, address, building, room",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "entity_id": {
+            "type": "integer"
+          },
+          "entity_name": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 50
+          },
+          "offset": {
+            "type": "integer",
+            "default": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "get_location",
+      "description": "Obtém detalhes de uma localização por ID. Retorna: id, name, completename, entity, address, latitude, longitude, building, room",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "location_id": {
+            "type": "integer",
+            "description": "ID da localização"
+          }
+        },
+        "required": [
+          "location_id"
+        ]
+      }
+    },
+    {
+      "name": "list_webhooks",
+      "description": "Lista todos os webhooks configurados. Parâmetros: is_active (filtro), limit. Retorna: id, name, url, event_type, is_active, last_delivery",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "is_active": {
+            "type": "boolean"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 50
+          }
+        }
+      }
+    },
+    {
+      "name": "get_webhook",
+      "description": "Obtém detalhes de um webhook por ID. Retorna: id, name, url, event_type, secret, headers, is_active, delivery_stats",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "webhook_id": {
+            "type": "string",
+            "description": "ID do webhook"
+          }
+        },
+        "required": [
+          "webhook_id"
+        ]
+      }
+    },
+    {
+      "name": "create_webhook",
+      "description": "Cria novo webhook. Parâmetros: name, url (endpoint destino), event_type (ticket_created, ticket_updated, etc), secret (para assinatura)",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Nome do webhook"
+          },
+          "url": {
+            "type": "string",
+            "description": "URL de destino"
+          },
+          "event_type": {
+            "type": "string",
+            "description": "Tipo de evento"
+          },
+          "secret": {
+            "type": "string",
+            "description": "Secret para assinatura"
+          }
+        },
+        "required": [
+          "name",
+          "url",
+          "event_type"
+        ]
+      }
+    },
+    {
+      "name": "update_webhook",
+      "description": "Atualiza webhook existente. Parâmetros: webhook_id, name, url, is_active",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "webhook_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "is_active": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "webhook_id"
+        ]
+      }
+    },
+    {
+      "name": "delete_webhook",
+      "description": "Deleta um webhook permanentemente. Parâmetro: webhook_id",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "webhook_id": {
+            "type": "string",
+            "description": "ID do webhook"
+          }
+        },
+        "required": [
+          "webhook_id"
+        ]
+      }
+    },
+    {
+      "name": "test_webhook",
+      "description": "Envia payload de TESTE para verificar se webhook está funcionando. Parâmetro: webhook_id. Retorna status da entrega",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "webhook_id": {
+            "type": "string",
+            "description": "ID do webhook"
+          }
+        },
+        "required": [
+          "webhook_id"
+        ]
+      }
+    },
+    {
+      "name": "get_webhook_deliveries",
+      "description": "Histórico de entregas de um webhook. Parâmetros: webhook_id, limit. Retorna: tentativas, status, response_code, erro (se houver)",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "webhook_id": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 50
+          }
+        },
+        "required": [
+          "webhook_id"
+        ]
+      }
+    },
+    {
+      "name": "trigger_webhook",
+      "description": "Dispara webhook MANUALMENTE para um evento. Parâmetros: event_type, payload (dados customizados). USE para testes ou integrações manuais",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "event_type": {
+            "type": "string",
+            "description": "Tipo de evento para disparar"
+          },
+          "payload": {
+            "type": "object",
+            "description": "Dados do evento"
+          }
+        },
+        "required": [
+          "event_type"
+        ]
+      }
+    },
+    {
+      "name": "get_webhook_stats",
+      "description": "Estatísticas agregadas de webhooks: total configurados, ativos, entregas (sucesso/falha), latência média",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "enable_webhook",
+      "description": "Ativa um webhook desativado. Parâmetro: webhook_id",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "webhook_id": {
+            "type": "string",
+            "description": "ID do webhook"
+          }
+        },
+        "required": [
+          "webhook_id"
+        ]
+      }
+    },
+    {
+      "name": "disable_webhook",
+      "description": "Desativa um webhook (para temporariamente). Parâmetro: webhook_id",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "webhook_id": {
+            "type": "string",
+            "description": "ID do webhook"
+          }
+        },
+        "required": [
+          "webhook_id"
+        ]
+      }
+    },
+    {
+      "name": "retry_failed_deliveries",
+      "description": "Re-tenta entregas FALHADAS de um webhook. Parâmetro: webhook_id. USE quando endpoint estava indisponível",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "webhook_id": {
+            "type": "string",
+            "description": "ID do webhook"
+          }
+        },
+        "required": [
+          "webhook_id"
+        ]
+      }
+    },
+    {
+      "name": "trigger_ai_analysis",
+      "description": "Dispara análise de IA nos tickets pendentes. Analisa conteúdo, sugere categorização, prioridade e possíveis soluções baseado em histórico",
+      "inputSchema": {
+        "type": "object"
+      }
+    },
+    {
+      "name": "get_ai_analysis_result",
+      "description": "Obtém resultado da última análise de IA. Retorna: tickets analisados, sugestões de categorização, priorização, soluções similares",
+      "inputSchema": {
+        "type": "object"
+      }
+    },
+    {
+      "name": "publish_ai_response",
+      "description": "Publica resposta gerada por IA em um ticket. Adiciona como followup com marcação de origem IA",
+      "inputSchema": {
+        "type": "object"
+      }
+    },
+    {
+      "name": "prompts_list",
+      "description": "Lista todos os 15 prompts profissionais disponíveis para gestores e analistas. Retorna nome, descrição, categoria (gestao/suporte), audience (público-alvo) e argumentos de cada prompt. USE para descobrir quais prompts existem antes de executar",
+      "inputSchema": {
+        "type": "object"
+      }
+    },
+    {
+      "name": "prompts_get",
+      "description": "Executa um prompt específico com argumentos. Retorna resultado em 2 formatos: 'compact' (10 linhas, ideal para WhatsApp/Teams) e 'detailed' (Markdown completo). Prompts disponíveis: glpi_sla_performance, glpi_ticket_trends, glpi_asset_roi, glpi_technician_productivity, glpi_cost_per_ticket, glpi_recurring_problems, glpi_client_satisfaction (gestão) | glpi_ticket_summary, glpi_user_ticket_history, glpi_asset_lookup, glpi_onboarding_checklist, glpi_incident_investigation, glpi_change_management, glpi_hardware_request, glpi_knowledge_base_search (suporte)",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Nome do prompt (ex: glpi_sla_performance)",
+            "enum": [
+              "glpi_sla_performance",
+              "glpi_ticket_trends",
+              "glpi_asset_roi",
+              "glpi_technician_productivity",
+              "glpi_cost_per_ticket",
+              "glpi_recurring_problems",
+              "glpi_client_satisfaction",
+              "glpi_ticket_summary",
+              "glpi_user_ticket_history",
+              "glpi_asset_lookup",
+              "glpi_onboarding_checklist",
+              "glpi_incident_investigation",
+              "glpi_change_management",
+              "glpi_hardware_request",
+              "glpi_knowledge_base_search"
+            ]
+          },
+          "arguments": {
+            "type": "object",
+            "description": "Argumentos do prompt (varia por prompt - veja prompts_list para detalhes)"
+          }
+        },
+        "required": [
+          "name",
+          "arguments"
+        ]
+      }
+    }
+  ],
+  "dispatch_test": {
+    "list_tickets": "dispatch_ok_auth_required",
+    "get_ticket_stats": "dispatch_ok_auth_required",
+    "list_users": "dispatch_ok_auth_required",
+    "list_assets": "dispatch_ok_auth_required",
+    "get_webhook_stats": "dispatch_ok_auth_required",
+    "prompts_list": "dispatch_ok_auth_required"
+  },
+  "notes": "Auth errors are expected - confirms dispatch mechanism works. GLPI requires user_token via X-GLPI-User-Token header.",
+  "test_results": {
+    "total": 111,
+    "passed": 103,
+    "failed": 8,
+    "warnings": 3,
+    "failed_tests": [
+      "test_mcp_handlers_integration.py::test_tools_call_integration_success",
+      "test_mcp_handlers_integration.py::test_similarity_algorithm_integration",
+      "test_mcp_handlers_integration.py::test_webhook_lifecycle_integration",
+      "test_mcp_handlers_integration.py::test_admin_user_management_integration",
+      "test_mcp_handlers_integration.py::test_asset_reservation_integration",
+      "test_mcp_handlers_integration.py::test_ticket_followup_integration",
+      "test_mcp_handlers_integration.py::test_complete_workflow_integration",
+      "test_session_manager_ext.py::test_get_uses_cache_and_rate_limit"
+    ],
+    "notes": "8 failed tests: 7 in integration tests (use real GLPI API with mock), 1 session manager (requires user_token). All 103 passing tests are unit tests."
+  }
+}

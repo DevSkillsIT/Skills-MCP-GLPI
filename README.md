@@ -2,7 +2,7 @@
 
 # 🚀 Skills MCP GLPI
 
-### The Most Complete GLPI MCP Server with 66 Tools, Smart Search v2.0, and Safety Guard
+### The Most Complete GLPI MCP Server with 68 Tools, Smart Search v2.0, and Safety Guard
 
 [![MCP Protocol](https://img.shields.io/badge/MCP-2024--11--05-blue)](https://modelcontextprotocol.io/)
 [![Python](https://img.shields.io/badge/Python-3.11+-green)](https://www.python.org/)
@@ -14,7 +14,7 @@
 
 **Connect Claude Code, Gemini CLI, ChatGPT, VS Code Copilot, and Cursor to your GLPI instance**
 
-[Features](#-key-features) • [Installation](#-installation) • [66 Tools](#-66-tools) • [Quick Start](#-quick-start) • [Support](#-support)
+[Features](#-key-features) • [Installation](#-installation) • [68 Tools](#-68-tools) • [Quick Start](#-quick-start) • [Support](#-support)
 
 </div>
 
@@ -30,7 +30,7 @@ While other GLPI MCPs exist (PyPI, npm), **none offer complete coverage**:
 
 | Feature | Other MCPs | Skills MCP GLPI |
 |---------|------------|-----------------|
-| **Tools** | 10-20 | **66 tools** ✨ |
+| **Tools** | 10-20 | **68 tools** ✨ |
 | **Reservations** | ❌ Not supported | ✅ Complete system |
 | **User Creation with Password** | ❌ Not supported | ✅ Fully supported |
 | **Webhooks** | ❌ Not supported | ✅ 12 tools |
@@ -67,7 +67,7 @@ Intelligent search with automatic fallback to deleted users (LDAP/AD synchroniza
 - **Level 3:** Search in deleted users table (`glpi_users_deleted`)
 
 ### 6. 📊 Enriched Data
-The `list_computers` tool returns complete data without additional calls:
+The `glpi_list_computers` tool returns complete data without additional calls:
 
 | Field | Description |
 |-------|-------------|
@@ -79,7 +79,7 @@ The `list_computers` tool returns complete data without additional calls:
 | `user_info` | Responsible user data |
 | `os_info` | Installed operating system |
 
-**Recommendation:** Use `list_computers` for overview with enriched data, use `get_computer_details` only for granular details of a specific computer.
+**Recommendation:** Use `glpi_list_computers` for overview with enriched data, use `glpi_get_computer_details` only for granular details of a specific computer.
 
 ---
 
@@ -269,97 +269,97 @@ curl -X POST http://localhost:8824/mcp \
 
 ---
 
-## 🧰 66 Tools
+## 🧰 68 Tools
 
 ### 🎫 Tickets (18 tools)
 
 | Tool | Description |
 |------|-------------|
-| `list_tickets` | List tickets with advanced filters (status, entity_id, entity_name) |
-| `get_ticket` | Complete ticket details by ID |
-| `get_ticket_by_number` | Find ticket by number (not ID) |
-| `create_ticket` | Create new ticket with validation |
-| `update_ticket` | Update ticket fields |
-| `delete_ticket` | ⚠️ Delete ticket (protected by Safety Guard) |
-| `assign_ticket` | Assign technician to ticket |
-| `close_ticket` | Close ticket with solution |
-| `resolve_ticket` | Resolve ticket (awaiting user validation) |
-| `search_tickets` | Search text in title, description and content |
-| `search_similar_tickets` | Find similar tickets by title/description |
-| `add_ticket_followup` | Add public followup |
-| `post_private_note` | Add private note (visible only to technicians) |
-| `get_ticket_followups` | List all ticket followups |
-| `get_ticket_history` | Complete change history |
-| `get_ticket_stats` | Ticket statistics by entity |
-| `find_similar_tickets` | Search similar tickets using similarity algorithms |
+| `glpi_list_tickets` | List tickets with advanced filters (status, entity_id, entity_name) |
+| `glpi_get_ticket` | Complete ticket details by ID |
+| `glpi_get_ticket_by_number` | Find ticket by number (not ID) |
+| `glpi_create_ticket` | Create new ticket with validation |
+| `glpi_update_ticket` | Update ticket fields |
+| `glpi_delete_ticket` | ⚠️ Delete ticket (protected by Safety Guard) |
+| `glpi_assign_ticket` | Assign technician to ticket |
+| `glpi_close_ticket` | Close ticket with solution |
+| `glpi_resolve_ticket` | Resolve ticket (awaiting user validation) |
+| `glpi_search_tickets` | Search text in title, description and content |
+| `glpi_search_similar_tickets` | Find similar tickets by title/description |
+| `glpi_add_ticket_followup` | Add public followup |
+| `glpi_post_private_note` | Add private note (visible only to technicians) |
+| `glpi_get_ticket_followups` | List all ticket followups |
+| `glpi_get_ticket_history` | Complete change history |
+| `glpi_get_ticket_stats` | Ticket statistics by entity |
+| `glpi_find_similar_tickets` | Search similar tickets using similarity algorithms |
 
 ### 💻 Assets (20 tools)
 
 | Tool | Description |
 |------|-------------|
-| `list_assets` | List assets with filters (type, entity) |
-| `get_asset` | Details of specific asset |
-| `create_asset` | Create new asset |
-| `update_asset` | Update existing asset |
-| `delete_asset` | ⚠️ Delete asset (protected) |
-| `search_assets` | 🔍 **Smart Search v2.0** - Search by name, serial or user |
-| `list_computers` | 📊 List computers with **enriched data** |
-| `get_computer_details` | Granular details of ONE computer |
-| `list_monitors` | List monitors |
-| `get_monitor` | Monitor details |
-| `list_software` | List installed software |
-| `get_software` | Software details |
-| `list_devices` | List devices (NetworkEquipment, Phone, Peripheral) |
-| `get_device` | Device details |
-| `get_asset_stats` | Asset statistics by entity |
-| `list_reservable_items` | Items available for reservation |
-| `list_reservations` | List existing reservations |
-| `create_reservation` | Create equipment reservation |
-| `update_reservation` | Update reservation |
-| `get_asset_reservations` | Reservations of specific asset |
+| `glpi_list_assets` | List assets with filters (type, entity) |
+| `glpi_get_asset` | Details of specific asset |
+| `glpi_create_asset` | Create new asset |
+| `glpi_update_asset` | Update existing asset |
+| `glpi_delete_asset` | ⚠️ Delete asset (protected) |
+| `glpi_search_assets` | 🔍 **Smart Search v2.0** - Search by name, serial or user |
+| `glpi_list_computers` | 📊 List computers with **enriched data** |
+| `glpi_get_computer_details` | Granular details of ONE computer |
+| `glpi_list_monitors` | List monitors |
+| `glpi_get_monitor` | Monitor details |
+| `glpi_list_software` | List installed software |
+| `glpi_get_software` | Software details |
+| `glpi_list_devices` | List devices (NetworkEquipment, Phone, Peripheral) |
+| `glpi_get_device` | Device details |
+| `glpi_get_asset_stats` | Asset statistics by entity |
+| `glpi_list_reservable_items` | Items available for reservation |
+| `glpi_list_reservations` | List existing reservations |
+| `glpi_create_reservation` | Create equipment reservation |
+| `glpi_update_reservation` | Update reservation |
+| `glpi_get_asset_reservations` | Reservations of specific asset |
 
 ### 👥 Admin/Users (13 tools)
 
 | Tool | Description |
 |------|-------------|
-| `list_users` | List users with filters |
-| `get_user` | User details |
-| `create_user` | ✨ Create user **WITH PASSWORD** |
-| `update_user` | Update user data |
-| `delete_user` | ⚠️ Delete user (protected) |
-| `search_users` | 🔍 **Smart Search** in 20+ fields with fallback |
-| `list_groups` | List groups |
-| `get_group` | Group details |
-| `create_group` | Create new group |
-| `list_entities` | List entities/companies |
-| `get_entity` | Entity details |
-| `list_locations` | List locations |
-| `get_location` | Location details |
+| `glpi_list_users` | List users with filters |
+| `glpi_get_user` | User details |
+| `glpi_create_user` | ✨ Create user **WITH PASSWORD** |
+| `glpi_update_user` | Update user data |
+| `glpi_delete_user` | ⚠️ Delete user (protected) |
+| `glpi_search_users` | 🔍 **Smart Search** in 20+ fields with fallback |
+| `glpi_list_groups` | List groups |
+| `glpi_get_group` | Group details |
+| `glpi_create_group` | Create new group |
+| `glpi_list_entities` | List entities/companies |
+| `glpi_get_entity` | Entity details |
+| `glpi_list_locations` | List locations |
+| `glpi_get_location` | Location details |
 
 ### 🔗 Webhooks (12 tools)
 
 | Tool | Description |
 |------|-------------|
-| `list_webhooks` | List configured webhooks |
-| `get_webhook` | Webhook details |
-| `create_webhook` | Create webhook |
-| `update_webhook` | Update webhook |
-| `delete_webhook` | ⚠️ Delete webhook (protected) |
-| `enable_webhook` | Activate webhook |
-| `disable_webhook` | Deactivate webhook |
-| `test_webhook` | Test webhook |
-| `get_webhook_deliveries` | Delivery history |
-| `get_webhook_stats` | Webhook statistics |
-| `retry_failed_deliveries` | Retry failed deliveries |
-| `trigger_webhook` | Manually trigger webhook |
+| `glpi_list_webhooks` | List configured webhooks |
+| `glpi_get_webhook` | Webhook details |
+| `glpi_create_webhook` | Create webhook |
+| `glpi_update_webhook` | Update webhook |
+| `glpi_delete_webhook` | ⚠️ Delete webhook (protected) |
+| `glpi_enable_webhook` | Activate webhook |
+| `glpi_disable_webhook` | Deactivate webhook |
+| `glpi_test_webhook` | Test webhook |
+| `glpi_get_webhook_deliveries` | Delivery history |
+| `glpi_get_webhook_stats` | Webhook statistics |
+| `glpi_retry_failed_deliveries` | Retry failed deliveries |
+| `glpi_trigger_webhook` | Manually trigger webhook |
 
 ### 🤖 AI/Analysis (3 tools)
 
 | Tool | Description |
 |------|-------------|
-| `trigger_ai_analysis` | Trigger AI analysis on ticket |
-| `get_ai_analysis_result` | Get analysis result |
-| `publish_ai_response` | Publish AI response to ticket |
+| `glpi_trigger_ai_analysis` | Trigger AI analysis on ticket |
+| `glpi_get_ai_analysis_result` | Get analysis result |
+| `glpi_publish_ai_response` | Publish AI response to ticket |
 
 ---
 
@@ -411,10 +411,10 @@ Protection against accidental destructive operations.
 
 | Operation | Protection |
 |-----------|-----------|
-| `delete_ticket` | Token + Reason required |
-| `delete_asset` | Token + Reason required |
-| `delete_user` | Token + Reason required |
-| `delete_webhook` | Token + Reason required |
+| `glpi_delete_ticket` | Token + Reason required |
+| `glpi_delete_asset` | Token + Reason required |
+| `glpi_delete_user` | Token + Reason required |
+| `glpi_delete_webhook` | Token + Reason required |
 
 ### How It Works
 
@@ -424,7 +424,7 @@ When Safety Guard is **enabled**, delete operations require:
 
 ```json
 {
-  "name": "delete_ticket",
+  "name": "glpi_delete_ticket",
   "arguments": {
     "ticket_id": 123,
     "confirmationToken": "your_secure_token",

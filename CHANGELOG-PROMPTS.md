@@ -78,8 +78,8 @@ Implementado sistema completo de prompts pré-configurados para análise gerenci
 **Modificações:**
 1. Import do `prompt_handler` de `src.prompts_handlers.prompts`
 2. Registro de 2 novos tools no método `_register_tools()`:
-   - `prompts_list` - Lista todos os prompts disponíveis
-   - `prompts_get` - Executa prompt específico com argumentos
+   - `glpi_list_prompts` - Lista todos os prompts disponíveis
+   - `glpi_get_prompt` - Executa prompt específico com argumentos
 3. Adição de descrições no método `_get_tool_description()`
 
 **Total de Tools do MCP GLPI:** 68 tools (66 anteriores + 2 novos)
@@ -105,7 +105,7 @@ curl -X POST http://mcp.servidor.one:8824/mcp \
     "id": 1,
     "method": "tools/call",
     "params": {
-      "name": "prompts_list",
+      "name": "glpi_list_prompts",
       "arguments": {}
     }
   }'
@@ -132,7 +132,7 @@ curl -X POST http://mcp.servidor.one:8824/mcp \
     "id": 2,
     "method": "tools/call",
     "params": {
-      "name": "prompts_get",
+      "name": "glpi_get_prompt",
       "arguments": {
         "name": "glpi_sla_performance",
         "arguments": {
@@ -151,8 +151,8 @@ curl -X POST http://mcp.servidor.one:8824/mcp \
 ### Testes Realizados
 
 - [x] Health check do servidor → 200 OK
-- [x] `tools/list` inclui `prompts_list` e `prompts_get`
-- [x] `prompts_list` retorna 15 prompts
+- [x] `tools/list` inclui `glpi_list_prompts` e `glpi_get_prompt`
+- [x] `glpi_list_prompts` retorna 15 prompts
 - [x] Servidor inicia sem erros após implementação
 - [x] Logs limpos (sem erros de importação)
 

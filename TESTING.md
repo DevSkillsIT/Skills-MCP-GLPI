@@ -83,7 +83,7 @@ curl -X POST http://localhost:8824/mcp \
   }' | jq .
 ```
 
-Resposta esperada: Array com 48 tools.
+Resposta esperada: Array com 68 tools (todas com prefixo glpi_).
 
 ### 2. Informações do Servidor
 
@@ -103,7 +103,7 @@ curl -X POST http://localhost:8824/mcp \
     "jsonrpc": "2.0",
     "method": "tools/call",
     "params": {
-      "name": "list_tickets",
+      "name": "glpi_list_tickets",
       "arguments": {
         "limit": 10,
         "offset": 0
@@ -123,7 +123,7 @@ curl -X POST http://localhost:8824/mcp \
     "jsonrpc": "2.0",
     "method": "tools/call",
     "params": {
-      "name": "get_ticket",
+      "name": "glpi_get_ticket",
       "arguments": {
         "ticket_id": 1
       }
@@ -142,7 +142,7 @@ curl -X POST http://localhost:8824/mcp \
     "jsonrpc": "2.0",
     "method": "tools/call",
     "params": {
-      "name": "create_ticket",
+      "name": "glpi_create_ticket",
       "arguments": {
         "title": "Novo Ticket de Teste",
         "description": "Descrição do problema",
@@ -164,7 +164,7 @@ curl -X POST http://localhost:8824/mcp \
     "jsonrpc": "2.0",
     "method": "tools/call",
     "params": {
-      "name": "update_ticket",
+      "name": "glpi_update_ticket",
       "arguments": {
         "ticket_id": 1,
         "status": "assigned",
@@ -185,7 +185,7 @@ curl -X POST http://localhost:8824/mcp \
     "jsonrpc": "2.0",
     "method": "tools/call",
     "params": {
-      "name": "assign_ticket",
+      "name": "glpi_assign_ticket",
       "arguments": {
         "ticket_id": 1,
         "user_id": 5
@@ -205,7 +205,7 @@ curl -X POST http://localhost:8824/mcp \
     "jsonrpc": "2.0",
     "method": "tools/call",
     "params": {
-      "name": "close_ticket",
+      "name": "glpi_close_ticket",
       "arguments": {
         "ticket_id": 1,
         "resolution": "Problema resolvido"
@@ -225,7 +225,7 @@ curl -X POST http://localhost:8824/mcp \
     "jsonrpc": "2.0",
     "method": "tools/call",
     "params": {
-      "name": "delete_ticket",
+      "name": "glpi_delete_ticket",
       "arguments": {
         "ticket_id": 1
       }
@@ -244,7 +244,7 @@ curl -X POST http://localhost:8824/mcp \
     "jsonrpc": "2.0",
     "method": "tools/call",
     "params": {
-      "name": "get_ticket_status_options",
+      "name": "glpi_get_ticket_status_options",
       "arguments": {}
     },
     "id": 1
@@ -263,7 +263,7 @@ curl -X POST http://localhost:8824/mcp \
     "jsonrpc": "2.0",
     "method": "tools/call",
     "params": {
-      "name": "list_computers",
+      "name": "glpi_list_computers",
       "arguments": {
         "limit": 10,
         "offset": 0
@@ -283,7 +283,7 @@ curl -X POST http://localhost:8824/mcp \
     "jsonrpc": "2.0",
     "method": "tools/call",
     "params": {
-      "name": "create_computer",
+      "name": "glpi_create_computer",
       "arguments": {
         "name": "PC-TESTE-001",
         "serial_number": "SN-123456",
@@ -305,7 +305,7 @@ curl -X POST http://localhost:8824/mcp \
     "jsonrpc": "2.0",
     "method": "tools/call",
     "params": {
-      "name": "list_monitors",
+      "name": "glpi_list_monitors",
       "arguments": {}
     },
     "id": 1
@@ -322,7 +322,7 @@ curl -X POST http://localhost:8824/mcp \
     "jsonrpc": "2.0",
     "method": "tools/call",
     "params": {
-      "name": "list_printers",
+      "name": "glpi_list_printers",
       "arguments": {}
     },
     "id": 1
@@ -339,7 +339,7 @@ curl -X POST http://localhost:8824/mcp \
     "jsonrpc": "2.0",
     "method": "tools/call",
     "params": {
-      "name": "assign_asset_to_user",
+      "name": "glpi_assign_asset_to_user",
       "arguments": {
         "asset_id": 1,
         "asset_type": "Computer",
@@ -362,7 +362,7 @@ curl -X POST http://localhost:8824/mcp \
     "jsonrpc": "2.0",
     "method": "tools/call",
     "params": {
-      "name": "list_users",
+      "name": "glpi_list_users",
       "arguments": {
         "limit": 10,
         "offset": 0
@@ -382,7 +382,7 @@ curl -X POST http://localhost:8824/mcp \
     "jsonrpc": "2.0",
     "method": "tools/call",
     "params": {
-      "name": "create_user",
+      "name": "glpi_create_user",
       "arguments": {
         "firstname": "João",
         "lastname": "Silva",
@@ -404,7 +404,7 @@ curl -X POST http://localhost:8824/mcp \
     "jsonrpc": "2.0",
     "method": "tools/call",
     "params": {
-      "name": "update_user",
+      "name": "glpi_update_user",
       "arguments": {
         "user_id": 10,
         "email": "novo@example.com",
@@ -427,7 +427,7 @@ curl -X POST http://localhost:8824/mcp \
     "jsonrpc": "2.0",
     "method": "tools/call",
     "params": {
-      "name": "list_groups",
+      "name": "glpi_list_groups",
       "arguments": {}
     },
     "id": 1
@@ -444,7 +444,7 @@ curl -X POST http://localhost:8824/mcp \
     "jsonrpc": "2.0",
     "method": "tools/call",
     "params": {
-      "name": "create_group",
+      "name": "glpi_create_group",
       "arguments": {
         "name": "Suporte Técnico",
         "comment": "Equipe de suporte técnico"
@@ -464,7 +464,7 @@ curl -X POST http://localhost:8824/mcp \
     "jsonrpc": "2.0",
     "method": "tools/call",
     "params": {
-      "name": "add_user_to_group",
+      "name": "glpi_add_user_to_group",
       "arguments": {
         "user_id": 5,
         "group_id": 3
@@ -486,7 +486,7 @@ curl -X POST http://localhost:8824/mcp \
     "jsonrpc": "2.0",
     "method": "tools/call",
     "params": {
-      "name": "list_entities",
+      "name": "glpi_list_entities",
       "arguments": {}
     },
     "id": 1
@@ -503,7 +503,7 @@ curl -X POST http://localhost:8824/mcp \
     "jsonrpc": "2.0",
     "method": "tools/call",
     "params": {
-      "name": "create_entity",
+      "name": "glpi_create_entity",
       "arguments": {
         "name": "ACME Corporation",
         "entity_type": "Cliente",
@@ -526,7 +526,7 @@ curl -X POST http://localhost:8824/mcp \
     "jsonrpc": "2.0",
     "method": "tools/call",
     "params": {
-      "name": "list_locations",
+      "name": "glpi_list_locations",
       "arguments": {}
     },
     "id": 1
@@ -543,7 +543,7 @@ curl -X POST http://localhost:8824/mcp \
     "jsonrpc": "2.0",
     "method": "tools/call",
     "params": {
-      "name": "create_location",
+      "name": "glpi_create_location",
       "arguments": {
         "name": "São Paulo",
         "address": "Av. Paulista, 1000",
@@ -629,7 +629,7 @@ pytest tests/test_handlers.py -v
 
 - [ ] Health check responde 200
 - [ ] `/health` retorna `status: healthy`
-- [ ] `/mcp` com `tools/list` retorna 65 ferramentas
+- [ ] `/mcp` com `tools/list` retorna 68 ferramentas (todas com prefixo glpi_)
 - [ ] Requisição sem User Token retorna erro claro de autenticação
 - [ ] Requisição com User Token válido funciona corretamente
 - [ ] Todas as 12 ticket tools funcionam

@@ -49,7 +49,7 @@ curl -X POST http://mcp.servidor.one:8824/mcp \
     "id": 1,
     "method": "tools/call",
     "params": {
-      "name": "prompts_list",
+      "name": "glpi_list_prompts",
       "arguments": {}
     }
   }'
@@ -86,7 +86,7 @@ curl -X POST http://mcp.servidor.one:8824/mcp \
     "id": 2,
     "method": "tools/call",
     "params": {
-      "name": "prompts_get",
+      "name": "glpi_get_prompt",
       "arguments": {
         "name": "glpi_sla_performance",
         "arguments": {
@@ -117,7 +117,7 @@ curl -X POST http://mcp.servidor.one:8824/mcp \
     "id": 3,
     "method": "tools/call",
     "params": {
-      "name": "prompts_get",
+      "name": "glpi_get_prompt",
       "arguments": {
         "name": "glpi_ticket_trends",
         "arguments": {
@@ -143,7 +143,7 @@ curl -X POST http://mcp.servidor.one:8824/mcp \
     "id": 4,
     "method": "tools/call",
     "params": {
-      "name": "prompts_get",
+      "name": "glpi_get_prompt",
       "arguments": {
         "name": "glpi_asset_roi",
         "arguments": {
@@ -169,7 +169,7 @@ curl -X POST http://mcp.servidor.one:8824/mcp \
     "id": 5,
     "method": "tools/call",
     "params": {
-      "name": "prompts_get",
+      "name": "glpi_get_prompt",
       "arguments": {
         "name": "glpi_technician_productivity",
         "arguments": {
@@ -195,7 +195,7 @@ curl -X POST http://mcp.servidor.one:8824/mcp \
     "id": 6,
     "method": "tools/call",
     "params": {
-      "name": "prompts_get",
+      "name": "glpi_get_prompt",
       "arguments": {
         "name": "glpi_cost_per_ticket",
         "arguments": {
@@ -222,7 +222,7 @@ curl -X POST http://mcp.servidor.one:8824/mcp \
     "id": 7,
     "method": "tools/call",
     "params": {
-      "name": "prompts_get",
+      "name": "glpi_get_prompt",
       "arguments": {
         "name": "glpi_recurring_problems",
         "arguments": {
@@ -249,7 +249,7 @@ curl -X POST http://mcp.servidor.one:8824/mcp \
     "id": 8,
     "method": "tools/call",
     "params": {
-      "name": "prompts_get",
+      "name": "glpi_get_prompt",
       "arguments": {
         "name": "glpi_client_satisfaction",
         "arguments": {
@@ -278,7 +278,7 @@ curl -X POST http://mcp.servidor.one:8824/mcp \
     "id": 9,
     "method": "tools/call",
     "params": {
-      "name": "prompts_get",
+      "name": "glpi_get_prompt",
       "arguments": {
         "name": "glpi_ticket_summary",
         "arguments": {
@@ -304,7 +304,7 @@ curl -X POST http://mcp.servidor.one:8824/mcp \
     "id": 10,
     "method": "tools/call",
     "params": {
-      "name": "prompts_get",
+      "name": "glpi_get_prompt",
       "arguments": {
         "name": "glpi_user_ticket_history",
         "arguments": {
@@ -330,7 +330,7 @@ curl -X POST http://mcp.servidor.one:8824/mcp \
     "id": 11,
     "method": "tools/call",
     "params": {
-      "name": "prompts_get",
+      "name": "glpi_get_prompt",
       "arguments": {
         "name": "glpi_asset_lookup",
         "arguments": {
@@ -356,7 +356,7 @@ curl -X POST http://mcp.servidor.one:8824/mcp \
     "id": 12,
     "method": "tools/call",
     "params": {
-      "name": "prompts_get",
+      "name": "glpi_get_prompt",
       "arguments": {
         "name": "glpi_onboarding_checklist",
         "arguments": {
@@ -383,7 +383,7 @@ curl -X POST http://mcp.servidor.one:8824/mcp \
     "id": 13,
     "method": "tools/call",
     "params": {
-      "name": "prompts_get",
+      "name": "glpi_get_prompt",
       "arguments": {
         "name": "glpi_incident_investigation",
         "arguments": {
@@ -409,7 +409,7 @@ curl -X POST http://mcp.servidor.one:8824/mcp \
     "id": 14,
     "method": "tools/call",
     "params": {
-      "name": "prompts_get",
+      "name": "glpi_get_prompt",
       "arguments": {
         "name": "glpi_change_management",
         "arguments": {
@@ -435,7 +435,7 @@ curl -X POST http://mcp.servidor.one:8824/mcp \
     "id": 15,
     "method": "tools/call",
     "params": {
-      "name": "prompts_get",
+      "name": "glpi_get_prompt",
       "arguments": {
         "name": "glpi_hardware_request",
         "arguments": {
@@ -462,7 +462,7 @@ curl -X POST http://mcp.servidor.one:8824/mcp \
     "id": 16,
     "method": "tools/call",
     "params": {
-      "name": "prompts_get",
+      "name": "glpi_get_prompt",
       "arguments": {
         "name": "glpi_knowledge_base_search",
         "arguments": {
