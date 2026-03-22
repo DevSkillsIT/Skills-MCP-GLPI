@@ -1501,21 +1501,26 @@ class MCPHandler:
                 except ValueError as e:
                     raise InvalidRequestError(str(e))
             elif method == "prompts/list":
-                # Redirecionar para o tool prompts_list e parsear resultado
-                import json
-
-                tool_result = await self.handle_call_tool("glpi_list_prompts", {})
-                # tool_result é uma lista [{"type": "text", "text": "..."}]
-                text_content = tool_result["content"][0]["text"]
-                prompts_data = json.loads(text_content)
-                result = {"prompts": prompts_data["prompts"]}
+                # SPEC-GLPI-ENHANCE-001/F07: Native prompts/list via PROMPTS_CATALOG
+                from src.prompts_handlers.prompts import PROMPTS_CATALOG
+                result = {"prompts": PROMPTS_CATALOG}
             elif method == "prompts/get":
-                # Redirecionar para o tool prompts_get
+                # SPEC-GLPI-ENHANCE-001/F07: Native prompts/get via handler
+                from src.prompts_handlers.prompts import handle_get_prompt
                 prompt_name = params.get("name")
                 prompt_args = params.get("arguments", {})
-                result = await self.handle_call_tool(
-                    "glpi_get_prompt", {"name": prompt_name, "arguments": prompt_args}
-                )
+                prompt_result = await handle_get_prompt(name=prompt_name, arguments=prompt_args)
+                result = {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": {
+                                "type": "text",
+                                "text": json.dumps(prompt_result, ensure_ascii=False, default=str) if isinstance(prompt_result, dict) else str(prompt_result),
+                            },
+                        }
+                    ]
+                }
             elif method == "notifications/initialized" or method == "initialized":
                 # MCP Protocol: confirmação de inicialização (notificação, retorna vazio)
                 result = {}
