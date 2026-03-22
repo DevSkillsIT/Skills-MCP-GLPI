@@ -32,7 +32,7 @@ class Settings(BaseSettings):
 
     # ============= GLPI Server =============
     glpi_base_url: str = Field(
-        default="https://suporte.meucomputador.com.br", alias="GLPI_BASE_URL"
+        default="https://your-glpi-server.example.com", alias="GLPI_BASE_URL"
     )
     glpi_app_token: str = Field(default="", alias="GLPI_APP_TOKEN")
     glpi_user_token: str = Field(default="", alias="GLPI_USER_TOKEN")
