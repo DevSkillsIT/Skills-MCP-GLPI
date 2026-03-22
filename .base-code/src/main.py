@@ -178,16 +178,27 @@ async def mcp_handler_http(request: Request, mcp_request: MCPRequest) -> MCPResp
     else:
         logger.error("❌ USER TOKEN NÃO ENCONTRADO NOS HEADERS!")
 
+    # Streamable HTTP: Manage session ID per MCP protocol spec
+    session_id = request.headers.get("mcp-session-id") or str(uuid.uuid4())
+    if session_id not in mcp_sessions:
+        mcp_sessions[session_id] = {"created_at": datetime.utcnow(), "active": True}
+
     # Delegar para mcp_handler.handle_request conforme auditoria BUG-CRIT-01
     response = await mcp_handler.handle_request(mcp_request.model_dump())
     result = response.get("result")
     if result is not None:
         result = response_truncator.truncate_json_response(result)
-    return MCPResponse(
+    mcp_response = MCPResponse(
         jsonrpc=response.get("jsonrpc", "2.0"),
         result=result,
         error=response.get("error"),
         id=response.get("id")
+    )
+    # Return with Mcp-Session-Id header (required for Streamable HTTP transport)
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        content=mcp_response.model_dump(exclude_none=True),
+        headers={"Mcp-Session-Id": session_id},
     )
 
 
