@@ -118,7 +118,7 @@ class TestSearchTicketsMarkdown:
     ) -> None:
         """format_tool_response routes correctly to Markdown formatter."""
         result = format_tool_response(
-            "glpi_search_ticket_incidents", sample_tickets, default_args
+            "glpi_search_ticket_requests", sample_tickets, default_args
         )
         assert "| ID |" in result
         assert '"id":' not in result
@@ -170,7 +170,7 @@ class TestManageTicketsGetMarkdown:
 
 
 SEARCH_TOOL_NAMES = [
-    "glpi_search_ticket_incidents",
+    "glpi_search_ticket_requests",
     "glpi_search_asset_inventory",
     "glpi_search_admin_resources",
     "glpi_search_webhook_integrations",
@@ -242,7 +242,7 @@ class TestEmptyListFriendlyMessage:
 
     def test_none_search_via_format_tool_response(self) -> None:
         """None data for search tool returns friendly message."""
-        result = format_tool_response("glpi_search_ticket_incidents", None, {})
+        result = format_tool_response("glpi_search_ticket_requests", None, {})
         assert result == "Nenhum resultado encontrado."
         assert "[]" not in result
 

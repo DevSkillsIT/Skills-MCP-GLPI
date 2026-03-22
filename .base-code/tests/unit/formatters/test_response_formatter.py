@@ -61,7 +61,7 @@ class TestSearchTicketsMarkdown:
 
     def test_returns_markdown(self) -> None:
         data = [_ticket(1), _ticket(2)]
-        result = format_tool_response("glpi_search_ticket_incidents", data, {})
+        result = format_tool_response("glpi_search_ticket_requests", data, {})
         assert "| ID |" in result
         assert result.startswith("**2 resultados**")
         # Should NOT be JSON
@@ -108,7 +108,7 @@ class TestNoneSearchResponse:
     """4. None response for search tool returns empty message."""
 
     def test_search_none(self) -> None:
-        result = format_tool_response("glpi_search_ticket_incidents", None, {})
+        result = format_tool_response("glpi_search_ticket_requests", None, {})
         assert result == "Nenhum resultado encontrado."
 
     def test_search_assets_none(self) -> None:
@@ -144,7 +144,7 @@ class TestStringPassthrough:
     """6. String data is returned as-is."""
 
     def test_string_data(self) -> None:
-        result = format_tool_response("glpi_search_ticket_incidents", "already markdown", {})
+        result = format_tool_response("glpi_search_ticket_requests", "already markdown", {})
         assert result == "already markdown"
 
     def test_bridge_string(self) -> None:
@@ -163,7 +163,7 @@ class TestLargeResponse:
     def test_large_response(self) -> None:
         # Create data that will produce a large Markdown output
         tickets = [_ticket(i) for i in range(5000)]
-        result = format_tool_response("glpi_search_ticket_incidents", tickets, {"limit": 5000, "offset": 0})
+        result = format_tool_response("glpi_search_ticket_requests", tickets, {"limit": 5000, "offset": 0})
         # If the formatted output exceeds 400KB, we get the error message
         if "excede" in result:
             assert "400KB" in result or "KB" in result
@@ -181,7 +181,7 @@ class TestToolFormattersRegistry:
     """8. All expected tools are registered in TOOL_FORMATTERS."""
 
     EXPECTED_TOOLS = [
-        "glpi_search_ticket_incidents",
+        "glpi_search_ticket_requests",
         "glpi_manage_ticket_operations",
         "glpi_manage_ticket_ai_analysis",
         "glpi_search_asset_inventory",
@@ -480,9 +480,9 @@ class TestFormatterExceptionFallback:
         def boom_formatter(data: object, args: object) -> str:
             raise ValueError("boom")
 
-        with patch.dict(TOOL_FORMATTERS, {"glpi_search_ticket_incidents": boom_formatter}):
+        with patch.dict(TOOL_FORMATTERS, {"glpi_search_ticket_requests": boom_formatter}):
             data = [_ticket(1)]
-            result = format_tool_response("glpi_search_ticket_incidents", data, {})
+            result = format_tool_response("glpi_search_ticket_requests", data, {})
             # Should fall back to JSON
             parsed = json.loads(result)
             assert isinstance(parsed, list)
@@ -491,9 +491,9 @@ class TestFormatterExceptionFallback:
         def bad_formatter(data: object, args: object) -> str:
             raise RuntimeError("unexpected")
 
-        with patch.dict(TOOL_FORMATTERS, {"glpi_search_ticket_incidents": bad_formatter}):
+        with patch.dict(TOOL_FORMATTERS, {"glpi_search_ticket_requests": bad_formatter}):
             data = {"id": 1}
-            result = format_tool_response("glpi_search_ticket_incidents", data, {})
+            result = format_tool_response("glpi_search_ticket_requests", data, {})
             parsed = json.loads(result)
             assert parsed["id"] == 1
 
@@ -506,7 +506,7 @@ class TestFallbackChain:
         assert result == ""
 
     def test_none_search_returns_not_found(self) -> None:
-        result = format_tool_response("glpi_search_ticket_incidents", None, {})
+        result = format_tool_response("glpi_search_ticket_requests", None, {})
         assert result == "Nenhum resultado encontrado."
 
     def test_unknown_tool_with_none(self) -> None:
@@ -514,7 +514,7 @@ class TestFallbackChain:
         assert result == ""
 
     def test_string_always_passthrough(self) -> None:
-        for tool in ["glpi_search_ticket_incidents", "glpi_manage_ticket_operations", "glpi_unknown"]:
+        for tool in ["glpi_search_ticket_requests", "glpi_manage_ticket_operations", "glpi_unknown"]:
             result = format_tool_response(tool, "passthrough", {})
             assert result == "passthrough"
 
@@ -557,10 +557,10 @@ class TestDefaultArgsFallback:
     def test_none_args_defaults(self) -> None:
         data = [_ticket(1)]
         # Should not raise even with args=None
-        result = format_tool_response("glpi_search_ticket_incidents", data, None)
+        result = format_tool_response("glpi_search_ticket_requests", data, None)
         assert "| ID |" in result
 
     def test_missing_args(self) -> None:
         data = [_ticket(1)]
-        result = format_tool_response("glpi_search_ticket_incidents", data)
+        result = format_tool_response("glpi_search_ticket_requests", data)
         assert "| ID |" in result

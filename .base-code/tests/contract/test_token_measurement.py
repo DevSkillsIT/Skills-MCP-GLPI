@@ -89,7 +89,7 @@ class TestMarkdownSmallerThanJson:
     ) -> None:
         """format_tool_response also produces smaller output than JSON."""
         markdown_output = format_tool_response(
-            "glpi_search_ticket_incidents", large_ticket_list, default_args
+            "glpi_search_ticket_requests", large_ticket_list, default_args
         )
         json_output = json.dumps(
             large_ticket_list, ensure_ascii=False, indent=2
@@ -135,7 +135,7 @@ class TestResponseSizeLimit:
             ]
         }
         result = format_tool_response(
-            "glpi_search_ticket_incidents", huge_list, {"limit": 100, "offset": 0}
+            "glpi_search_ticket_requests", huge_list, {"limit": 100, "offset": 0}
         )
         # Either the result is valid Markdown or a size-exceeded message
         size_bytes = len(result.encode("utf-8"))

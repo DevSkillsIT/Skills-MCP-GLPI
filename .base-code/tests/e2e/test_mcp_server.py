@@ -90,7 +90,7 @@ async def test_tools_list_count():
     assert len(tools) >= 14
     tool_names = [t["name"] for t in tools]
     # Check core tools
-    assert "glpi_search_ticket_incidents" in tool_names
+    assert "glpi_search_ticket_requests" in tool_names
     assert "glpi_manage_ticket_operations" in tool_names
     assert "glpi_search_asset_inventory" in tool_names
     assert "glpi_manage_asset_operations" in tool_names
@@ -129,7 +129,7 @@ async def test_resources_list():
 async def test_search_tickets_returns_markdown():
     """search_tickets returns Markdown, not JSON."""
     res = await mcp_call("tools/call", {
-        "name": "glpi_search_ticket_incidents",
+        "name": "glpi_search_ticket_requests",
         "arguments": {"limit": 5},
     })
     text = res.get("result", {}).get("content", [{}])[0].get("text", "")
@@ -158,7 +158,7 @@ async def test_search_assets_returns_markdown():
 async def test_default_limit_is_10():
     """search_tickets without limit returns max 10 results."""
     res = await mcp_call("tools/call", {
-        "name": "glpi_search_ticket_incidents",
+        "name": "glpi_search_ticket_requests",
         "arguments": {},
     })
     text = res.get("result", {}).get("content", [{}])[0].get("text", "")
@@ -188,7 +188,7 @@ async def test_read_resource_ticket_status():
 async def test_response_size_under_400kb():
     """search_tickets with max limit stays under 400KB."""
     res = await mcp_call("tools/call", {
-        "name": "glpi_search_ticket_incidents",
+        "name": "glpi_search_ticket_requests",
         "arguments": {"limit": 50},
     })
     text = res.get("result", {}).get("content", [{}])[0].get("text", "")

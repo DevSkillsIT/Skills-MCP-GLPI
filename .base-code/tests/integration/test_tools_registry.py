@@ -16,7 +16,7 @@ from src.formatters.response_formatter import TOOL_FORMATTERS
 # All 14 tool names expected in the TOOL_FORMATTERS registry
 EXPECTED_TOOLS = [
     # Tickets (3)
-    "glpi_search_ticket_incidents",
+    "glpi_search_ticket_requests",
     "glpi_manage_ticket_operations",
     "glpi_manage_ticket_ai_analysis",
     # Assets (2)
@@ -38,7 +38,7 @@ EXPECTED_TOOLS = [
 ]
 
 SEARCH_TOOLS = [
-    "glpi_search_ticket_incidents",
+    "glpi_search_ticket_requests",
     "glpi_search_asset_inventory",
     "glpi_search_admin_resources",
     "glpi_search_webhook_integrations",

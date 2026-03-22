@@ -57,12 +57,12 @@ class MCPHandler:
         CONSOLIDATED_TOOLS = [
             # === TICKETS (3 tools) ===
             {
-                "name": "glpi_search_ticket_incidents",  # 31 chars
+                "name": "glpi_search_ticket_requests",  # 30 chars
                 "description": (
-                    "Chamados, tickets, incidentes e requisicoes no GLPI — listagem e busca textual com filtros por status, "
-                    "prioridade, entidade e periodo. Use quando precisar consultar solicitacoes abertas, pendentes ou fechadas "
-                    "de um cliente no GLPI. Retorna tabela Markdown com id, titulo, status, prioridade e data. Consulta somente leitura."
-                ),  # 338 chars
+                    "Chamados, tickets, incidentes, requisicoes e solicitacoes no GLPI — listagem e busca textual com filtros "
+                    "por status, prioridade, entidade e periodo. Use quando precisar consultar demandas abertas, pendentes ou "
+                    "fechadas de um cliente no GLPI. Retorna tabela Markdown paginada. Consulta somente leitura."
+                ),  # 330 chars
                 "input_schema": {
                     "type": "object",
                     "properties": {
@@ -82,11 +82,11 @@ class MCPHandler:
             {
                 "name": "glpi_manage_ticket_operations",  # 33 chars
                 "description": (
-                    "Chamados, tickets e incidentes no GLPI — operacoes completas de criacao, consulta, atualizacao, atribuicao, "
-                    "resolucao, fechamento, followups, historico e busca de similares. Use action para especificar: "
+                    "Chamados, tickets, incidentes e requisicoes no GLPI — operacoes completas de criacao, consulta, atualizacao, "
+                    "atribuicao, resolucao, fechamento e acompanhamentos. Use action para especificar operacao no GLPI: "
                     "get, create, update, delete, assign, close, resolve, add_followup, get_followups, get_history, get_stats, find_similar. "
-                    "Retorna Markdown formatado."
-                ),  # 380 chars
+                    "Retorna Markdown."
+                ),  # 382 chars
                 "input_schema": {
                     "type": "object",
                     "properties": {
@@ -158,9 +158,9 @@ class MCPHandler:
                 "name": "glpi_manage_asset_operations",  # 32 chars
                 "description": (
                     "Ativos, equipamentos e patrimonio no GLPI — operacoes de cadastro, consulta detalhada, atualizacao, "
-                    "exclusao e gerenciamento de reservas de equipamentos. Use action para especificar: get, get_details, "
-                    "create, update, delete, get_reservations, create_reservation, update_reservation. Retorna Markdown formatado."
-                ),  # 346 chars
+                    "exclusao e gerenciamento de reservas. Use action para especificar operacao no GLPI: get, get_details, "
+                    "create, update, delete, get_reservations, create_reservation, update_reservation. Retorna Markdown."
+                ),  # 342 chars
                 "input_schema": {
                     "type": "object",
                     "properties": {
@@ -203,9 +203,9 @@ class MCPHandler:
                 "name": "glpi_manage_admin_resources",  # 31 chars
                 "description": (
                     "Usuarios, colaboradores, grupos, entidades e localizacoes no GLPI — operacoes de cadastro, consulta "
-                    "detalhada, atualizacao e exclusao de recursos administrativos. Use resource + action para especificar: "
-                    "get (detalhe), create (cadastrar), update (atualizar), delete (excluir). Retorna Markdown formatado."
-                ),  # 330 chars
+                    "detalhada, atualizacao e exclusao de recursos administrativos. Use resource + action no GLPI: "
+                    "get (detalhe), create (cadastrar), update (atualizar), delete (excluir). Retorna Markdown."
+                ),  # 324 chars
                 "input_schema": {
                     "type": "object",
                     "properties": {
@@ -246,9 +246,9 @@ class MCPHandler:
                 "name": "glpi_manage_webhook_integrations",  # 36 chars
                 "description": (
                     "Webhooks, integracoes e notificacoes automaticas no GLPI — operacoes de cadastro, atualizacao, exclusao, "
-                    "teste de conectividade, disparo manual, ativacao e desativacao de endpoints. Use action para especificar: "
-                    "get, create, update, delete, test, trigger, enable, disable, retry. Retorna Markdown formatado."
-                ),  # 347 chars
+                    "teste de conectividade, disparo manual e controle de endpoints. Use action no GLPI: "
+                    "get, create, update, delete, test, trigger, enable, disable, retry. Retorna Markdown."
+                ),  # 330 chars
                 "input_schema": {
                     "type": "object",
                     "properties": {
@@ -1525,7 +1525,7 @@ class MCPHandler:
                         "Servidor MCP GLPI - Gerenciamento de chamados, ativos, usuarios e webhooks\n\n"
                         "=== CATEGORIAS DE TOOLS ===\n\n"
                         "TICKETS (3 tools):\n"
-                        "- glpi_search_ticket_incidents: Buscar chamados, incidentes e requisicoes por status, entidade, prioridade.\n"
+                        "- glpi_search_ticket_requests: Buscar chamados, incidentes e requisicoes por status, entidade, prioridade.\n"
                         "- glpi_manage_ticket_operations: CRUD completo (action: get/create/update/delete/assign/close/resolve/add_followup/get_followups/get_history/get_stats/find_similar).\n"
                         "- glpi_manage_ticket_ai_analysis: Analise IA (action: trigger/get_result/publish).\n\n"
                         "ATIVOS (2 tools):\n"
