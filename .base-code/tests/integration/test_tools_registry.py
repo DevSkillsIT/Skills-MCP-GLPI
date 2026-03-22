@@ -16,48 +16,48 @@ from src.formatters.response_formatter import TOOL_FORMATTERS
 # All 14 tool names expected in the TOOL_FORMATTERS registry
 EXPECTED_TOOLS = [
     # Tickets (3)
-    "glpi_search_tickets",
-    "glpi_manage_tickets",
-    "glpi_manage_ai_analysis",
+    "glpi_search_ticket_incidents",
+    "glpi_manage_ticket_operations",
+    "glpi_manage_ticket_ai_analysis",
     # Assets (2)
-    "glpi_search_assets",
-    "glpi_manage_assets",
+    "glpi_search_asset_inventory",
+    "glpi_manage_asset_operations",
     # Admin (2)
-    "glpi_search_admin",
-    "glpi_manage_admin",
+    "glpi_search_admin_resources",
+    "glpi_manage_admin_resources",
     # Webhooks (2)
-    "glpi_search_webhooks",
-    "glpi_manage_webhooks",
+    "glpi_search_webhook_integrations",
+    "glpi_manage_webhook_integrations",
     # Knowledge (1)
-    "glpi_search_knowledge",
+    "glpi_search_knowledge_articles",
     # Bridge (4)
-    "glpi_list_resources",
-    "glpi_read_resource",
-    "glpi_list_prompts",
-    "glpi_get_prompt",
+    "glpi_list_available_resources",
+    "glpi_read_resource_by_uri",
+    "glpi_list_available_prompts",
+    "glpi_get_prompt_template",
 ]
 
 SEARCH_TOOLS = [
-    "glpi_search_tickets",
-    "glpi_search_assets",
-    "glpi_search_admin",
-    "glpi_search_webhooks",
-    "glpi_search_knowledge",
+    "glpi_search_ticket_incidents",
+    "glpi_search_asset_inventory",
+    "glpi_search_admin_resources",
+    "glpi_search_webhook_integrations",
+    "glpi_search_knowledge_articles",
 ]
 
 MANAGE_TOOLS = [
-    "glpi_manage_tickets",
-    "glpi_manage_assets",
-    "glpi_manage_admin",
-    "glpi_manage_webhooks",
-    "glpi_manage_ai_analysis",
+    "glpi_manage_ticket_operations",
+    "glpi_manage_asset_operations",
+    "glpi_manage_admin_resources",
+    "glpi_manage_webhook_integrations",
+    "glpi_manage_ticket_ai_analysis",
 ]
 
 BRIDGE_TOOLS = [
-    "glpi_list_resources",
-    "glpi_read_resource",
-    "glpi_list_prompts",
-    "glpi_get_prompt",
+    "glpi_list_available_resources",
+    "glpi_read_resource_by_uri",
+    "glpi_list_available_prompts",
+    "glpi_get_prompt_template",
 ]
 
 

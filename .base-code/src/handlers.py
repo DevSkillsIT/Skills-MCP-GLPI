@@ -51,38 +51,59 @@ class MCPHandler:
         """
         tools = {}
 
-        # SPEC-GLPI-ENHANCE-001/F03+F04: Consolidated tools with annotations
-        # Pattern: search_* (read-only) + manage_* (CRUD with destructiveHint)
+        # SPEC-GLPI-ENHANCE-001/F03+F04 + DIRETRIZES-OBRIGATORIAS-MCP-TOOLS-NOMENCLATURA
+        # Names: 30-48 chars, {MCP_ID}_{verb}_{resource}, English
+        # Descriptions: pt-BR, 250-400 chars, [SUBSTANTIVO-CHAVE]+[QUANDO]+[RETORNO], GLPI 2x, 2-4 synonyms
         CONSOLIDATED_TOOLS = [
             # === TICKETS (3 tools) ===
             {
-                "name": "glpi_search_tickets",
-                "description": self._get_tool_description("glpi_search_tickets"),
-                "input_schema": self._get_tool_schema("glpi_search_tickets", "ticket"),
+                "name": "glpi_search_ticket_incidents",  # 31 chars
+                "description": (
+                    "Chamados, tickets, incidentes e requisicoes no GLPI — listagem e busca textual com filtros por status, "
+                    "prioridade, entidade e periodo. Use quando precisar consultar solicitacoes abertas, pendentes ou fechadas "
+                    "de um cliente no GLPI. Retorna tabela Markdown com id, titulo, status, prioridade e data. Consulta somente leitura."
+                ),  # 338 chars
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "status": {"type": "string", "description": "Status do chamado no GLPI. Valores: new (novo), processing (em atendimento), pending (pendente), solved (solucionado), closed (fechado)", "enum": ["new", "processing", "pending", "solved", "closed"]},
+                        "priority": {"type": "integer", "description": "Prioridade do chamado. Valores: 1 (muito baixa), 2 (baixa), 3 (media), 4 (alta), 5 (muito alta)", "minimum": 1, "maximum": 5},
+                        "entity_id": {"type": "integer", "description": "ID da entidade/cliente no GLPI"},
+                        "entity_name": {"type": "string", "description": "Nome da entidade/cliente (ex: 'GSM', 'Skills IT')"},
+                        "query": {"type": "string", "description": "Texto para busca em titulo e conteudo (minimo 2 caracteres)"},
+                        "limit": {"type": "integer", "description": "Quantidade maxima de resultados (padrao: 10, maximo: 50)", "minimum": 1, "maximum": 50, "default": 10},
+                        "offset": {"type": "integer", "description": "Deslocamento para paginacao (padrao: 0)", "minimum": 0, "default": 0},
+                    },
+                },
                 "handler": search_tickets,
                 "category": "tickets",
                 "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
             },
             {
-                "name": "glpi_manage_tickets",
-                "description": "Chamado e operacoes CRUD no GLPI — detalhes, criar, atualizar, fechar, resolver, followups, historico, similares. Use action para especificar operacao (get/create/update/delete/assign/close/resolve/add_followup/get_followups/get_history/get_stats/find_similar). Retorna Markdown.",
+                "name": "glpi_manage_ticket_operations",  # 33 chars
+                "description": (
+                    "Chamados, tickets e incidentes no GLPI — operacoes completas de criacao, consulta, atualizacao, atribuicao, "
+                    "resolucao, fechamento, followups, historico e busca de similares. Use action para especificar: "
+                    "get, create, update, delete, assign, close, resolve, add_followup, get_followups, get_history, get_stats, find_similar. "
+                    "Retorna Markdown formatado."
+                ),  # 380 chars
                 "input_schema": {
                     "type": "object",
                     "properties": {
-                        "action": {"type": "string", "description": "Operacao a executar", "enum": ["get", "get_by_number", "create", "update", "delete", "assign", "close", "resolve", "add_followup", "get_followups", "get_history", "get_stats", "find_similar"]},
-                        "ticket_id": {"type": "integer", "description": "ID do ticket (obrigatorio para maioria das actions)"},
-                        "title": {"type": "string", "description": "Titulo (para create)"},
-                        "description": {"type": "string", "description": "Descricao (para create)"},
-                        "content": {"type": "string", "description": "Conteudo do followup (para add_followup)"},
-                        "status": {"type": "string", "enum": ["new", "processing", "pending", "solved", "closed"]},
-                        "priority": {"type": "integer", "minimum": 1, "maximum": 5},
-                        "entity_id": {"type": "integer"},
-                        "entity_name": {"type": "string"},
-                        "user_id": {"type": "integer", "description": "ID do tecnico (para assign)"},
-                        "solution": {"type": "string", "description": "Texto da solucao (para resolve/close)"},
-                        "ticket_number": {"type": "string", "description": "Numero do ticket (para get_by_number)"},
-                        "query": {"type": "string", "description": "Texto para busca de similares (para find_similar)"},
-                        "is_private": {"type": "boolean", "default": False},
+                        "action": {"type": "string", "description": "Operacao a executar no GLPI. Valores: get (detalhe), get_by_number (busca por numero), create (criar), update (atualizar), delete (excluir), assign (atribuir tecnico), close (fechar), resolve (resolver), add_followup (comentar), get_followups (listar comentarios), get_history (historico), get_stats (estatisticas), find_similar (tickets similares)", "enum": ["get", "get_by_number", "create", "update", "delete", "assign", "close", "resolve", "add_followup", "get_followups", "get_history", "get_stats", "find_similar"]},
+                        "ticket_id": {"type": "integer", "description": "ID do chamado no GLPI (obrigatorio para get, update, delete, assign, close, resolve, add_followup, get_followups, get_history)"},
+                        "title": {"type": "string", "description": "Titulo do chamado (obrigatorio para create)"},
+                        "description": {"type": "string", "description": "Descricao detalhada do problema (obrigatorio para create)"},
+                        "content": {"type": "string", "description": "Conteudo do acompanhamento (obrigatorio para add_followup)"},
+                        "status": {"type": "string", "description": "Novo status. Valores: new, processing, pending, solved, closed", "enum": ["new", "processing", "pending", "solved", "closed"]},
+                        "priority": {"type": "integer", "description": "Prioridade. Valores: 1 (muito baixa) a 5 (muito alta)", "minimum": 1, "maximum": 5},
+                        "entity_id": {"type": "integer", "description": "ID da entidade/cliente no GLPI"},
+                        "entity_name": {"type": "string", "description": "Nome da entidade/cliente no GLPI"},
+                        "user_id": {"type": "integer", "description": "ID do tecnico para atribuicao (obrigatorio para assign)"},
+                        "solution": {"type": "string", "description": "Texto da solucao tecnica (obrigatorio para resolve e close)"},
+                        "ticket_number": {"type": "string", "description": "Numero do chamado como string (para get_by_number)"},
+                        "query": {"type": "string", "description": "Texto para busca de chamados similares (para find_similar)"},
+                        "is_private": {"type": "boolean", "description": "Se true, followup visivel apenas para tecnicos. Padrao: false", "default": False},
                     },
                     "required": ["action"],
                 },
@@ -91,13 +112,17 @@ class MCPHandler:
                 "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True},
             },
             {
-                "name": "glpi_manage_ai_analysis",
-                "description": "Analise de IA em chamados no GLPI — dispara, consulta resultado ou publica resposta. Use action: trigger/get_result/publish. Retorna Markdown.",
+                "name": "glpi_manage_ticket_ai_analysis",  # 34 chars
+                "description": (
+                    "Analise inteligente de chamados e incidentes no GLPI — processamento por IA com categorizacao, priorizacao "
+                    "e sugestoes de solucao automaticas. Use quando precisar de recomendacoes baseadas no historico do GLPI. "
+                    "Acoes: trigger (disparar), get_result (consultar resultado), publish (publicar resposta). Retorna Markdown."
+                ),  # 340 chars
                 "input_schema": {
                     "type": "object",
                     "properties": {
-                        "action": {"type": "string", "enum": ["trigger", "get_result", "publish"]},
-                        "ticket_id": {"type": "integer"},
+                        "action": {"type": "string", "description": "Operacao de IA no GLPI. Valores: trigger (disparar analise), get_result (consultar resultado), publish (publicar resposta no ticket)", "enum": ["trigger", "get_result", "publish"]},
+                        "ticket_id": {"type": "integer", "description": "ID do chamado no GLPI para analise"},
                     },
                     "required": ["action"],
                 },
@@ -107,18 +132,22 @@ class MCPHandler:
             },
             # === ASSETS (2 tools) ===
             {
-                "name": "glpi_search_assets",
-                "description": "Ativos de TI no GLPI — buscar computadores, monitores, software, dispositivos, reservas e estatisticas. Use scope para tipo de busca (all/computers/monitors/software/devices/reservations/reservable/stats). Retorna Markdown.",
+                "name": "glpi_search_asset_inventory",  # 31 chars
+                "description": (
+                    "Ativos, equipamentos, patrimonio e inventario de TI no GLPI — busca por computadores, monitores, impressoras, "
+                    "software, dispositivos de rede, reservas e estatisticas. Use scope para filtrar tipo de busca no GLPI. "
+                    "Aceita filtro por entidade e tipo de ativo. Retorna tabela Markdown paginada. Consulta somente leitura."
+                ),  # 342 chars
                 "input_schema": {
                     "type": "object",
                     "properties": {
-                        "scope": {"type": "string", "enum": ["all", "computers", "monitors", "software", "devices", "reservations", "reservable", "stats"], "default": "all"},
-                        "asset_type": {"type": "string", "enum": ["Computer", "Monitor", "Printer", "NetworkEquipment", "Phone", "Peripheral"]},
-                        "query": {"type": "string"},
-                        "entity_id": {"type": "integer"},
-                        "entity_name": {"type": "string"},
-                        "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 10},
-                        "offset": {"type": "integer", "minimum": 0, "default": 0},
+                        "scope": {"type": "string", "description": "Escopo da busca no GLPI. Valores: all (todos os ativos), computers (computadores), monitors (monitores), software (programas), devices (dispositivos de rede/telefone), reservations (reservas ativas), reservable (itens reservaveis), stats (estatisticas)", "enum": ["all", "computers", "monitors", "software", "devices", "reservations", "reservable", "stats"], "default": "all"},
+                        "asset_type": {"type": "string", "description": "Tipo de ativo no GLPI. Valores: Computer, Monitor, Printer, NetworkEquipment, Phone, Peripheral", "enum": ["Computer", "Monitor", "Printer", "NetworkEquipment", "Phone", "Peripheral"]},
+                        "query": {"type": "string", "description": "Texto para busca por nome, serial ou usuario vinculado"},
+                        "entity_id": {"type": "integer", "description": "ID da entidade/cliente no GLPI"},
+                        "entity_name": {"type": "string", "description": "Nome da entidade/cliente no GLPI"},
+                        "limit": {"type": "integer", "description": "Quantidade maxima de resultados (padrao: 10, maximo: 50)", "minimum": 1, "maximum": 50, "default": 10},
+                        "offset": {"type": "integer", "description": "Deslocamento para paginacao (padrao: 0)", "minimum": 0, "default": 0},
                     },
                 },
                 "handler": search_assets,
@@ -126,16 +155,20 @@ class MCPHandler:
                 "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
             },
             {
-                "name": "glpi_manage_assets",
-                "description": "Ativo e operacoes CRUD no GLPI — detalhes, criar, atualizar, excluir, reservas. Use action (get/get_details/create/update/delete/get_reservations/create_reservation/update_reservation). Retorna Markdown.",
+                "name": "glpi_manage_asset_operations",  # 32 chars
+                "description": (
+                    "Ativos, equipamentos e patrimonio no GLPI — operacoes de cadastro, consulta detalhada, atualizacao, "
+                    "exclusao e gerenciamento de reservas de equipamentos. Use action para especificar: get, get_details, "
+                    "create, update, delete, get_reservations, create_reservation, update_reservation. Retorna Markdown formatado."
+                ),  # 346 chars
                 "input_schema": {
                     "type": "object",
                     "properties": {
-                        "action": {"type": "string", "enum": ["get", "get_details", "create", "update", "delete", "get_reservations", "create_reservation", "update_reservation"]},
-                        "asset_type": {"type": "string", "enum": ["Computer", "Monitor", "Printer", "NetworkEquipment", "Phone", "Peripheral"]},
-                        "asset_id": {"type": "integer"},
-                        "name": {"type": "string"},
-                        "serial_number": {"type": "string"},
+                        "action": {"type": "string", "description": "Operacao sobre ativo no GLPI. Valores: get (detalhes basicos), get_details (detalhes com hardware), create (cadastrar), update (atualizar), delete (excluir), get_reservations (ver reservas), create_reservation (reservar), update_reservation (alterar reserva)", "enum": ["get", "get_details", "create", "update", "delete", "get_reservations", "create_reservation", "update_reservation"]},
+                        "asset_type": {"type": "string", "description": "Tipo de ativo no GLPI. Valores: Computer, Monitor, Printer, NetworkEquipment, Phone, Peripheral", "enum": ["Computer", "Monitor", "Printer", "NetworkEquipment", "Phone", "Peripheral"]},
+                        "asset_id": {"type": "integer", "description": "ID do ativo no GLPI (obrigatorio para get, update, delete, get_reservations)"},
+                        "name": {"type": "string", "description": "Nome do ativo (obrigatorio para create)"},
+                        "serial_number": {"type": "string", "description": "Numero de serie do equipamento"},
                     },
                     "required": ["action"],
                 },
@@ -145,17 +178,21 @@ class MCPHandler:
             },
             # === ADMIN (2 tools) ===
             {
-                "name": "glpi_search_admin",
-                "description": "Usuarios, grupos, entidades e localizacoes no GLPI — buscar por resource (users/groups/entities/locations) com filtros. Retorna Markdown.",
+                "name": "glpi_search_admin_resources",  # 31 chars
+                "description": (
+                    "Usuarios, colaboradores, tecnicos, grupos, entidades e localizacoes no GLPI — busca unificada de recursos "
+                    "administrativos com filtros por nome, email e entidade. Use resource para selecionar: users, groups, "
+                    "entities, locations. Aceita query para busca textual no GLPI. Retorna tabela Markdown. Consulta somente leitura."
+                ),  # 354 chars
                 "input_schema": {
                     "type": "object",
                     "properties": {
-                        "resource": {"type": "string", "enum": ["users", "groups", "entities", "locations"], "default": "users"},
-                        "query": {"type": "string"},
-                        "entity_id": {"type": "integer"},
-                        "entity_name": {"type": "string"},
-                        "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 10},
-                        "offset": {"type": "integer", "minimum": 0, "default": 0},
+                        "resource": {"type": "string", "description": "Tipo de recurso administrativo no GLPI. Valores: users (usuarios/tecnicos), groups (grupos/equipes), entities (entidades/clientes), locations (localizacoes/escritorios)", "enum": ["users", "groups", "entities", "locations"], "default": "users"},
+                        "query": {"type": "string", "description": "Texto para busca por nome, sobrenome, email ou login (aplica-se a users)"},
+                        "entity_id": {"type": "integer", "description": "ID da entidade/cliente para filtrar no GLPI"},
+                        "entity_name": {"type": "string", "description": "Nome da entidade/cliente para filtrar no GLPI"},
+                        "limit": {"type": "integer", "description": "Quantidade maxima de resultados (padrao: 10, maximo: 50)", "minimum": 1, "maximum": 50, "default": 10},
+                        "offset": {"type": "integer", "description": "Deslocamento para paginacao (padrao: 0)", "minimum": 0, "default": 0},
                     },
                 },
                 "handler": search_admin,
@@ -163,16 +200,20 @@ class MCPHandler:
                 "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
             },
             {
-                "name": "glpi_manage_admin",
-                "description": "Operacoes CRUD em usuarios, grupos, entidades e localizacoes no GLPI. Use resource + action (get/create/update/delete). Retorna Markdown.",
+                "name": "glpi_manage_admin_resources",  # 31 chars
+                "description": (
+                    "Usuarios, colaboradores, grupos, entidades e localizacoes no GLPI — operacoes de cadastro, consulta "
+                    "detalhada, atualizacao e exclusao de recursos administrativos. Use resource + action para especificar: "
+                    "get (detalhe), create (cadastrar), update (atualizar), delete (excluir). Retorna Markdown formatado."
+                ),  # 330 chars
                 "input_schema": {
                     "type": "object",
                     "properties": {
-                        "resource": {"type": "string", "enum": ["users", "groups", "entities", "locations"]},
-                        "action": {"type": "string", "enum": ["get", "create", "update", "delete"]},
-                        "resource_id": {"type": "integer"},
-                        "name": {"type": "string"},
-                        "email": {"type": "string"},
+                        "resource": {"type": "string", "description": "Tipo de recurso administrativo no GLPI. Valores: users (usuarios), groups (grupos), entities (entidades), locations (localizacoes)", "enum": ["users", "groups", "entities", "locations"]},
+                        "action": {"type": "string", "description": "Operacao a executar no GLPI. Valores: get (consultar detalhes), create (cadastrar novo), update (atualizar existente), delete (excluir)", "enum": ["get", "create", "update", "delete"]},
+                        "resource_id": {"type": "integer", "description": "ID do recurso no GLPI (obrigatorio para get, update, delete)"},
+                        "name": {"type": "string", "description": "Nome/login (obrigatorio para create de users e groups)"},
+                        "email": {"type": "string", "description": "Email do usuario (para create/update de users)"},
                     },
                     "required": ["resource", "action"],
                 },
@@ -182,15 +223,19 @@ class MCPHandler:
             },
             # === WEBHOOKS (2 tools) ===
             {
-                "name": "glpi_search_webhooks",
-                "description": "Webhooks no GLPI — listar, estatisticas ou entregas. Use scope (list/stats/deliveries). Retorna Markdown.",
+                "name": "glpi_search_webhook_integrations",  # 36 chars
+                "description": (
+                    "Webhooks, integracoes e callbacks HTTP no GLPI — listagem de endpoints configurados, estatisticas de "
+                    "entrega e historico de notificacoes automaticas. Use scope para selecionar no GLPI: list (listar webhooks), "
+                    "stats (metricas de entrega), deliveries (historico de tentativas). Retorna Markdown. Consulta somente leitura."
+                ),  # 354 chars
                 "input_schema": {
                     "type": "object",
                     "properties": {
-                        "scope": {"type": "string", "enum": ["list", "stats", "deliveries"], "default": "list"},
-                        "webhook_id": {"type": "integer", "description": "ID do webhook (obrigatorio para deliveries)"},
-                        "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 10},
-                        "offset": {"type": "integer", "minimum": 0, "default": 0},
+                        "scope": {"type": "string", "description": "Escopo da consulta de webhooks no GLPI. Valores: list (listar todos), stats (estatisticas de entrega), deliveries (historico de tentativas por webhook)", "enum": ["list", "stats", "deliveries"], "default": "list"},
+                        "webhook_id": {"type": "integer", "description": "ID do webhook no GLPI (obrigatorio quando scope=deliveries)"},
+                        "limit": {"type": "integer", "description": "Quantidade maxima de resultados (padrao: 10, maximo: 50)", "minimum": 1, "maximum": 50, "default": 10},
+                        "offset": {"type": "integer", "description": "Deslocamento para paginacao (padrao: 0)", "minimum": 0, "default": 0},
                     },
                 },
                 "handler": search_webhooks,
@@ -198,16 +243,20 @@ class MCPHandler:
                 "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
             },
             {
-                "name": "glpi_manage_webhooks",
-                "description": "Operacoes em webhooks no GLPI — CRUD e controle. Use action (get/create/update/delete/test/trigger/enable/disable/retry). Retorna Markdown.",
+                "name": "glpi_manage_webhook_integrations",  # 36 chars
+                "description": (
+                    "Webhooks, integracoes e notificacoes automaticas no GLPI — operacoes de cadastro, atualizacao, exclusao, "
+                    "teste de conectividade, disparo manual, ativacao e desativacao de endpoints. Use action para especificar: "
+                    "get, create, update, delete, test, trigger, enable, disable, retry. Retorna Markdown formatado."
+                ),  # 347 chars
                 "input_schema": {
                     "type": "object",
                     "properties": {
-                        "action": {"type": "string", "enum": ["get", "create", "update", "delete", "test", "trigger", "enable", "disable", "retry"]},
-                        "webhook_id": {"type": "integer"},
-                        "name": {"type": "string"},
-                        "url": {"type": "string"},
-                        "event_type": {"type": "string"},
+                        "action": {"type": "string", "description": "Operacao sobre webhook no GLPI. Valores: get (detalhes), create (cadastrar), update (atualizar), delete (excluir), test (testar conectividade), trigger (disparo manual), enable (ativar), disable (desativar), retry (reenviar falhas)", "enum": ["get", "create", "update", "delete", "test", "trigger", "enable", "disable", "retry"]},
+                        "webhook_id": {"type": "integer", "description": "ID do webhook no GLPI (obrigatorio para get, update, delete, test, enable, disable, retry)"},
+                        "name": {"type": "string", "description": "Nome do webhook (obrigatorio para create)"},
+                        "url": {"type": "string", "description": "URL de destino do callback HTTP (obrigatorio para create)"},
+                        "event_type": {"type": "string", "description": "Tipo de evento que dispara o webhook (obrigatorio para create e trigger)"},
                     },
                     "required": ["action"],
                 },
@@ -217,37 +266,59 @@ class MCPHandler:
             },
             # === BRIDGE (4 tools) ===
             {
-                "name": "glpi_list_resources",
-                "description": "Resources MCP do GLPI — lista URIs disponiveis (glpi://entities, glpi://ticket-status, etc.). Retorna Markdown.",
+                "name": "glpi_list_available_resources",  # 32 chars
+                "description": (
+                    "Resources MCP, dados estaticos e referencias do GLPI — catalogo de URIs disponiveis para consulta direta "
+                    "de entidades, status de tickets, categorias e prioridades no GLPI. Use quando precisar descobrir quais "
+                    "dados de referencia estao acessiveis via protocolo MCP no GLPI. Retorna tabela Markdown."
+                ),  # 327 chars
                 "input_schema": {"type": "object"},
                 "handler": bridge_tools.list_resources_tool,
                 "category": "bridge",
                 "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
             },
             {
-                "name": "glpi_read_resource",
-                "description": "Resource MCP do GLPI — le conteudo de uma URI especifica. Use uri (glpi://entities, glpi://ticket-status, glpi://ticket-categories, glpi://priorities). Retorna Markdown.",
-                "input_schema": {"type": "object", "properties": {"uri": {"type": "string", "description": "URI do resource (ex: glpi://entities)"}}, "required": ["uri"]},
+                "name": "glpi_read_resource_by_uri",  # 28 chars - acceptable per Rule 3 exception
+                "description": (
+                    "Resource MCP e dados de referencia do GLPI — leitura do conteudo de uma URI especifica com entidades, "
+                    "status ou categorias. Use quando ja souber a URI do resource no GLPI (ex: glpi://entities, "
+                    "glpi://ticket-status, glpi://ticket-categories, glpi://priorities). Retorna conteudo Markdown formatado."
+                ),  # 334 chars
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "uri": {"type": "string", "description": "URI do resource no GLPI. Valores aceitos: glpi://entities, glpi://ticket-status, glpi://ticket-categories, glpi://priorities", "enum": ["glpi://entities", "glpi://ticket-status", "glpi://ticket-categories", "glpi://priorities"]},
+                    },
+                    "required": ["uri"],
+                },
                 "handler": bridge_tools.read_resource_tool,
                 "category": "bridge",
                 "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
             },
             {
-                "name": "glpi_list_prompts",
-                "description": "Prompts profissionais no GLPI — catalogo de 15 modelos prontos para gestores e analistas. Retorna Markdown.",
+                "name": "glpi_list_available_prompts",  # 30 chars
+                "description": (
+                    "Prompts profissionais, relatorios e analises do GLPI — catalogo de 15 modelos prontos para gestores "
+                    "e analistas de suporte tecnico com metricas de SLA, produtividade e tendencias. Use quando precisar "
+                    "descobrir quais relatorios e analises estao disponiveis no GLPI. Retorna tabela Markdown."
+                ),  # 325 chars
                 "input_schema": {"type": "object"},
                 "handler": bridge_tools.list_prompts_tool,
                 "category": "bridge",
                 "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
             },
             {
-                "name": "glpi_get_prompt",
-                "description": "Prompt e execucao de modelo no GLPI — processa relatorio ou analise especifica com argumentos. Retorna Markdown.",
+                "name": "glpi_get_prompt_template",  # 27 chars - acceptable per Rule 3
+                "description": (
+                    "Prompt, relatorio e analise gerencial do GLPI — executa modelo especifico com argumentos customizados "
+                    "para gerar dashboards de SLA, tendencias de chamados, produtividade de tecnicos e ROI de ativos. "
+                    "Use quando precisar de analise detalhada no GLPI. Retorna resultado em Markdown formatado."
+                ),  # 328 chars
                 "input_schema": {
                     "type": "object",
                     "properties": {
-                        "name": {"type": "string", "description": "Nome do prompt"},
-                        "arguments": {"type": "object", "description": "Argumentos do prompt"},
+                        "name": {"type": "string", "description": "Nome do prompt a executar no GLPI (use glpi_list_available_prompts para ver opcoes disponiveis)"},
+                        "arguments": {"type": "object", "description": "Argumentos do prompt no formato chave-valor (use glpi_list_available_prompts para ver detalhes de cada prompt)"},
                     },
                     "required": ["name"],
                 },
@@ -257,13 +328,17 @@ class MCPHandler:
             },
             # === KNOWLEDGE (1 tool) ===
             {
-                "name": "glpi_search_knowledge",
-                "description": "Base de conhecimento GLPI — busca em solucoes, artigos e resolucoes de chamados. Retorna Markdown.",
+                "name": "glpi_search_knowledge_articles",  # 33 chars
+                "description": (
+                    "Base de conhecimento, solucoes e artigos tecnicos do GLPI — busca textual em resolucoes de chamados, "
+                    "procedimentos e documentacao interna de suporte. Use quando precisar localizar solucoes ja documentadas "
+                    "ou procedimentos operacionais registrados no GLPI. Retorna resultados em Markdown paginado."
+                ),  # 338 chars
                 "input_schema": {
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string", "description": "Texto para busca (minimo 2 caracteres)"},
-                        "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 10},
+                        "query": {"type": "string", "description": "Texto para busca na base de conhecimento do GLPI (minimo 2 caracteres)"},
+                        "limit": {"type": "integer", "description": "Quantidade maxima de resultados (padrao: 10, maximo: 50)", "minimum": 1, "maximum": 50, "default": 10},
                     },
                     "required": ["query"],
                 },
@@ -1450,22 +1525,22 @@ class MCPHandler:
                         "Servidor MCP GLPI - Gerenciamento de chamados, ativos, usuarios e webhooks\n\n"
                         "=== CATEGORIAS DE TOOLS ===\n\n"
                         "TICKETS (3 tools):\n"
-                        "- glpi_search_tickets: Buscar/listar chamados por status, entidade, prioridade. Retorna Markdown.\n"
-                        "- glpi_manage_tickets: Detalhes, criar, atualizar, fechar, resolver, followups, historico, similares (action: get/create/update/delete/assign/close/resolve/add_followup/get_followups/get_history/get_stats/find_similar). Retorna Markdown.\n"
-                        "- glpi_manage_ai_analysis: Analise IA de tickets (action: trigger/get_result/publish). Retorna Markdown.\n\n"
+                        "- glpi_search_ticket_incidents: Buscar chamados, incidentes e requisicoes por status, entidade, prioridade.\n"
+                        "- glpi_manage_ticket_operations: CRUD completo (action: get/create/update/delete/assign/close/resolve/add_followup/get_followups/get_history/get_stats/find_similar).\n"
+                        "- glpi_manage_ticket_ai_analysis: Analise IA (action: trigger/get_result/publish).\n\n"
                         "ATIVOS (2 tools):\n"
-                        "- glpi_search_assets: Buscar computadores, monitores, software, dispositivos (scope: all/computers/monitors/software/devices/reservations/stats). Retorna Markdown.\n"
-                        "- glpi_manage_assets: Detalhes, CRUD, reservas (action: get/create/update/delete/get_reservations/create_reservation). Retorna Markdown.\n\n"
+                        "- glpi_search_asset_inventory: Buscar equipamentos, patrimonio (scope: all/computers/monitors/software/devices/reservations/stats).\n"
+                        "- glpi_manage_asset_operations: CRUD + reservas (action: get/get_details/create/update/delete/get_reservations/create_reservation).\n\n"
                         "ADMIN (2 tools):\n"
-                        "- glpi_search_admin: Buscar usuarios, grupos, entidades, localizacoes (resource: users/groups/entities/locations). Retorna Markdown.\n"
-                        "- glpi_manage_admin: CRUD de recursos admin (action: get/create/update/delete). Retorna Markdown.\n\n"
+                        "- glpi_search_admin_resources: Buscar usuarios, grupos, entidades, localizacoes (resource: users/groups/entities/locations).\n"
+                        "- glpi_manage_admin_resources: CRUD admin (resource + action: get/create/update/delete).\n\n"
                         "WEBHOOKS (2 tools):\n"
-                        "- glpi_search_webhooks: Listar webhooks, stats, entregas (scope: list/stats/deliveries). Retorna Markdown.\n"
-                        "- glpi_manage_webhooks: CRUD e controle (action: get/create/update/delete/test/trigger/enable/disable/retry). Retorna Markdown.\n\n"
+                        "- glpi_search_webhook_integrations: Listar webhooks, stats, entregas (scope: list/stats/deliveries).\n"
+                        "- glpi_manage_webhook_integrations: CRUD + controle (action: get/create/update/delete/test/trigger/enable/disable/retry).\n\n"
                         "BRIDGE (5 tools):\n"
-                        "- glpi_list_resources / glpi_read_resource: Resources MCP (entidades, status, categorias).\n"
-                        "- glpi_list_prompts / glpi_get_prompt: 15 prompts de analise gerencial e operacional.\n"
-                        "- glpi_search_knowledge: Base de conhecimento GLPI.\n\n"
+                        "- glpi_list_available_resources / glpi_read_resource_by_uri: Resources MCP (entidades, status, categorias, prioridades).\n"
+                        "- glpi_list_available_prompts / glpi_get_prompt_template: 15 prompts de analise gerencial e operacional.\n"
+                        "- glpi_search_knowledge_articles: Base de conhecimento e solucoes.\n\n"
                         "=== FORMATO ===\n"
                         "- search_*: limit (padrao 10, max 50), offset, filtros especificos.\n"
                         "- manage_*: action (obrigatorio), IDs inteiros (ticket_id, asset_id, etc.).\n"
@@ -1473,7 +1548,7 @@ class MCPHandler:
                         "=== DICAS ===\n"
                         "- Comece com search_ para descobrir recursos, depois manage_ para detalhes.\n"
                         "- Use resources (glpi://entities, glpi://ticket-status) para dados estaticos.\n"
-                        "- Para relatorios, use glpi_get_prompt com um dos 15 prompts disponiveis."
+                        "- Para relatorios, use glpi_get_prompt_template com um dos 15 prompts disponiveis."
                     ),
                 }
             elif method == "tools/list":

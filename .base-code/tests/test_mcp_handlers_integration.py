@@ -328,7 +328,7 @@ class TestMCPHandlersIntegration:
             "jsonrpc": "2.0",
             "method": "tools/call",
             "params": {
-                "name": "glpi_search_tickets",
+                "name": "glpi_search_ticket_incidents",
                 "arguments": {"query": "<script>alert('xss')</script>"},
             },
             "id": 10,

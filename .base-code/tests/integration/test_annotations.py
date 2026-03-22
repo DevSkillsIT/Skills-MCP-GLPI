@@ -21,89 +21,89 @@ from src.formatters.response_formatter import TOOL_FORMATTERS
 #   readOnlyHint, destructiveHint, idempotentHint, openWorldHint
 EXPECTED_ANNOTATIONS = {
     # search_* tools: read-only, non-destructive
-    "glpi_search_tickets": {
+    "glpi_search_ticket_incidents": {
         "readOnlyHint": True,
         "destructiveHint": False,
         "idempotentHint": True,
         "openWorldHint": True,
     },
-    "glpi_search_assets": {
+    "glpi_search_asset_inventory": {
         "readOnlyHint": True,
         "destructiveHint": False,
         "idempotentHint": True,
         "openWorldHint": True,
     },
-    "glpi_search_admin": {
+    "glpi_search_admin_resources": {
         "readOnlyHint": True,
         "destructiveHint": False,
         "idempotentHint": True,
         "openWorldHint": True,
     },
-    "glpi_search_webhooks": {
+    "glpi_search_webhook_integrations": {
         "readOnlyHint": True,
         "destructiveHint": False,
         "idempotentHint": True,
         "openWorldHint": True,
     },
-    "glpi_search_knowledge": {
+    "glpi_search_knowledge_articles": {
         "readOnlyHint": True,
         "destructiveHint": False,
         "idempotentHint": True,
         "openWorldHint": True,
     },
     # manage_* tools: destructive (mutate state)
-    "glpi_manage_tickets": {
+    "glpi_manage_ticket_operations": {
         "readOnlyHint": False,
         "destructiveHint": True,
         "idempotentHint": False,
         "openWorldHint": True,
     },
-    "glpi_manage_assets": {
+    "glpi_manage_asset_operations": {
         "readOnlyHint": False,
         "destructiveHint": True,
         "idempotentHint": False,
         "openWorldHint": True,
     },
-    "glpi_manage_admin": {
+    "glpi_manage_admin_resources": {
         "readOnlyHint": False,
         "destructiveHint": True,
         "idempotentHint": False,
         "openWorldHint": True,
     },
-    "glpi_manage_webhooks": {
+    "glpi_manage_webhook_integrations": {
         "readOnlyHint": False,
         "destructiveHint": True,
         "idempotentHint": False,
         "openWorldHint": True,
     },
     # manage_ai_analysis: non-destructive (analysis only)
-    "glpi_manage_ai_analysis": {
+    "glpi_manage_ticket_ai_analysis": {
         "readOnlyHint": False,
         "destructiveHint": False,
         "idempotentHint": True,
         "openWorldHint": True,
     },
     # Bridge: list_ tools have closed world (known catalog)
-    "glpi_list_resources": {
+    "glpi_list_available_resources": {
         "readOnlyHint": True,
         "destructiveHint": False,
         "idempotentHint": True,
         "openWorldHint": False,
     },
-    "glpi_list_prompts": {
+    "glpi_list_available_prompts": {
         "readOnlyHint": True,
         "destructiveHint": False,
         "idempotentHint": True,
         "openWorldHint": False,
     },
     # Bridge: read/get tools have open world (dynamic content)
-    "glpi_read_resource": {
+    "glpi_read_resource_by_uri": {
         "readOnlyHint": True,
         "destructiveHint": False,
         "idempotentHint": True,
         "openWorldHint": True,
     },
-    "glpi_get_prompt": {
+    "glpi_get_prompt_template": {
         "readOnlyHint": True,
         "destructiveHint": False,
         "idempotentHint": True,
@@ -119,30 +119,30 @@ ANNOTATION_PROPERTIES = [
 ]
 
 SEARCH_AND_LIST_TOOLS = [
-    "glpi_search_tickets",
-    "glpi_search_assets",
-    "glpi_search_admin",
-    "glpi_search_webhooks",
-    "glpi_search_knowledge",
-    "glpi_list_resources",
-    "glpi_list_prompts",
+    "glpi_search_ticket_incidents",
+    "glpi_search_asset_inventory",
+    "glpi_search_admin_resources",
+    "glpi_search_webhook_integrations",
+    "glpi_search_knowledge_articles",
+    "glpi_list_available_resources",
+    "glpi_list_available_prompts",
 ]
 
 DESTRUCTIVE_MANAGE_TOOLS = [
-    "glpi_manage_tickets",
-    "glpi_manage_assets",
-    "glpi_manage_admin",
-    "glpi_manage_webhooks",
+    "glpi_manage_ticket_operations",
+    "glpi_manage_asset_operations",
+    "glpi_manage_admin_resources",
+    "glpi_manage_webhook_integrations",
 ]
 
 CLOSED_WORLD_TOOLS = [
-    "glpi_list_resources",
-    "glpi_list_prompts",
+    "glpi_list_available_resources",
+    "glpi_list_available_prompts",
 ]
 
 OPEN_WORLD_TOOLS = [
-    "glpi_read_resource",
-    "glpi_get_prompt",
+    "glpi_read_resource_by_uri",
+    "glpi_get_prompt_template",
 ]
 
 
@@ -180,7 +180,7 @@ class TestAnnotationContract:
 
     def test_manage_ai_analysis_is_non_destructive(self) -> None:
         """manage_ai_analysis is analysis-only, not destructive."""
-        annotations = EXPECTED_ANNOTATIONS["glpi_manage_ai_analysis"]
+        annotations = EXPECTED_ANNOTATIONS["glpi_manage_ticket_ai_analysis"]
         assert annotations["destructiveHint"] is False
 
     @pytest.mark.parametrize("tool_name", CLOSED_WORLD_TOOLS)

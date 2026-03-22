@@ -162,26 +162,26 @@ def _dispatch_manage_webhooks(data: Any, args: dict) -> str:
 # === TOOL_FORMATTERS (central registry — identical to Hudu TOOL_FORMATTERS) ===
 
 TOOL_FORMATTERS: dict[str, Any] = {
-    # === TICKETS (3 tools) ===
-    "glpi_search_tickets": lambda data, args: format_tickets_list(data, args),
-    "glpi_manage_tickets": _dispatch_manage_tickets,
-    "glpi_manage_ai_analysis": _dispatch_manage_ai,
+    # === TICKETS (3 tools) — DIRETRIZES-OBRIGATORIAS names ===
+    "glpi_search_ticket_incidents": lambda data, args: format_tickets_list(data, args),
+    "glpi_manage_ticket_operations": _dispatch_manage_tickets,
+    "glpi_manage_ticket_ai_analysis": _dispatch_manage_ai,
     # === ASSETS (2 tools) ===
-    "glpi_search_assets": _dispatch_search_assets,
-    "glpi_manage_assets": _dispatch_manage_assets,
+    "glpi_search_asset_inventory": _dispatch_search_assets,
+    "glpi_manage_asset_operations": _dispatch_manage_assets,
     # === ADMIN (2 tools) ===
-    "glpi_search_admin": _dispatch_search_admin,
-    "glpi_manage_admin": _dispatch_manage_admin,
+    "glpi_search_admin_resources": _dispatch_search_admin,
+    "glpi_manage_admin_resources": _dispatch_manage_admin,
     # === WEBHOOKS (2 tools) ===
-    "glpi_search_webhooks": _dispatch_search_webhooks,
-    "glpi_manage_webhooks": _dispatch_manage_webhooks,
+    "glpi_search_webhook_integrations": _dispatch_search_webhooks,
+    "glpi_manage_webhook_integrations": _dispatch_manage_webhooks,
     # === KNOWLEDGE (1 tool) ===
-    "glpi_search_knowledge": lambda data, args: format_tickets_list(data, args),
-    # === BRIDGE TOOLS (4) — already return Markdown, pass-through ===
-    "glpi_list_resources": lambda data, args: data if isinstance(data, str) else format_resources_list(data),
-    "glpi_read_resource": lambda data, args: data if isinstance(data, str) else str(data),
-    "glpi_list_prompts": lambda data, args: data if isinstance(data, str) else format_prompts_list(data),
-    "glpi_get_prompt": lambda data, args: data if isinstance(data, str) else str(data),
+    "glpi_search_knowledge_articles": lambda data, args: format_tickets_list(data, args),
+    # === BRIDGE TOOLS (4) — pass-through for Markdown ===
+    "glpi_list_available_resources": lambda data, args: data if isinstance(data, str) else format_resources_list(data),
+    "glpi_read_resource_by_uri": lambda data, args: data if isinstance(data, str) else str(data),
+    "glpi_list_available_prompts": lambda data, args: data if isinstance(data, str) else format_prompts_list(data),
+    "glpi_get_prompt_template": lambda data, args: data if isinstance(data, str) else str(data),
 }
 
 

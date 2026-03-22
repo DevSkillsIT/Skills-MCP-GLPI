@@ -53,3 +53,14 @@ logs/
 # OS
 .DS_Store
 Thumbs.db
+
+# Backups e artefatos de refatoracao
+*.bak
+*.backup
+*.broken
+baseline_*.json
+tools_depois_raw.json
+transform_handlers.py
+
+# Ecosystem antigo (substituido por ecosystem.http.config.js)
+ecosystem.config.cjs
