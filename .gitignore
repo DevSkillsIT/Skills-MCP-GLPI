@@ -62,5 +62,8 @@ baseline_*.json
 tools_depois_raw.json
 transform_handlers.py
 
-# Ecosystem antigo (substituido por ecosystem.http.config.js)
-ecosystem.config.cjs
+# Ruff cache
+.ruff_cache/
+
+# Claude agent memory (local only)
+.claude/
