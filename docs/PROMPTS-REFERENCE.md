@@ -30,8 +30,8 @@ Para gestores de TI, coordenadores e diretores.
 
 **Exemplo de uso:**
 ```
-"Relatório de SLA da Ramada Lindacor nos últimos 90 dias"
-→ { "name": "glpi_sla_performance", "arguments": { "entity_name": "Ramada Lindacor", "period_days": 90 } }
+"Relatório de SLA da Acme Corp nos últimos 90 dias"
+→ { "name": "glpi_sla_performance", "arguments": { "entity_name": "Acme Corp", "period_days": 90 } }
 ```
 
 **Retorna:** Tabela com tempo médio de primeira resposta, tempo médio de resolução, taxa de cumprimento de SLA por categoria, tendência mensal.
@@ -104,8 +104,8 @@ Para gestores de TI, coordenadores e diretores.
 
 **Exemplo:**
 ```
-"Custo por chamado da Ramada no semestre"
-→ { "name": "glpi_cost_per_ticket", "arguments": { "entity_name": "Ramada Lindacor", "period_days": 180 } }
+"Custo por chamado da Acme no semestre"
+→ { "name": "glpi_cost_per_ticket", "arguments": { "entity_name": "Acme Corp", "period_days": 180 } }
 ```
 
 ---

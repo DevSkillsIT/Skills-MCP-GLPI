@@ -46,7 +46,7 @@ class AdminTools:
 
         Args:
             entity_id: Filtrar por entidade (ID numérico)
-            entity_name: Filtrar por nome da entidade/cliente (ex: "GSM Transportes", "Skills IT")
+            entity_name: Filtrar por nome da entidade/cliente (ex: "Acme Corp", "Example Client")
             group_id: Filtrar por grupo
             profile_id: Filtrar por perfil
             is_active: Filtrar por status ativo
@@ -58,7 +58,7 @@ class AdminTools:
 
         Note:
             Se entity_name for fornecido, será resolvido para entity_id automaticamente.
-            Exemplo: list_users(entity_name="GSM") retorna usuários do cliente GSM.
+            Exemplo: list_users(entity_name="Acme") retorna usuários do cliente Acme.
         """
         try:
             logger.info(f"MCP Tool: list_users with filters, entity_name={entity_name}, limit={limit}")
@@ -176,7 +176,7 @@ class AdminTools:
             phone2: Telefone secundário
             mobile: Celular
             entity_id: ID da entidade padrão (numérico)
-            entity_name: Nome da entidade/cliente (ex: "GSM Transportes", "Skills IT")
+            entity_name: Nome da entidade/cliente (ex: "Acme Corp", "Example Client")
             profile_id: ID do perfil padrão
             group_id: ID do grupo padrão
             location_id: ID da localização
@@ -408,7 +408,7 @@ class AdminTools:
 
         Args:
             entity_id: Filtrar por entidade (ID numérico)
-            entity_name: Filtrar por nome da entidade/cliente (ex: "GSM Transportes", "Skills IT")
+            entity_name: Filtrar por nome da entidade/cliente (ex: "Acme Corp", "Example Client")
             is_user_group: Filtrar grupos de usuários
             is_technical_group: Filtrar grupos técnicos
             limit: Número máximo de resultados (padrão: 50)
@@ -419,7 +419,7 @@ class AdminTools:
 
         Note:
             Se entity_name for fornecido, será resolvido para entity_id automaticamente.
-            Exemplo: list_groups(entity_name="GSM") retorna grupos do cliente GSM.
+            Exemplo: list_groups(entity_name="Acme") retorna grupos do cliente Acme.
         """
         try:
             logger.info(f"MCP Tool: list_groups with filters, entity_name={entity_name}, limit={limit}")
@@ -510,7 +510,7 @@ class AdminTools:
         Args:
             name: Nome do grupo
             entity_id: ID da entidade (numérico)
-            entity_name: Nome da entidade/cliente (ex: "GSM Transportes", "Skills IT")
+            entity_name: Nome da entidade/cliente (ex: "Acme Corp", "Example Client")
             comment: Comentários
             is_user_group: Se é grupo de usuários
             is_technical_group: Se é grupo técnico
@@ -662,7 +662,7 @@ class AdminTools:
         Args:
             parent_location_id: Filtrar por localização pai
             entity_id: Filtrar por entidade (ID numérico)
-            entity_name: Filtrar por nome da entidade/cliente (ex: "GSM Transportes", "Skills IT")
+            entity_name: Filtrar por nome da entidade/cliente (ex: "Acme Corp", "Example Client")
             limit: Número máximo de resultados (padrão: 50)
             offset: Deslocamento para paginação (padrão: 0)
 
@@ -671,7 +671,7 @@ class AdminTools:
 
         Note:
             Se entity_name for fornecido, será resolvido para entity_id automaticamente.
-            Exemplo: list_locations(entity_name="GSM") retorna localizações do cliente GSM.
+            Exemplo: list_locations(entity_name="Acme") retorna localizações do cliente Acme.
         """
         try:
             logger.info(f"MCP Tool: list_locations with filters, entity_name={entity_name}, limit={limit}")
@@ -761,7 +761,7 @@ class AdminTools:
         Args:
             name: Nome da localização
             entity_id: ID da entidade (numérico)
-            entity_name: Nome da entidade/cliente (ex: "GSM Transportes", "Skills IT")
+            entity_name: Nome da entidade/cliente (ex: "Acme Corp", "Example Client")
             parent_location_id: ID da localização pai
             building: Prédio
             room: Sala
@@ -844,14 +844,14 @@ class AdminTools:
 
         Args:
             entity_id: Filtrar por entidade (ID numérico)
-            entity_name: Filtrar por nome da entidade/cliente (ex: "GSM Transportes", "Skills IT")
+            entity_name: Filtrar por nome da entidade/cliente (ex: "Acme Corp", "Example Client")
 
         Returns:
             Estatísticas detalhadas
 
         Note:
             Se entity_name for fornecido, será resolvido para entity_id automaticamente.
-            Exemplo: get_admin_stats(entity_name="GSM") retorna estatísticas do cliente GSM.
+            Exemplo: get_admin_stats(entity_name="Acme") retorna estatísticas do cliente Acme.
         """
         try:
             logger.info(f"MCP Tool: get_admin_stats, entity_name={entity_name}")
@@ -916,7 +916,7 @@ class AdminTools:
             Lista completa de usuários com todos os campos
 
         Example:
-            search_users(firstname="Wilka", entity_name="Grupo Wink")
+            search_users(firstname="Alice", entity_name="Acme Corp")
             search_users(realname="Ferreira")
         """
         try:

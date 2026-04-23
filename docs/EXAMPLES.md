@@ -114,7 +114,7 @@ Params: { "scope": "stats" }
 ### Passo 2 — Listar computadores de uma entidade
 ```
 Tool: glpi_search_asset_inventory
-Params: { "scope": "computers", "entity_name": "Ramada Lindacor", "limit": 50 }
+Params: { "scope": "computers", "entity_name": "Acme Corp", "limit": 50 }
 ```
 
 ### Passo 3 — Buscar equipamento pelo serial
@@ -137,7 +137,7 @@ Params: {
 ### Passo 5 — Análise de ROI do parque
 ```
 Tool: glpi_get_prompt_template
-Params: { "name": "glpi_asset_roi", "arguments": { "entity_name": "Ramada Lindacor" } }
+Params: { "name": "glpi_asset_roi", "arguments": { "entity_name": "Acme Corp" } }
 ```
 
 ---
@@ -264,7 +264,7 @@ Params: {
   "title": "CRÍTICO - ERP Protheus indisponível",
   "description": "Sistema ERP Protheus ficou indisponível das 14:00 às 16:00. Impacto: toda a operação de faturamento parada. Aproximadamente 50 usuários afetados.",
   "priority": 5,
-  "entity_name": "Ramada Lindacor"
+  "entity_name": "Acme Corp"
 }
 ```
 

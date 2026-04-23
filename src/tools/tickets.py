@@ -60,7 +60,7 @@ class TicketTools:
             status: Filtrar por status (new, assigned, planned, pending, solved, closed)
             priority: Filtrar por prioridade (1-5)
             entity_id: Filtrar por entidade (ID numérico)
-            entity_name: Filtrar por nome da entidade/cliente (ex: "GSM Transportes", "Skills IT")
+            entity_name: Filtrar por nome da entidade/cliente (ex: "Acme Corp", "Example Client")
             requester_id: Filtrar por solicitante
             assignee_id: Filtrar por responsável
             date_created_after: Data de criação a partir de (YYYY-MM-DD)
@@ -73,7 +73,7 @@ class TicketTools:
 
         Note:
             Se entity_name for fornecido, será resolvido para entity_id automaticamente.
-            Exemplo: list_tickets(entity_name="GSM") retorna tickets do cliente GSM.
+            Exemplo: list_tickets(entity_name="Acme") retorna tickets do cliente Acme.
         """
         try:
             logger.info(f"MCP Tool: list_tickets with filters status={status}, entity_name={entity_name}, limit={limit}")
@@ -219,7 +219,7 @@ class TicketTools:
             type: Tipo (incident, request, change)
             category_id: ID da categoria
             entity_id: ID da entidade (numérico)
-            entity_name: Nome da entidade/cliente (ex: "GSM Transportes", "Skills IT")
+            entity_name: Nome da entidade/cliente (ex: "Acme Corp", "Example Client")
             requester_id: ID do solicitante
             assignee_id: ID do responsável
             location_id: ID da localização
@@ -229,7 +229,7 @@ class TicketTools:
 
         Note:
             Se entity_name for fornecido, será resolvido para entity_id automaticamente.
-            Exemplo: create_ticket(title="...", entity_name="GSM") cria o ticket no cliente GSM.
+            Exemplo: create_ticket(title="...", entity_name="Acme") cria o ticket no cliente Acme.
         """
         try:
             logger.info(f"MCP Tool: create_ticket - {title}")
@@ -555,7 +555,7 @@ class TicketTools:
         Args:
             query: Texto para buscar
             entity_id: Filtrar por entidade (ID numérico)
-            entity_name: Filtrar por nome da entidade/cliente (ex: "GSM Transportes", "Skills IT")
+            entity_name: Filtrar por nome da entidade/cliente (ex: "Acme Corp", "Example Client")
             fields: Campos específicos para retornar
             limit: Limite de resultados
             offset: Offset para paginação
@@ -565,7 +565,7 @@ class TicketTools:
 
         Note:
             Se entity_name for fornecido, será resolvido para entity_id automaticamente.
-            Exemplo: search_tickets(query="impressora", entity_name="GSM") busca tickets do cliente GSM.
+            Exemplo: search_tickets(query="impressora", entity_name="Acme") busca tickets do cliente Acme.
         """
         try:
             logger.info(f"MCP Tool: search_tickets - {query}, entity_name={entity_name}")
@@ -626,7 +626,7 @@ class TicketTools:
 
         Args:
             entity_id: Filtrar por entidade (ID numérico)
-            entity_name: Filtrar por nome da entidade/cliente (ex: "GSM Transportes", "Skills IT")
+            entity_name: Filtrar por nome da entidade/cliente (ex: "Acme Corp", "Example Client")
             date_from: Data inicial (YYYY-MM-DD)
             date_to: Data final (YYYY-MM-DD)
 
@@ -635,7 +635,7 @@ class TicketTools:
 
         Note:
             Se entity_name for fornecido, será resolvido para entity_id automaticamente.
-            Exemplo: get_ticket_stats(entity_name="GSM") retorna estatísticas do cliente GSM.
+            Exemplo: get_ticket_stats(entity_name="Acme") retorna estatísticas do cliente Acme.
         """
         try:
             logger.info(f"MCP Tool: get_ticket_stats, entity_name={entity_name}")

@@ -49,7 +49,7 @@ class AssetTools:
         Args:
             asset_type: Tipo de asset (Computer, Monitor, Printer, etc.)
             entity_id: Filtrar por entidade (ID numérico)
-            entity_name: Filtrar por nome da entidade/cliente (ex: "GSM Transportes", "Skills IT")
+            entity_name: Filtrar por nome da entidade/cliente (ex: "Acme Corp", "Example Client")
             location_id: Filtrar por localização
             manufacturer_id: Filtrar por fabricante
             model_id: Filtrar por modelo
@@ -415,7 +415,7 @@ class AssetTools:
             query: Texto para buscar
             asset_type: Tipo de asset específico
             entity_id: Filtrar por entidade (ID numérico)
-            entity_name: Filtrar por nome da entidade/cliente (ex: "GSM Transportes")
+            entity_name: Filtrar por nome da entidade/cliente (ex: "Acme Corp")
             fields: Campos específicos para retornar
             limit: Limite de resultados
             offset: Offset para paginação
@@ -553,7 +553,7 @@ class AssetTools:
 
         Args:
             entity_id: Filtrar por entidade específica (ID numérico)
-            entity_name: Filtrar por nome da entidade/cliente (ex: "GSM Transportes")
+            entity_name: Filtrar por nome da entidade/cliente (ex: "Acme Corp")
             is_active: Filtrar por status ativo (True=disponíveis para reserva)
             itemtype: Filtrar por tipo (Computer, Monitor, Peripheral, etc)
             limit: Número máximo de resultados (padrão: 50)
@@ -714,7 +714,7 @@ class AssetTools:
         Args:
             asset_type: Tipo de asset específico
             entity_id: Filtrar por entidade (ID numérico)
-            entity_name: Filtrar por nome da entidade/cliente (ex: "GSM Transportes")
+            entity_name: Filtrar por nome da entidade/cliente (ex: "Acme Corp")
 
         Returns:
             Estatísticas detalhadas
@@ -767,7 +767,7 @@ class AssetTools:
 
         Args:
             entity_id: Filtrar por entidade (ID numérico)
-            entity_name: Filtrar por nome da entidade/cliente (ex: "GSM Transportes", "Skills IT")
+            entity_name: Filtrar por nome da entidade/cliente (ex: "Acme Corp", "Example Client")
             location_id: Filtrar por localização
             manufacturer_id: Filtrar por fabricante
             user_id: Filtrar por ID do usuário responsável
@@ -780,7 +780,7 @@ class AssetTools:
 
         Note:
             Se entity_name for fornecido, será resolvido para entity_id automaticamente.
-            Exemplo: list_computers(entity_name="GSM") retorna computadores da entidade GSM.
+            Exemplo: list_computers(entity_name="Acme") retorna computadores da entidade Acme.
         """
         try:
             logger.info(f"MCP Tool: list_computers entity_name={entity_name}, user_id={user_id}")
@@ -924,7 +924,7 @@ class AssetTools:
 
         Args:
             entity_id: Filtrar por entidade (ID numérico)
-            entity_name: Filtrar por nome da entidade/cliente (ex: "GSM Transportes", "Skills IT")
+            entity_name: Filtrar por nome da entidade/cliente (ex: "Acme Corp", "Example Client")
             location_id: Filtrar por localização
             manufacturer_id: Filtrar por fabricante
             limit: Limite de resultados

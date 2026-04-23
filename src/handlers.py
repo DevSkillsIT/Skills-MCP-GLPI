@@ -69,7 +69,7 @@ class MCPHandler:
                         "status": {"type": "string", "description": "Status do chamado no GLPI. Valores: new (novo), processing (em atendimento), pending (pendente), solved (solucionado), closed (fechado)", "enum": ["new", "processing", "pending", "solved", "closed"]},
                         "priority": {"type": "integer", "description": "Prioridade do chamado. Valores: 1 (muito baixa), 2 (baixa), 3 (media), 4 (alta), 5 (muito alta)", "minimum": 1, "maximum": 5},
                         "entity_id": {"type": "integer", "description": "ID da entidade/cliente no GLPI"},
-                        "entity_name": {"type": "string", "description": "Nome da entidade/cliente (ex: 'GSM', 'Skills IT')"},
+                        "entity_name": {"type": "string", "description": "Nome da entidade/cliente (ex: 'Acme', 'Example Client')"},
                         "query": {"type": "string", "description": "Texto para busca em titulo e conteudo (minimo 2 caracteres)"},
                         "limit": {"type": "integer", "description": "Quantidade maxima de resultados (padrao: 10, maximo: 50)", "minimum": 1, "maximum": 50, "default": 10},
                         "offset": {"type": "integer", "description": "Deslocamento para paginacao (padrao: 0)", "minimum": 0, "default": 0},
@@ -479,7 +479,7 @@ class MCPHandler:
                     },
                     "entity_name": {
                         "type": "string",
-                        "description": "Nome da entidade/cliente (ex: 'GSM', 'Skills IT')",
+                        "description": "Nome da entidade/cliente (ex: 'Acme', 'Example Client')",
                     },
                     "limit": {
                         "type": "integer",
@@ -866,7 +866,7 @@ class MCPHandler:
                     },
                     "entity_name": {
                         "type": "string",
-                        "description": "Nome da entidade/cliente (ex: 'Ramada', 'Grupo Wink', 'GSM')",
+                        "description": "Nome da entidade/cliente (ex: 'Acme', 'Example', 'ClienteX')",
                     },
                     "location_id": {
                         "type": "integer",
