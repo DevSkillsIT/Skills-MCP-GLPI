@@ -887,7 +887,8 @@ class AdminTools:
         entity_name: Optional[str] = None,
         entity_id: Optional[int] = None,
         limit: int = 250,
-        offset: int = 0
+        offset: int = 0,
+        match_mode: str = "all",
     ) -> Dict[str, Any]:
         """
         Tool MCP: search_users
@@ -992,8 +993,11 @@ class AdminTools:
                     "value": entity_id
                 })
             
+            # If caller provided no criteria, fall back to a no-criteria
+            # /search/User listing (scoped by range). This keeps the tool
+            # usable as a simple list when no query is passed.
             if not criteria:
-                raise ValidationError("Pelo menos um critério de busca deve ser fornecido")
+                logger.info("search_users: no criteria provided, listing all users")
             
             params = {
                 "range": f"{offset}-{offset + limit - 1}",
@@ -1022,13 +1026,17 @@ class AdminTools:
             params["forcedisplay[18]"] = 15 # date_mod
             params["forcedisplay[19]"] = 121 # date_creation
             
-            # Adicionar critérios
+            # Adicionar critérios.
+            # Text criteria (name/firstname/realname/email) combinam por match_mode
+            # ("any"=OR/"all"=AND). entity_id filter SEMPRE combina por AND.
+            text_link = "OR" if match_mode == "any" else "AND"
             for i, crit in enumerate(criteria):
                 for key, value in crit.items():
                     params[f"criteria[{i}][{key}]"] = value
-                # Adicionar link AND entre critérios (exceto o primeiro)
                 if i > 0:
-                    params[f"criteria[{i}][link]"] = "AND"
+                    # Field 80 (entities) is an AND filter regardless of match_mode
+                    link = "AND" if crit.get("field") == 80 else text_link
+                    params[f"criteria[{i}][link]"] = link
             
             # Fazer requisição
             result = await glpi_client.get("/apirest.php/search/User", params, use_cache=False)

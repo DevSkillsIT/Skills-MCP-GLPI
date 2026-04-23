@@ -12,7 +12,11 @@ from typing import Any, Dict, Literal, Optional
 
 from src.formatters.markdown_helpers import remove_heavy_fields
 from src.tools.admin import admin_tools
-from src.utils.validators import create_mcp_error, validate_positive_int
+from src.utils.validators import (
+    create_mcp_error,
+    validate_non_negative_int,
+    validate_positive_int,
+)
 
 # Maximum number of items per search response
 _MAX_LIMIT = 50
@@ -48,7 +52,10 @@ async def search_admin(
 
     if resource == "users":
         if query:
-            # Delegate to search_users which uses /search/User endpoint
+            # Delegate to search_users which uses /search/User endpoint.
+            # Use match_mode="any" so the same query across name/firstname/
+            # realname/email is combined with OR (not AND, which would be
+            # the intersection and never matches).
             result = await admin_tools.search_users(
                 name=query,
                 firstname=query,
@@ -58,9 +65,13 @@ async def search_admin(
                 entity_name=entity_name,
                 limit=limit,
                 offset=offset,
+                match_mode="any",
             )
         else:
-            result = await admin_tools.list_users(
+            # No query: reuse search_users on /search/User with an entity
+            # filter only (or no filter at all). This is more reliable than
+            # admin_service.list_users across GLPI 10/11 configurations.
+            result = await admin_tools.search_users(
                 entity_id=entity_id,
                 entity_name=entity_name,
                 limit=limit,
@@ -158,19 +169,28 @@ async def manage_admin(
     Returns:
         Dict with operation result.
     """
-    # Validate resource_id for actions that require it
+    # Validate resource_id for actions that require it.
+    # Entities are special: GLPI root entity has id=0, so non-negative int is valid.
     if action in ("get", "update", "delete"):
         if resource_id is None:
             return create_mcp_error(
                 problem=f"resource_id is required for action '{action}'",
-                expected="Provide a positive integer resource_id",
+                expected="Provide an integer resource_id",
                 example=f"Example: manage_admin(resource='{resource}', action='{action}', resource_id=42)",
             )
-        validation = validate_positive_int(resource_id, "resource_id")
+        validator = (
+            validate_non_negative_int if resource == "entities" else validate_positive_int
+        )
+        validation = validator(resource_id, "resource_id")
         if not validation["valid"]:
+            hint = (
+                "resource_id must be a non-negative integer (entities allow 0 for root)"
+                if resource == "entities"
+                else "resource_id must be a positive integer"
+            )
             return create_mcp_error(
                 problem=validation["error"],
-                expected="resource_id must be a positive integer",
+                expected=hint,
                 example=f"Example: manage_admin(resource='{resource}', action='{action}', resource_id=42)",
             )
         resource_id = validation["value"]
