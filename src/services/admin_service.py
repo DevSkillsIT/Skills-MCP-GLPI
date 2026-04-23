@@ -606,25 +606,31 @@ class AdminService:
             logger.error(f"Failed to update group {group_id}: {e}")
             raise GLPIError(500, f"Failed to update group: {str(e)}")
     
-    async def delete_group(self, group_id: int) -> bool:
+    async def delete_group(self, group_id: int, purge: bool = True) -> bool:
         """
-        Deleta um grupo.
-        
+        Deleta (ou purga) um grupo.
+        Por padrão purge=True (remoção definitiva). Sem purge o GLPI apenas
+        envia o registro para a lixeira e o grupo ainda aparece em get_group.
+
         Args:
             group_id: ID do grupo
-        
+            purge: Se True, força remoção definitiva (default True).
+
         Returns:
             True se deletado com sucesso
         """
         await self.get_group(group_id)
-        
+
         try:
-            logger.info(f"Deleting group {group_id}")
-            await self.client.delete(f"/apirest.php/Group/{group_id}")
-            
+            logger.info(f"Deleting group {group_id} (purge={purge})")
+            endpoint = f"/apirest.php/Group/{group_id}"
+            if purge:
+                endpoint += "?force_purge=true"
+            await self.client.delete(endpoint)
+
             logger.info(f"Group {group_id} deleted successfully")
             return True
-            
+
         except Exception as e:
             logger.error(f"Failed to delete group {group_id}: {e}")
             raise GLPIError(500, f"Failed to delete group: {str(e)}")
@@ -921,7 +927,54 @@ class AdminService:
         except Exception as e:
             logger.error(f"Failed to create location: {e}")
             raise GLPIError(500, f"Failed to create location: {str(e)}")
-    
+
+    async def update_location(self, location_id: int, **kwargs) -> Dict[str, Any]:
+        """
+        Update an existing Location.
+
+        Accepts: name, comment, building, room, town, address, postcode,
+        state, country, latitude, longitude, altitude, locations_id
+        (parent), entities_id.
+        """
+        try:
+            logger.info(f"Updating location {location_id}")
+            if not isinstance(location_id, int) or location_id <= 0:
+                raise ValidationError("location_id must be a positive integer", "location_id")
+
+            allowed = (
+                "name", "comment", "building", "room", "town", "address",
+                "postcode", "state", "country", "latitude", "longitude",
+                "altitude", "locations_id", "entities_id",
+            )
+            payload = {k: v for k, v in kwargs.items() if k in allowed and v is not None}
+            if not payload:
+                raise ValidationError("No valid fields to update for location")
+
+            await self.client.put(f"/apirest.php/Location/{location_id}", data=payload)
+            return await self.get_location(location_id)
+        except (NotFoundError, ValidationError):
+            raise
+        except Exception as e:
+            logger.error(f"Failed to update location {location_id}: {e}")
+            raise GLPIError(500, f"Failed to update location: {str(e)}")
+
+    async def delete_location(self, location_id: int, purge: bool = False) -> bool:
+        """Delete (or purge) a Location."""
+        try:
+            logger.info(f"Deleting location {location_id} (purge={purge})")
+            if not isinstance(location_id, int) or location_id <= 0:
+                raise ValidationError("location_id must be a positive integer", "location_id")
+            endpoint = f"/apirest.php/Location/{location_id}"
+            if purge:
+                endpoint += "?force_purge=true"
+            await self.client.delete(endpoint)
+            return True
+        except (NotFoundError, ValidationError):
+            raise
+        except Exception as e:
+            logger.error(f"Failed to delete location {location_id}: {e}")
+            raise GLPIError(500, f"Failed to delete location: {str(e)}")
+
     async def get_admin_stats(self, entity_id: Optional[int] = None) -> Dict[str, Any]:
         """
         Obtém estatísticas administrativas.

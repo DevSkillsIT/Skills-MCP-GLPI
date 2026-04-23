@@ -360,12 +360,34 @@ async def _manage_group(
             is_notify=kwargs.get("is_notify", True),
         )
 
-    if action in ("update", "delete"):
-        return create_mcp_error(
-            problem=f"Action '{action}' is not supported for groups",
-            expected="Supported group actions: get, create",
-            example="Example: manage_admin(resource='groups', action='get', resource_id=5)",
-        )
+    if action == "update":
+        from src.services.admin_service import admin_service
+        payload = {
+            k: v
+            for k, v in {
+                "name": kwargs.get("name"),
+                "comment": kwargs.get("comment"),
+                "entities_id": kwargs.get("entity_id"),
+                "is_requester": kwargs.get("is_requester"),
+                "is_assign": kwargs.get("is_assign"),
+                "is_notify": kwargs.get("is_notify"),
+                "is_usergroup": kwargs.get("is_user_group"),
+                "is_itemgroup": kwargs.get("is_technical_group"),
+            }.items()
+            if v is not None
+        }
+        if not payload:
+            return create_mcp_error(
+                problem="No updatable fields provided for group",
+                expected="Provide at least one of: name, comment, entity_id, is_requester, is_assign, is_notify",
+                example="Example: manage_admin(resource='groups', action='update', resource_id=5, name='NewName')",
+            )
+        return await admin_service.update_group(resource_id, **payload)
+
+    if action == "delete":
+        from src.services.admin_service import admin_service
+        ok = await admin_service.delete_group(resource_id)
+        return {"success": ok, "id": resource_id, "message": f"Group {resource_id} deleted"}
 
     return _unsupported_action("groups", action)
 
@@ -414,12 +436,34 @@ async def _manage_location(
             comment=kwargs.get("comment"),
         )
 
-    if action in ("update", "delete"):
-        return create_mcp_error(
-            problem=f"Action '{action}' is not supported for locations",
-            expected="Supported location actions: get, create",
-            example="Example: manage_admin(resource='locations', action='get', resource_id=3)",
-        )
+    if action == "update":
+        from src.services.admin_service import admin_service
+        payload = {
+            k: v
+            for k, v in {
+                "name": kwargs.get("name"),
+                "comment": kwargs.get("comment"),
+                "building": kwargs.get("building"),
+                "room": kwargs.get("room"),
+                "town": kwargs.get("town"),
+                "address": kwargs.get("address"),
+                "locations_id": kwargs.get("parent_location_id"),
+                "entities_id": kwargs.get("entity_id"),
+            }.items()
+            if v is not None
+        }
+        if not payload:
+            return create_mcp_error(
+                problem="No updatable fields provided for location",
+                expected="Provide at least one of: name, comment, building, room, town, address, parent_location_id, entity_id",
+                example="Example: manage_admin(resource='locations', action='update', resource_id=3, town='Palmas')",
+            )
+        return await admin_service.update_location(resource_id, **payload)
+
+    if action == "delete":
+        from src.services.admin_service import admin_service
+        ok = await admin_service.delete_location(resource_id)
+        return {"success": ok, "id": resource_id, "message": f"Location {resource_id} deleted"}
 
     return _unsupported_action("locations", action)
 
