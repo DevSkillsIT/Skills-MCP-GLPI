@@ -219,26 +219,33 @@ class SessionManager:
     def _check_rate_limit(self, user_key: str) -> bool:
         """
         Verifica rate limiting por usuário.
-        Conforme SPEC.md: 60 requisições por minuto por usuário.
+        Conforme SPEC.md: rate_limit_requests_per_minute por usuário.
+        Localhost (127.0.0.1/::1) é isento para facilitar desenvolvimento e
+        chamadas paralelas de LLM.
         """
+        # Localhost bypass: user_key ends with ":127.0.0.1" or ":::127.0.0.1"
+        # or ":::1". This keeps external clients rate-limited.
+        if user_key.endswith(":127.0.0.1") or user_key.endswith(":::127.0.0.1") or user_key.endswith(":::1"):
+            return True
+
         now = time.time()
-        
+
         if user_key not in self._rate_limits:
             self._rate_limits[user_key] = (0, now)
             return True
-        
+
         count, last_reset = self._rate_limits[user_key]
-        
+
         # Resetar contador se passou 1 minuto
         if now - last_reset > 60:
             self._rate_limits[user_key] = (0, now)
             return True
-        
+
         # Verificar se excedeu limite
         if count >= self._rate_limit_per_minute:
             logger.warning(f"Rate limit exceeded for user {user_key}: {count}/{self._rate_limit_per_minute}")
             raise RateLimitError(f"Rate limit exceeded: {self._rate_limit_per_minute} requests per minute")
-        
+
         # Incrementar contador
         self._rate_limits[user_key] = (count + 1, last_reset)
         return True

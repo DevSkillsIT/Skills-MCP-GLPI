@@ -5,10 +5,15 @@ SPEC-GLPI-ENHANCE-001/F02+F08 — Section 4.2, 4.8
 """
 
 
-def validate_positive_int(value, field_name: str = "id") -> dict:
+def validate_positive_int(value, field_name: str = "id", allow_zero: bool = False) -> dict:
     """
     Validate that value is a positive integer.
     GLPI API uses integer IDs, not UUIDs.
+
+    Args:
+        value: The value to validate.
+        field_name: Name of the field for error messages.
+        allow_zero: If True, accepts 0 (useful for GLPI root entity id=0).
 
     Returns:
         {"valid": True, "value": int} on success
@@ -16,18 +21,28 @@ def validate_positive_int(value, field_name: str = "id") -> dict:
     """
     try:
         int_val = int(value)
-        if int_val <= 0:
+        min_value = 0 if allow_zero else 1
+        if int_val < min_value:
             raise ValueError()
         return {"valid": True, "value": int_val}
     except (ValueError, TypeError):
+        bound_hint = "nao negativo (ex: 0, 42)" if allow_zero else "positivo (ex: 42)"
         return {
             "valid": False,
             "error": (
                 f"{field_name} invalido: '{value}'. "
-                f"Esperado inteiro positivo (ex: 42). "
+                f"Esperado inteiro {bound_hint}. "
                 f"Use glpi_search_tickets para obter IDs validos."
             ),
         }
+
+
+def validate_non_negative_int(value, field_name: str = "id") -> dict:
+    """
+    Validate that value is a non-negative integer (>= 0).
+    Useful for GLPI entity_id where 0 is the root entity.
+    """
+    return validate_positive_int(value, field_name, allow_zero=True)
 
 
 def create_mcp_error(problem: str, expected: str, example: str) -> dict:

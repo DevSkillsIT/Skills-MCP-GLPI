@@ -11,12 +11,60 @@ from src.models import (
 from src.logger import logger
 
 
+async def _ticket_stats_proxy(entity_id=None, date_from=None, date_to=None, **_):
+    """Proxy so legacy prompt code that calls GLPIService().get_ticket_stats()
+    gets the real aggregated stats from the modern ticket_service.
+    """
+    from src.services.ticket_service import ticket_service as _ts
+    return await _ts.get_ticket_stats(
+        entity_id=entity_id, date_from=date_from, date_to=date_to
+    )
+
+
+async def _asset_stats_proxy(entity_id=None, asset_type=None, **_):
+    """Proxy for legacy get_asset_stats calls used by prompt handlers."""
+    from src.services.asset_service import asset_service as _as
+    return await _as.get_asset_stats(entity_id=entity_id, asset_type=asset_type)
+
+
 class GLPIService:
     """Serviço de integração com GLPI."""
 
     def __init__(self):
         """Inicializa o serviço."""
         self.client = http_client
+
+    # ============= STATS PROXIES (for legacy prompt handlers) =============
+
+    async def get_ticket_stats(self, entity_id=None, date_from=None, date_to=None, **_):
+        """Proxy to the modern ticket_service.get_ticket_stats."""
+        return await _ticket_stats_proxy(
+            entity_id=entity_id, date_from=date_from, date_to=date_to
+        )
+
+    async def get_asset_stats(self, entity_id=None, asset_type=None, **_):
+        """Proxy to the modern asset_service.get_asset_stats."""
+        return await _asset_stats_proxy(entity_id=entity_id, asset_type=asset_type)
+
+    async def search_users(self, query: str, **_):
+        """Proxy to admin_tools.search_users used by legacy prompt handlers."""
+        from src.tools.admin import admin_tools
+        result = await admin_tools.search_users(
+            name=query,
+            firstname=query,
+            realname=query,
+            email=query,
+            match_mode="any",
+        )
+        # Return the list of users to mimic the legacy shape
+        if isinstance(result, dict) and isinstance(result.get("users"), list):
+            return result["users"]
+        return []
+
+    async def search_assets(self, query: str, **_):
+        """Proxy for legacy asset search used by prompt handlers."""
+        from src.tools.assets import asset_tools
+        return await asset_tools.search_assets(query=query)
 
     # ============= TICKETS =============
 
