@@ -102,7 +102,10 @@ class MCPHandler:
                         "user_id": {"type": "integer", "description": "ID do tecnico para atribuicao (obrigatorio para assign)"},
                         "solution": {"type": "string", "description": "Texto da solucao tecnica (obrigatorio para resolve e close)"},
                         "ticket_number": {"type": "string", "description": "Numero do chamado como string (para get_by_number)"},
-                        "query": {"type": "string", "description": "Texto para busca de chamados similares (para find_similar)"},
+                        "threshold": {"type": "number", "description": "Limite de similaridade 0.0-1.0 para find_similar. Padrao: 0.3", "minimum": 0, "maximum": 1, "default": 0.3},
+                        "max_results": {"type": "integer", "description": "Numero maximo de tickets similares retornados para find_similar. Padrao: 10", "minimum": 1, "maximum": 50, "default": 10},
+                        "date_from": {"type": "string", "description": "Data inicial (YYYY-MM-DD) para get_stats"},
+                        "date_to": {"type": "string", "description": "Data final (YYYY-MM-DD) para get_stats"},
                         "is_private": {"type": "boolean", "description": "Se true, followup visivel apenas para tecnicos. Padrao: false", "default": False},
                     },
                     "required": ["action"],
@@ -122,7 +125,9 @@ class MCPHandler:
                     "type": "object",
                     "properties": {
                         "action": {"type": "string", "description": "Operacao de IA no GLPI. Valores: trigger (disparar analise), get_result (consultar resultado), publish (publicar resposta no ticket)", "enum": ["trigger", "get_result", "publish"]},
-                        "ticket_id": {"type": "integer", "description": "ID do chamado no GLPI para analise"},
+                        "ticket_id": {"type": "integer", "description": "ID do chamado no GLPI (obrigatorio para trigger)"},
+                        "job_id": {"type": "string", "description": "ID do job retornado por trigger (obrigatorio para get_result e publish)"},
+                        "response": {"type": "object", "description": "Payload da resposta IA a publicar (obrigatorio para publish)"},
                     },
                     "required": ["action"],
                 },
@@ -1566,12 +1571,13 @@ class MCPHandler:
                 from src.resources import list_resources
                 result = {"resources": list_resources()}
             elif method == "resources/read":
-                # SPEC-GLPI-ENHANCE-001/F06: Read specific resource
+                # SPEC-GLPI-ENHANCE-001/F06: Read specific resource.
+                # read_resource uses glpi_client internally (handles auth via
+                # SessionManager context vars), so we don't need to pass a session.
                 from src.resources import read_resource
                 uri = params.get("uri", "")
                 try:
-                    session = await self.session_manager.get_current_session() if hasattr(self, 'session_manager') else None
-                    resource_content = await read_resource(uri, session)
+                    resource_content = await read_resource(uri)
                     result = {"contents": [resource_content]}
                 except ValueError as e:
                     raise InvalidRequestError(str(e))

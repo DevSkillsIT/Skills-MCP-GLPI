@@ -61,18 +61,44 @@ class TicketService:
         return result
     
     async def get_ticket_by_number(self, ticket_number: str) -> Optional[Dict[str, Any]]:
-        """Busca ticket por número/nome."""
+        """Busca ticket por número público.
+
+        In stock GLPI, the ticket "number" is the same as the numeric id.
+        Some installs use a custom number (e.g. formatnumber plugin), which
+        is typically stored in the ticket name/title. Strategy:
+        1. If ticket_number is numeric, try direct id lookup.
+        2. Fall back to a /search/Ticket on field 1 (name) contains match.
+        """
         if not ticket_number or not ticket_number.strip():
             raise ValidationError("ticket_number is required", "ticket_number")
+
+        number = ticket_number.strip()
+
+        # Strategy 1: numeric → direct /Ticket/{id}
+        if number.isdigit():
+            try:
+                ticket = await glpi_client.get(f"/apirest.php/Ticket/{int(number)}")
+                if ticket and ticket.get("id"):
+                    return ticket
+            except NotFoundError:
+                pass
+            except GLPIError as e:
+                if getattr(e, "code", 0) not in (404,):
+                    logger.warning(f"get_ticket_by_number direct id lookup failed: {e}")
+
+        # Strategy 2: /search/Ticket on title (field 1)
         params = {
-            "criteria[0][field]": "1",  # name/number
-            "criteria[0][searchtype]": "equals",
-            "criteria[0][value]": ticket_number.strip(),
-            "range": "0-0"
+            "criteria[0][field]": "1",
+            "criteria[0][searchtype]": "contains",
+            "criteria[0][value]": number,
+            "range": "0-0",
         }
-        result = await glpi_client.get("/apirest.php/Ticket", params=params)
+        result = await glpi_client.get("/apirest.php/search/Ticket", params=params)
         if isinstance(result, dict) and result.get("data"):
-            return result["data"][0]
+            hit = result["data"][0]
+            if hit.get("2") or hit.get("id"):
+                # Re-fetch full ticket for consistent shape
+                return await self.get_ticket(int(hit.get("2") or hit.get("id")))
         return None
     
     async def create_ticket(self, title: str, description: str, **kwargs) -> Dict[str, Any]:
@@ -237,20 +263,78 @@ class TicketService:
         return result.get("data", []) if isinstance(result, dict) else (result or [])
     
     async def get_ticket_stats(self, **kwargs) -> Dict[str, Any]:
-        """Obtém estatísticas de tickets."""
-        params = {
-            "is_deleted": 0,
-            "range": "0-0"  # Apenas contagem
+        """Obtém estatísticas de tickets agregadas por status.
+
+        GLPI ticket status codes:
+            1 = new, 2 = assigned, 3 = planned, 4 = pending,
+            5 = solved, 6 = closed
+        Uses /search/Ticket with range=0-0 to fetch only totalcount per status.
+        """
+        entity_id = kwargs.get("entity_id")
+        date_from = kwargs.get("date_from")
+        date_to = kwargs.get("date_to")
+
+        async def _count(extra_criteria: Optional[List[Dict[str, Any]]] = None) -> int:
+            params: Dict[str, Any] = {"range": "0-0"}
+            idx = 0
+            criteria = list(extra_criteria or [])
+            if entity_id is not None:
+                criteria.append(
+                    {"field": 80, "searchtype": "under", "value": entity_id}
+                )
+            if date_from:
+                criteria.append(
+                    {"field": 15, "searchtype": "morethan", "value": date_from}
+                )
+            if date_to:
+                criteria.append(
+                    {"field": 15, "searchtype": "lessthan", "value": date_to}
+                )
+            for c in criteria:
+                if idx > 0:
+                    params[f"criteria[{idx}][link]"] = "AND"
+                params[f"criteria[{idx}][field]"] = c["field"]
+                params[f"criteria[{idx}][searchtype]"] = c["searchtype"]
+                params[f"criteria[{idx}][value]"] = c["value"]
+                idx += 1
+            try:
+                result = await glpi_client.get(
+                    "/apirest.php/search/Ticket", params=params, use_cache=False
+                )
+                if isinstance(result, dict):
+                    return int(result.get("totalcount", 0) or 0)
+            except Exception as e:
+                logger.warning(f"get_ticket_stats count failed: {e}")
+            return 0
+
+        # Status 12 is the GLPI search field id for "status"
+        status_map = {
+            "new": 1,
+            "assigned": 2,
+            "planned": 3,
+            "pending": 4,
+            "solved": 5,
+            "closed": 6,
         }
-        
-        result = await glpi_client.get("/apirest.php/Ticket", params=params)
-        total = result.get("totalcount", 0) if isinstance(result, dict) else 0
-        
+
+        total = await _count()
+        by_status = {}
+        for label, code in status_map.items():
+            by_status[label] = await _count(
+                [{"field": 12, "searchtype": "equals", "value": code}]
+            )
+
+        open_tickets = by_status["new"] + by_status["assigned"] + by_status["planned"] + by_status["pending"]
+        closed_tickets = by_status["solved"] + by_status["closed"]
+
         return {
             "total_tickets": total,
-            "open_tickets": 0,  # TODO: Implementar filtros por status
-            "closed_tickets": 0,
-            "entity_id": kwargs.get("entity_id", 0)
+            "open_tickets": open_tickets,
+            "closed_tickets": closed_tickets,
+            "by_status": by_status,
+            "entity_id": entity_id if entity_id is not None else "all",
+            "date_from": date_from,
+            "date_to": date_to,
         }
     
     async def get_ticket_history(self, ticket_id: int) -> List[Dict[str, Any]]:
