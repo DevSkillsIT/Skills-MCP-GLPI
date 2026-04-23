@@ -1,6 +1,8 @@
 # GLPI MCP Server — Referência de Tools
 
 > 14 ferramentas consolidadas organizadas em 6 domínios
+>
+> **Versão:** 2.1.0 (April 2026) · **GLPI:** 10.x e 11.x
 
 ## Sumário
 
@@ -76,7 +78,10 @@ Operações completas de gestão de chamados: criar, atualizar, atribuir, resolv
 | `user_id` | integer | Condicional | ID do técnico (para `assign`) |
 | `solution` | string | Condicional | Solução técnica (para `resolve`/`close`) |
 | `ticket_number` | string | Não | Número do chamado (para `get_by_number`) |
-| `query` | string | Não | Texto de busca (para `find_similar`) |
+| `threshold` | number | Não | Similaridade 0.0–1.0 para `find_similar` (padrão: 0.3) |
+| `max_results` | integer | Não | Máx. tickets similares em `find_similar` (padrão: 10, máx: 50) |
+| `date_from` | string | Não | Data inicial YYYY-MM-DD para `get_stats` |
+| `date_to` | string | Não | Data final YYYY-MM-DD para `get_stats` |
 | `is_private` | boolean | Não | Acompanhamento privado (padrão: false) |
 
 **Ações disponíveis:**
@@ -94,8 +99,8 @@ Operações completas de gestão de chamados: criar, atualizar, atribuir, resolv
 | `add_followup` | Adicionar acompanhamento | `ticket_id`, `content` |
 | `get_followups` | Listar acompanhamentos | `ticket_id` |
 | `get_history` | Histórico de alterações | `ticket_id` |
-| `get_stats` | Estatísticas de chamados | nenhum |
-| `find_similar` | Encontrar chamados similares | `query` |
+| `get_stats` | Estatísticas agregadas por status (`by_status`: new/assigned/planned/pending/solved/closed). Filtros opcionais: `entity_id`, `date_from`, `date_to` | nenhum |
+| `find_similar` | Encontrar chamados similares por conteúdo do ticket de referência | `ticket_id` (+ `threshold`, `max_results` opcionais) |
 
 **Exemplos:**
 
@@ -137,24 +142,67 @@ Operações completas de gestão de chamados: criar, atualizar, atribuir, resolv
   }
 ```
 
+```
+"Fechar chamado 542"
+→ action: "close"
+→ Params: {
+    "action": "close",
+    "ticket_id": 542,
+    "solution": "Problema resolvido, usuário confirmou funcionamento."
+  }
+```
+
+```
+"Tickets similares ao 542"
+→ action: "find_similar"
+→ Params: {
+    "action": "find_similar",
+    "ticket_id": 542,
+    "threshold": 0.3,
+    "max_results": 5
+  }
+```
+
+```
+"Estatísticas de chamados de abril"
+→ action: "get_stats"
+→ Params: {
+    "action": "get_stats",
+    "date_from": "2026-04-01",
+    "date_to": "2026-04-30"
+  }
+→ Retorna: total_tickets, open_tickets, closed_tickets, by_status { new, assigned, planned, pending, solved, closed }
+```
+
 ---
 
 ### 1.3 `glpi_manage_ticket_ai_analysis`
 
 Análise inteligente de chamados usando IA com categorização, priorização e sugestões automáticas.
+Fluxo assíncrono: `trigger` retorna um `job_id` que deve ser usado em `get_result` e `publish`.
 
 | Parâmetro | Tipo | Obrigatório | Descrição |
 |-----------|------|:-----------:|-----------|
 | `action` | string | **Sim** | `trigger` (disparar), `get_result` (consultar), `publish` (publicar) |
-| `ticket_id` | integer | Não | ID do chamado para análise |
+| `ticket_id` | integer | Condicional | Obrigatório para `trigger` |
+| `job_id` | string | Condicional | ID do job retornado por `trigger` — obrigatório para `get_result` e `publish` |
+| `response` | object | Condicional | Payload da resposta IA para `publish` |
 
 **Exemplo:**
 ```
 "Analisar chamado 200 com IA"
 → Params: { "action": "trigger", "ticket_id": 200 }
+→ Retorna: { "job_id": "ai_job_xxxxxx", "status": "processing" }
 
-"Ver resultado da análise do chamado 200"
-→ Params: { "action": "get_result", "ticket_id": 200 }
+"Ver resultado da análise"
+→ Params: { "action": "get_result", "job_id": "ai_job_xxxxxx" }
+
+"Publicar resposta IA no ticket"
+→ Params: {
+    "action": "publish",
+    "job_id": "ai_job_xxxxxx",
+    "response": { "summary": "Recomendação: ...", "suggested_priority": 3 }
+  }
 ```
 
 ---
@@ -208,14 +256,14 @@ Operações de gestão de ativos: cadastrar, detalhar, atualizar, excluir, reser
 
 | Action | Descrição | Parâmetros obrigatórios |
 |--------|-----------|------------------------|
-| `get` | Consultar ativo | `asset_id` |
-| `get_details` | Detalhes completos | `asset_id`, `asset_type` |
+| `get` | Consultar ativo (dados básicos) | `asset_id`, `asset_type` |
+| `get_details` | Detalhes enriquecidos (**Computer**: OS + discos + CPU + memória + redes + software instalado) | `asset_id`, `asset_type` |
 | `create` | Cadastrar novo ativo | `name`, `asset_type` |
 | `update` | Atualizar ativo | `asset_id` + campos |
 | `delete` | Excluir ativo | `asset_id` |
 | `get_reservations` | Reservas do ativo | `asset_id` |
-| `create_reservation` | Criar reserva | `asset_id` |
-| `update_reservation` | Atualizar reserva | `asset_id` |
+| `create_reservation` | Criar reserva | `asset_id`, `user_id`, `date_start`, `date_end` |
+| `update_reservation` | Atualizar reserva | `reservation_id` |
 
 **Exemplos:**
 ```
@@ -229,6 +277,8 @@ Operações de gestão de ativos: cadastrar, detalhar, atualizar, excluir, reser
 
 "Detalhes do computador ID 150"
 → Params: { "action": "get_details", "asset_id": 150, "asset_type": "Computer" }
+→ Retorna o ativo + seções "Sistema Operacional", "Discos", "Processadores",
+   "Memorias", "Redes" e "Software Instalado" (até 25 itens).
 ```
 
 ---
@@ -272,18 +322,36 @@ Operações CRUD em recursos administrativos.
 | Parâmetro | Tipo | Obrigatório | Descrição |
 |-----------|------|:-----------:|-----------|
 | `resource` | string | **Sim** | `users`, `groups`, `entities`, `locations` |
-| `action` | string | **Sim** | `get`, `create`, `update`, `delete` |
-| `resource_id` | integer | Condicional | ID do recurso (para get/update/delete) |
+| `action` | string | **Sim** | `get`, `create`, `update`, `delete` (nota: `entities` só suporta `get`) |
+| `resource_id` | integer | Condicional | ID do recurso (para get/update/delete). **Aceita 0 para `entities`** (root entity do GLPI) |
 | `name` | string | Condicional | Nome/login (para create) |
 | `email` | string | Não | Email do usuário |
+
+**Matriz de suporte por `resource` × `action`:**
+
+| Resource | get | create | update | delete |
+|----------|:---:|:------:|:------:|:------:|
+| `users` | ✅ | ✅ | ✅ | ✅ (soft delete por padrão, purge opcional) |
+| `groups` | ✅ | ✅ | ✅ | ✅ (purge=true por padrão) |
+| `locations` | ✅ | ✅ | ✅ | ✅ (purge=true por padrão) |
+| `entities` | ✅ (id=0 permitido) | ❌ | ❌ | ❌ |
 
 **Exemplos:**
 ```
 "Detalhes do usuário ID 25"
 → Params: { "resource": "users", "action": "get", "resource_id": 25 }
 
+"Detalhes da entidade raiz (MSP)"
+→ Params: { "resource": "entities", "action": "get", "resource_id": 0 }
+
 "Criar grupo N2-Infraestrutura"
 → Params: { "resource": "groups", "action": "create", "name": "N2-Infraestrutura" }
+
+"Renomear location 508"
+→ Params: { "resource": "locations", "action": "update", "resource_id": 508, "name": "Sede - 2º andar" }
+
+"Remover grupo 68 definitivamente"
+→ Params: { "resource": "groups", "action": "delete", "resource_id": 68 }
 ```
 
 ---
@@ -297,7 +365,7 @@ Listagem e estatísticas de webhooks configurados.
 | Parâmetro | Tipo | Obrigatório | Descrição |
 |-----------|------|:-----------:|-----------|
 | `scope` | string | Não | `list`, `stats`, `deliveries` (padrão: `list`) |
-| `webhook_id` | integer | Condicional | ID do webhook (para `deliveries`) |
+| `webhook_id` | string | Condicional | ID do webhook (**hash alfanumérico**, para `deliveries`) |
 | `limit` | integer | Não | Resultados (padrão: 10, máx: 50) |
 | `offset` | integer | Não | Offset paginação |
 
@@ -322,10 +390,21 @@ Gestão completa de webhooks e integrações.
 | Parâmetro | Tipo | Obrigatório | Descrição |
 |-----------|------|:-----------:|-----------|
 | `action` | string | **Sim** | `get`, `create`, `update`, `delete`, `test`, `trigger`, `enable`, `disable`, `retry` |
-| `webhook_id` | integer | Condicional | ID do webhook |
+| `webhook_id` | string | Condicional | ID do webhook (**hash alfanumérico**, ex: `2b27acbaca81c9e9694107d708d92dcf`) |
 | `name` | string | Condicional | Nome (para `create`) |
-| `url` | string | Condicional | URL callback (para `create`) |
-| `event_type` | string | Condicional | Tipo de evento (para `create`/`trigger`) |
+| `url` | string | Condicional | URL callback HTTP(S) (para `create`) |
+| `event_type` | string | Condicional | Tipo de evento (enum abaixo) |
+
+**`event_type` — enum oficial (formato `recurso.acao`):**
+
+- Tickets: `ticket.created`, `ticket.updated`, `ticket.deleted`, `ticket.assigned`
+- Assets: `asset.created`, `asset.updated`, `asset.deleted`, `asset.reserved`
+- Users: `user.created`, `user.updated`, `user.deleted`
+- Groups: `group.created`, `group.updated`, `group.deleted`
+
+> ⚠️ **Atenção:** Os nomes usam **ponto** (`.`), não underline. `ticket_created` é inválido.
+>
+> ⚠️ **Nota arquitetural:** A camada atual de webhooks do MCP usa storage in-memory (não sincroniza com a tabela `glpi_webhooks` nativa do GLPI 11). Webhooks não persistem após restart do servidor MCP.
 
 **Exemplos:**
 ```
@@ -334,14 +413,15 @@ Gestão completa de webhooks e integrações.
     "action": "create",
     "name": "Teams - Novo Chamado",
     "url": "https://hooks.teams.com/webhook/xxx",
-    "event_type": "ticket_created"
+    "event_type": "ticket.created"
   }
+→ Retorna: { "id": "2b27acbaca81c9e9694107d708d92dcf", ... }
 
-"Testar conectividade do webhook 10"
-→ Params: { "action": "test", "webhook_id": 10 }
+"Testar conectividade do webhook"
+→ Params: { "action": "test", "webhook_id": "2b27acbaca81c9e9694107d708d92dcf" }
 
-"Desabilitar webhook 10"
-→ Params: { "action": "disable", "webhook_id": 10 }
+"Desabilitar webhook"
+→ Params: { "action": "disable", "webhook_id": "2b27acbaca81c9e9694107d708d92dcf" }
 ```
 
 ---

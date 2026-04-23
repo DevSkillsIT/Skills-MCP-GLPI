@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🚀 Skills MCP GLPI v2.0
+# 🚀 Skills MCP GLPI v2.1
 
 ### 14 Production-Grade Tools with 70-85% Token Efficiency and Enterprise-Grade Safety
 
@@ -22,7 +22,11 @@
 
 ## 📖 About The Project
 
-**Skills MCP GLPI v2.0** is a production-ready Model Context Protocol (MCP) server for GLPI (IT Service Management) with a revolutionary token-optimization architecture. Built by **Skills IT**, this MCP consolidates 68 specialized tools into 14 enterprise-grade tools with Markdown responses, tool annotations, and MCP resources.
+**Skills MCP GLPI v2.1** is a production-ready Model Context Protocol (MCP) server for GLPI (IT Service Management) with a revolutionary token-optimization architecture. Built by **Skills IT**, this MCP consolidates 68 specialized tools into 14 enterprise-grade tools with Markdown responses, tool annotations, and MCP resources.
+
+Compatible with **GLPI 10.x** (legacy API v1) and **GLPI 11.x** (current stable).
+
+**What's new in 2.1** (April 2026): 14 bug fixes covering ticket stats aggregation, user/admin search, knowledge base integration, computer details enrichment (OS/disks/CPU/memory/network/software), webhook string IDs, entity root id=0, localhost rate-limit bypass, and a critical fix to the success formatter that was silently masking failed delete operations. See [CHANGELOG.md](./CHANGELOG.md) for the full list.
 
 ### 🌟 Why v2.0?
 
@@ -108,8 +112,8 @@ LLM receives usage guide automatically on initialization, ensuring optimal tool 
 ### Prerequisites
 
 - Python 3.11 or higher
-- GLPI 10.x with REST API enabled
-- GLPI App Token and User Token
+- GLPI 10.x or 11.x with REST API enabled
+- GLPI App Token and User Token (Personal Access Token)
 
 ### Installation
 
@@ -202,7 +206,7 @@ curl http://localhost:8824/health
 | Tool | Description |
 |------|-------------|
 | `glpi_search_asset_inventory` | Search computers/monitors/software/devices/reservations by type, entity, status |
-| `glpi_manage_asset_operations` | CRUD + reservations: get/get_details/create/update/delete/get_reservations/create_reservation |
+| `glpi_manage_asset_operations` | CRUD + reservations: get/get_details (enriched with OS/disks/CPU/mem/net/software)/create/update/delete/get_reservations/create_reservation |
 
 ### 👥 Admin (2 tools)
 
@@ -453,7 +457,7 @@ pm2 restart mcp-glpi
 | Component | Version |
 |-----------|---------|
 | Python | 3.11+ |
-| GLPI | 10.x |
+| GLPI | 10.x, 11.x |
 | FastAPI | 0.104+ |
 | Pydantic | 2.x |
 | MCP Protocol | 2024-11-05 |
@@ -488,10 +492,10 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 *We are an MSP empowering other MSPs with intelligent automation.*
 
-**Version:** 2.0.0 | **Last Updated:** March 2026
+**Version:** 2.1.0 | **Last Updated:** April 2026
 
 🇧🇷 **Proudly Made in Brazil**
 
-[⬆ Back to Top](#-skills-mcp-glpi-v20)
+[⬆ Back to Top](#-skills-mcp-glpi-v21)
 
 </div>

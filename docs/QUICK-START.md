@@ -2,9 +2,9 @@
 
 ## Visão Geral
 
-O MCP GLPI Server é um servidor MCP (Model Context Protocol) que permite a Claude, Gemini e outros LLMs interagirem diretamente com o GLPI 10 para gestão de chamados, ativos, usuários e integrações.
+O MCP GLPI Server é um servidor MCP (Model Context Protocol) que permite a Claude, Gemini e outros LLMs interagirem diretamente com o GLPI (10.x e 11.x) para gestão de chamados, ativos, usuários e integrações.
 
-**Versão:** 2.0 | **Protocolo:** MCP 2024-11-05 | **Transporte:** Streamable HTTP
+**Versão:** 2.1.0 | **Protocolo:** MCP 2024-11-05 | **Transporte:** Streamable HTTP | **GLPI:** 10.x e 11.x
 
 ## Arquitetura
 
@@ -17,10 +17,10 @@ Claude / Gemini CLI
 │   FastAPI + uvicorn  │
 │   14 Tools │ 15 Prompts │ 4 Resources
 └──────────┬───────────┘
-           │ REST API
+           │ REST API v1 (apirest.php)
            ▼
 ┌──────────────────────┐
-│      GLPI 10 API     │
+│   GLPI 10.x / 11.x   │
 │   (por cliente)      │
 └──────────────────────┘
 ```
@@ -108,3 +108,13 @@ Adicione ao `.mcp.json` do projeto:
 - [Referência Completa de Tools](./TOOLS-REFERENCE.md) — 14 ferramentas com parâmetros e exemplos
 - [Referência de Prompts](./PROMPTS-REFERENCE.md) — 15 prompts prontos para relatórios gerenciais
 - [Exemplos de Uso](./EXAMPLES.md) — Cenários completos passo a passo
+- [CHANGELOG](../CHANGELOG.md) — Histórico de versões e correções
+
+## Dicas Importantes (v2.1+)
+
+- **Token do usuário:** cada cliente MCP envia seu próprio `X-GLPI-User-Token` no header. Isso respeita as permissões nativas do GLPI.
+- **Rate limit localhost:** chamadas vindas de `127.0.0.1` / `::1` ignoram o rate limit — ideal para LLMs locais que fazem chamadas paralelas.
+- **Entity ID=0 é válido:** o entity root do GLPI (MSP) pode ser consultado com `resource_id=0` em `glpi_manage_admin_resources`.
+- **Webhook IDs são hashes alfanuméricos** (não inteiros). Ex: `2b27acbaca81c9e9...`.
+- **event_type usa ponto:** `ticket.created`, não `ticket_created`.
+- **`get_details` de Computer** traz OS + discos + CPU + memória + rede + software em uma única resposta Markdown.
