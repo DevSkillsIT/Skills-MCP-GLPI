@@ -13,7 +13,19 @@ from typing import Any, Dict, List, Optional
 
 from src.formatters.markdown_helpers import remove_heavy_fields
 from src.tools.webhooks import webhook_tools
-from src.utils.validators import create_mcp_error, validate_positive_int
+from src.utils.validators import create_mcp_error
+
+
+def _validate_webhook_id(value) -> dict:
+    """Webhook IDs in modern GLPI are opaque hashes/UUIDs, not integers.
+    Accept any non-empty string (or int) and coerce to str.
+    """
+    if value is None:
+        return {"valid": False, "error": "webhook_id invalido: None"}
+    value_str = str(value).strip()
+    if not value_str:
+        return {"valid": False, "error": "webhook_id invalido: string vazia"}
+    return {"valid": True, "value": value_str}
 
 
 # ---------------------------------------------------------------------------
@@ -22,7 +34,7 @@ from src.utils.validators import create_mcp_error, validate_positive_int
 
 async def search_webhooks(
     scope: str,
-    webhook_id: Optional[int] = None,
+    webhook_id: Optional[str] = None,
     limit: int = 10,
     offset: int = 0,
 ) -> Dict[str, Any]:
@@ -68,20 +80,20 @@ async def search_webhooks(
     if webhook_id is None:
         return create_mcp_error(
             "webhook_id is required when scope='deliveries'",
-            "Provide a positive integer webhook_id",
-            "Example: search_webhooks(scope='deliveries', webhook_id=42)",
+            "Provide a non-empty webhook_id (string hash or numeric ID)",
+            "Example: search_webhooks(scope='deliveries', webhook_id='2b27acbaca...')",
         )
 
-    check = validate_positive_int(webhook_id, "webhook_id")
+    check = _validate_webhook_id(webhook_id)
     if not check["valid"]:
         return create_mcp_error(
             check["error"],
-            "Expected a positive integer",
-            "Example: search_webhooks(scope='deliveries', webhook_id=42)",
+            "Expected a non-empty string or integer",
+            "Example: search_webhooks(scope='deliveries', webhook_id='2b27acbaca...')",
         )
 
     result = await webhook_tools.get_webhook_deliveries(
-        webhook_id=str(check["value"]),
+        webhook_id=check["value"],
         limit=limit,
         offset=offset,
     )
@@ -98,7 +110,7 @@ async def search_webhooks(
 
 async def manage_webhooks(
     action: str,
-    webhook_id: Optional[int] = None,
+    webhook_id: Optional[str] = None,
     # create / update params
     name: Optional[str] = None,
     url: Optional[str] = None,
@@ -155,17 +167,17 @@ async def manage_webhooks(
         if webhook_id is None:
             return create_mcp_error(
                 f"webhook_id is required for action '{action}'",
-                "Provide a positive integer webhook_id",
-                f"Example: manage_webhooks(action='{action}', webhook_id=42)",
+                "Provide a non-empty webhook_id (string hash or numeric ID)",
+                f"Example: manage_webhooks(action='{action}', webhook_id='2b27acbaca...')",
             )
-        check = validate_positive_int(webhook_id, "webhook_id")
+        check = _validate_webhook_id(webhook_id)
         if not check["valid"]:
             return create_mcp_error(
                 check["error"],
-                "Expected a positive integer",
-                f"Example: manage_webhooks(action='{action}', webhook_id=42)",
+                "Expected a non-empty string or integer",
+                f"Example: manage_webhooks(action='{action}', webhook_id='2b27acbaca...')",
             )
-        wh_id_str = str(check["value"])
+        wh_id_str = check["value"]
 
     # --- action: get ---
     if action == "get":

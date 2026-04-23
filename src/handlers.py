@@ -238,7 +238,7 @@ class MCPHandler:
                     "type": "object",
                     "properties": {
                         "scope": {"type": "string", "description": "Escopo da consulta de webhooks no GLPI. Valores: list (listar todos), stats (estatisticas de entrega), deliveries (historico de tentativas por webhook)", "enum": ["list", "stats", "deliveries"], "default": "list"},
-                        "webhook_id": {"type": "integer", "description": "ID do webhook no GLPI (obrigatorio quando scope=deliveries)"},
+                        "webhook_id": {"type": "string", "description": "ID do webhook no GLPI (hash alfanumerico, obrigatorio quando scope=deliveries)"},
                         "limit": {"type": "integer", "description": "Quantidade maxima de resultados (padrao: 10, maximo: 50)", "minimum": 1, "maximum": 50, "default": 10},
                         "offset": {"type": "integer", "description": "Deslocamento para paginacao (padrao: 0)", "minimum": 0, "default": 0},
                     },
@@ -258,10 +258,10 @@ class MCPHandler:
                     "type": "object",
                     "properties": {
                         "action": {"type": "string", "description": "Operacao sobre webhook no GLPI. Valores: get (detalhes), create (cadastrar), update (atualizar), delete (excluir), test (testar conectividade), trigger (disparo manual), enable (ativar), disable (desativar), retry (reenviar falhas)", "enum": ["get", "create", "update", "delete", "test", "trigger", "enable", "disable", "retry"]},
-                        "webhook_id": {"type": "integer", "description": "ID do webhook no GLPI (obrigatorio para get, update, delete, test, enable, disable, retry)"},
+                        "webhook_id": {"type": "string", "description": "ID do webhook no GLPI (hash alfanumerico, obrigatorio para get, update, delete, test, enable, disable, retry)"},
                         "name": {"type": "string", "description": "Nome do webhook (obrigatorio para create)"},
                         "url": {"type": "string", "description": "URL de destino do callback HTTP (obrigatorio para create)"},
-                        "event_type": {"type": "string", "description": "Tipo de evento que dispara o webhook (obrigatorio para create e trigger)"},
+                        "event_type": {"type": "string", "description": "Tipo de evento que dispara o webhook (obrigatorio para create e trigger). Valores aceitos: ticket.created, ticket.updated, ticket.deleted, ticket.assigned, asset.created, asset.updated, asset.deleted, asset.reserved, user.created, user.updated, user.deleted, group.created, group.updated, group.deleted", "enum": ["ticket.created", "ticket.updated", "ticket.deleted", "ticket.assigned", "asset.created", "asset.updated", "asset.deleted", "asset.reserved", "user.created", "user.updated", "user.deleted", "group.created", "group.updated", "group.deleted"]},
                     },
                     "required": ["action"],
                 },
