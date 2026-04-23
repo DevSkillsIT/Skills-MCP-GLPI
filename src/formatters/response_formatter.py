@@ -18,8 +18,10 @@ from src.formatters.glpi_formatters import (
     format_asset_detail,
     format_asset_stats,
     format_assets_list,
+    format_computer_details_enriched,
     format_entities_list,
     format_groups_list,
+    format_knowledge_articles,
     format_locations_list,
     format_operation_success,
     format_prompts_list,
@@ -79,8 +81,19 @@ def _dispatch_manage_ai(data: Any, args: dict) -> str:
     action = args.get("action", "get_result")
     if action == "get_result":
         return format_ai_analysis_result(data)
-    elif action in ("trigger", "publish"):
-        return format_operation_success(data, f"{action} analise IA")
+    if action == "trigger":
+        # Must surface the job_id so the caller can poll get_result later.
+        if isinstance(data, dict) and data.get("job_id"):
+            status = data.get("status", "processing")
+            return (
+                f"Analise IA disparada com sucesso.\n\n"
+                f"- **Job ID:** `{data['job_id']}`\n"
+                f"- **Status:** {status}\n\n"
+                f"Use action='get_result' com o job_id acima para consultar o resultado."
+            )
+        return format_operation_success(data, "trigger analise IA")
+    if action == "publish":
+        return format_operation_success(data, "publish analise IA")
     return format_ai_analysis_result(data)
 
 
@@ -97,8 +110,10 @@ def _dispatch_search_assets(data: Any, args: dict) -> str:
 def _dispatch_manage_assets(data: Any, args: dict) -> str:
     """Dispatch for glpi_manage_assets."""
     action = args.get("action", "get")
-    if action in ("get", "get_details"):
+    if action == "get":
         return format_asset_detail(data)
+    if action == "get_details":
+        return format_computer_details_enriched(data, args)
     elif action == "get_reservations":
         return format_reservations_list(data, args)
     elif action in ("create", "update", "delete", "create_reservation", "update_reservation"):
@@ -176,7 +191,7 @@ TOOL_FORMATTERS: dict[str, Any] = {
     "glpi_search_webhook_integrations": _dispatch_search_webhooks,
     "glpi_manage_webhook_integrations": _dispatch_manage_webhooks,
     # === KNOWLEDGE (1 tool) ===
-    "glpi_search_knowledge_articles": lambda data, args: format_tickets_list(data, args),
+    "glpi_search_knowledge_articles": format_knowledge_articles,
     # === BRIDGE TOOLS (4) — pass-through for Markdown ===
     "glpi_list_available_resources": lambda data, args: data if isinstance(data, str) else format_resources_list(data),
     "glpi_read_resource_by_uri": lambda data, args: data if isinstance(data, str) else str(data),

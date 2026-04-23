@@ -226,7 +226,12 @@ def format_reservations_list(data, args: dict) -> str:
 
 def format_users_list(data, args: dict) -> str:
     """Format users list as Markdown table."""
-    items = data if isinstance(data, list) else data.get("data", data.get("items", []))
+    if isinstance(data, list):
+        items = data
+    elif isinstance(data, dict):
+        items = data.get("users") or data.get("data") or data.get("items") or []
+    else:
+        items = []
     if not items:
         return "Nenhum usuario encontrado."
     total = data.get("totalcount") if isinstance(data, dict) else None
@@ -264,7 +269,12 @@ def format_user_detail(data: dict) -> str:
 
 def format_groups_list(data, args: dict) -> str:
     """Format groups list."""
-    items = data if isinstance(data, list) else data.get("data", data.get("items", []))
+    if isinstance(data, list):
+        items = data
+    elif isinstance(data, dict):
+        items = data.get("groups") or data.get("data") or data.get("items") or []
+    else:
+        items = []
     if not items:
         return "Nenhum grupo encontrado."
     rows = []
@@ -281,7 +291,12 @@ def format_groups_list(data, args: dict) -> str:
 
 def format_entities_list(data, args: dict) -> str:
     """Format entities list."""
-    items = data if isinstance(data, list) else data.get("data", data.get("items", []))
+    if isinstance(data, list):
+        items = data
+    elif isinstance(data, dict):
+        items = data.get("entities") or data.get("data") or data.get("items") or []
+    else:
+        items = []
     if not items:
         return "Nenhuma entidade encontrada."
     rows = []
@@ -297,7 +312,12 @@ def format_entities_list(data, args: dict) -> str:
 
 def format_locations_list(data, args: dict) -> str:
     """Format locations list."""
-    items = data if isinstance(data, list) else data.get("data", data.get("items", []))
+    if isinstance(data, list):
+        items = data
+    elif isinstance(data, dict):
+        items = data.get("locations") or data.get("data") or data.get("items") or []
+    else:
+        items = []
     if not items:
         return "Nenhuma localizacao encontrada."
     rows = []
@@ -412,6 +432,106 @@ def format_ai_analysis_result(data) -> str:
 # === BRIDGE ===
 
 
+def format_knowledge_articles(data, args: dict) -> str:
+    """Format knowledge base articles as Markdown table."""
+    if isinstance(data, list):
+        items = data
+    elif isinstance(data, dict):
+        items = data.get("articles") or data.get("data") or data.get("items") or []
+    else:
+        items = []
+    if not items:
+        q = (args or {}).get("query", "")
+        return f"Nenhum artigo encontrado na base de conhecimento{(' para: ' + q) if q else ''}."
+    total = data.get("total", len(items)) if isinstance(data, dict) else len(items)
+    rows = []
+    for a in items:
+        rows.append(
+            f"| {esc(a.get('id'))} "
+            f"| {truncate_field(a.get('name', ''), 80)} "
+            f"| {esc(a.get('category', 'N/A'))} "
+            f"| {esc(a.get('views', 0))} |"
+        )
+    table = "\n".join(rows)
+    return (
+        f"**{len(items)} artigo(s) encontrado(s)** (total: {total})\n\n"
+        f"| ID | Titulo | Categoria | Visualizacoes |\n|---|---|---|---|\n{table}"
+    )
+
+
+def format_computer_details_enriched(data, args: dict) -> str:
+    """Format enriched computer details (asset + sub-items).
+
+    Accepts both the new shape {asset, operating_systems, disks, processors,
+    memories, networks, software} and the legacy flat asset dict.
+    """
+    if not isinstance(data, dict):
+        return format_asset_detail(data)
+
+    asset = data.get("asset")
+    if not isinstance(asset, dict):
+        # Legacy/flat shape: treat the whole dict as the asset
+        return format_asset_detail(data)
+
+    parts = [format_asset_detail(asset)]
+
+    def _section(title: str, items: list, columns: list[tuple[str, str]]) -> str:
+        if not items:
+            return ""
+        header = "| " + " | ".join(c[0] for c in columns) + " |"
+        sep = "|" + "|".join(["---"] * len(columns)) + "|"
+        rows = []
+        for it in items:
+            row = "| " + " | ".join(esc(it.get(c[1], "")) for c in columns) + " |"
+            rows.append(row)
+        return f"\n\n## {title} ({len(items)})\n\n{header}\n{sep}\n" + "\n".join(rows)
+
+    parts.append(
+        _section(
+            "Sistema Operacional",
+            data.get("operating_systems") or [],
+            [("ID", "id"), ("OS", "operatingsystems_id"), ("Versao", "operatingsystemversions_id")],
+        )
+    )
+    parts.append(
+        _section(
+            "Discos",
+            data.get("disks") or [],
+            [("ID", "id"), ("Nome", "name"), ("Tamanho (MB)", "totalsize"), ("Filesystem", "filesystems_id")],
+        )
+    )
+    parts.append(
+        _section(
+            "Processadores",
+            data.get("processors") or [],
+            [("ID", "id"), ("CPU ID", "deviceprocessors_id"), ("Freq (MHz)", "frequency"), ("Cores", "nbcores")],
+        )
+    )
+    parts.append(
+        _section(
+            "Memorias",
+            data.get("memories") or [],
+            [("ID", "id"), ("Mem ID", "devicememories_id"), ("Tamanho (MB)", "size")],
+        )
+    )
+    parts.append(
+        _section(
+            "Redes",
+            data.get("networks") or [],
+            [("ID", "id"), ("Nome", "name"), ("MAC", "mac")],
+        )
+    )
+    parts.append(
+        _section(
+            "Software Instalado",
+            (data.get("software") or [])[:25],
+            [("ID", "id"), ("Software ID", "softwares_id"), ("Versao ID", "softwareversions_id")],
+        )
+    )
+
+    return "".join(p for p in parts if p)
+
+
 def format_resources_list(resources: list) -> str:
     """Format MCP resources list as Markdown table."""
     if not resources:
@@ -445,14 +565,41 @@ def format_prompts_list(prompts: list) -> str:
 
 
 def format_operation_success(data, operation: str) -> str:
-    """Format success message for mutation operations."""
+    """Format result message for mutation operations.
+
+    Distinguishes between:
+    - MCP error envelope (isError=True): render as FAILURE with the error text.
+    - Real success payload: render as SUCCESS with id/message.
+    Never returns "sucesso" when the underlying call actually failed.
+    """
     if not data:
         return f"Operacao '{operation}' realizada com sucesso."
-    msg = data.get("message", "") if isinstance(data, dict) else ""
-    item_id = data.get("id", "") if isinstance(data, dict) else ""
-    parts = [f"Operacao '{operation}' realizada com sucesso."]
-    if item_id:
-        parts.append(f"ID: {esc(item_id)}")
-    if msg:
-        parts.append(f"Mensagem: {esc(msg)}")
-    return " ".join(parts)
+
+    if isinstance(data, dict):
+        # Detect MCP error envelope produced by create_mcp_error / similar
+        if data.get("isError") is True or data.get("error"):
+            err_text = ""
+            content = data.get("content")
+            if isinstance(content, list) and content:
+                first = content[0]
+                if isinstance(first, dict):
+                    err_text = first.get("text", "") or ""
+            if not err_text:
+                err_text = str(data.get("error") or data.get("message") or "Erro desconhecido")
+            return f"Operacao '{operation}' FALHOU: {err_text}"
+
+        # Explicit success=False
+        if data.get("success") is False:
+            reason = data.get("message") or data.get("error") or "Operacao nao confirmada pelo servidor"
+            return f"Operacao '{operation}' FALHOU: {reason}"
+
+        msg = data.get("message", "")
+        item_id = data.get("id", "")
+        parts = [f"Operacao '{operation}' realizada com sucesso."]
+        if item_id:
+            parts.append(f"ID: {esc(item_id)}")
+        if msg:
+            parts.append(f"Mensagem: {esc(msg)}")
+        return " ".join(parts)
+
+    return f"Operacao '{operation}' realizada com sucesso."

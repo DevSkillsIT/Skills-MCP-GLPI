@@ -406,7 +406,15 @@ async def manage_tickets(
             return response_truncator.truncate_json_response(ticket)
 
         if action == "close":
-            sanitized_resolution = input_sanitizer.sanitize_string(resolution or "")
+            # Accept both "solution" (aligned with resolve/public schema) and
+            # "resolution" (legacy). At least one must be provided.
+            close_text = resolution or solution
+            if not close_text:
+                raise ValidationError(
+                    "solution (or resolution) is required for close action",
+                    "solution",
+                )
+            sanitized_resolution = input_sanitizer.sanitize_string(close_text)
             ticket = await ticket_service.close_ticket(
                 ticket_id, sanitized_resolution, solution_type=solution_type
             )
