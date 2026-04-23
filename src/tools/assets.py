@@ -829,28 +829,79 @@ class AssetTools:
     async def get_computer_details(self, computer_id: int) -> Dict[str, Any]:
         """
         Tool MCP: get_computer_details
-        Obtém detalhes completos de um computador incluindo componentes
-        
+        Obtém detalhes completos de um computador incluindo sub-items:
+        sistema operacional, discos, processadores, memórias, software e itens
+        de rede (se disponíveis). Falhas de sub-item não abortam a consulta.
+
         Args:
             computer_id: ID do computador
-        
+
         Returns:
-            Detalhes completos do computador
+            Dict com chaves: asset, operating_systems, disks, processors,
+            memories, networks, software. Cada sub-item é uma lista (ou []).
         """
         try:
             logger.info(f"MCP Tool: get_computer_details {computer_id}")
-            
+
             if not isinstance(computer_id, int) or computer_id <= 0:
                 raise ValidationError("Computer ID must be a positive integer", "computer_id")
-            
+
             computer = await asset_service.get_asset("Computer", computer_id)
-            
-            # Truncar resposta se necessário
-            computer = response_truncator.truncate_json_response(computer)
-            
-            logger.info(f"get_computer_details completed: computer {computer_id}")
-            return computer
-            
+
+            # Fetch sub-items in parallel — each one wrapped so one failure
+            # does not abort the whole enrichment.
+            from src.services.glpi_client import glpi_client as _gc
+
+            async def _safe_subitems(subtype: str):
+                try:
+                    return await _gc.get_subitems("Computer", computer_id, subtype)
+                except Exception as e:
+                    logger.warning(
+                        f"get_computer_details: subitems {subtype} failed: {e}"
+                    )
+                    return []
+
+            import asyncio as _asyncio
+            (
+                operating_systems,
+                disks,
+                processors,
+                memories,
+                networks,
+                software,
+            ) = await _asyncio.gather(
+                _safe_subitems("Item_OperatingSystem"),
+                _safe_subitems("Item_Disk"),
+                _safe_subitems("Item_DeviceProcessor"),
+                _safe_subitems("Item_DeviceMemory"),
+                _safe_subitems("NetworkPort"),
+                _safe_subitems("Item_SoftwareVersion"),
+            )
+
+            enriched = {
+                "asset": computer,
+                "operating_systems": operating_systems or [],
+                "disks": disks or [],
+                "processors": processors or [],
+                "memories": memories or [],
+                "networks": networks or [],
+                "software": software or [],
+            }
+
+            # NOTE: Do NOT apply response_truncator.truncate_json_response here.
+            # The truncator serializes nested dicts > 1000 chars into stringified
+            # placeholders, which would destroy the {asset, disks, ...} shape
+            # expected by format_computer_details_enriched. If the response is
+            # actually too large, cap sub-lists at their source instead.
+            logger.info(
+                f"get_computer_details completed: computer {computer_id}, "
+                f"os={len(enriched.get('operating_systems', []))}, "
+                f"disks={len(enriched.get('disks', []))}, "
+                f"cpus={len(enriched.get('processors', []))}, "
+                f"mem={len(enriched.get('memories', []))}"
+            )
+            return enriched
+
         except (NotFoundError, ValidationError) as e:
             logger.error(f"get_computer_details error: {e.message}")
             raise
