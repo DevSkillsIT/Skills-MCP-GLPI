@@ -11,6 +11,7 @@ from src.formatters.markdown_helpers import (
     TICKET_STATUS,
     esc,
 )
+from src.services.glpi_client import glpi_client
 
 
 GLPI_RESOURCES = [
@@ -50,13 +51,29 @@ def list_resources() -> list:
     return GLPI_RESOURCES
 
 
-async def read_resource(uri: str, session) -> dict:
+async def _fetch_items(item_type: str, limit: int = 100) -> list:
+    """
+    Fetch GLPI items using glpi_client, which handles session/auth internally.
+    Uses the list endpoint (/apirest.php/{item_type}) which returns a list directly.
+    """
+    params = {"range": f"0-{max(0, limit - 1)}"}
+    result = await glpi_client.get(f"/apirest.php/{item_type}", params=params, use_cache=True)
+    if isinstance(result, list):
+        return result
+    if isinstance(result, dict):
+        return result.get("data", []) or result.get("items", [])
+    return []
+
+
+async def read_resource(uri: str, session=None) -> dict:
     """
     Read a specific MCP resource.
-    Uses session for multi-tenant authentication.
+    The session parameter is accepted for backward compatibility but no longer
+    required: data access is delegated to glpi_client which handles auth via
+    SessionManager context variables.
     """
     if uri == "glpi://entities":
-        entities = await session.get_items("Entity", limit=100)
+        entities = await _fetch_items("Entity", limit=100)
         text = format_entities_list({"items": entities}, {"limit": 100})
         return {"uri": uri, "mimeType": "text/markdown", "text": text}
 
@@ -66,7 +83,7 @@ async def read_resource(uri: str, session) -> dict:
         return {"uri": uri, "mimeType": "text/markdown", "text": text}
 
     elif uri == "glpi://ticket-categories":
-        categories = await session.get_items("ITILCategory", limit=100)
+        categories = await _fetch_items("ITILCategory", limit=100)
         rows = [
             f"| {esc(c.get('id'))} | {esc(c.get('name', 'N/A'))} |"
             for c in (categories or [])

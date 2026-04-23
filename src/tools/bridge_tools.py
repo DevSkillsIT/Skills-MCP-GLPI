@@ -9,6 +9,9 @@ from typing import Any, Dict, Optional
 
 from src.resources import GLPI_RESOURCES, list_resources, read_resource
 from src.formatters.glpi_formatters import format_resources_list, format_prompts_list
+from src.prompts_handlers.prompts import PROMPTS_CATALOG, prompt_handler
+from src.services.glpi_client import glpi_client
+from src.utils.helpers import logger
 
 
 class BridgeTools:
@@ -25,15 +28,18 @@ class BridgeTools:
         return format_resources_list(resources)
 
     async def read_resource_tool(self, uri: str = "", **kwargs) -> Any:
-        """Read a specific MCP resource by URI."""
+        """Read a specific MCP resource by URI.
+
+        Delegates to read_resource which uses glpi_client internally
+        (handles auth via SessionManager context vars).
+        """
         if not uri:
             return {
                 "error": "Parametro 'uri' obrigatorio. "
                 f"URIs disponiveis: {', '.join(r['uri'] for r in GLPI_RESOURCES)}"
             }
-        session = await self.session_manager.get_current_session() if self.session_manager else None
         try:
-            result = await read_resource(uri, session)
+            result = await read_resource(uri)
             return result.get("text", str(result))
         except ValueError as e:
             return {"error": str(e)}
@@ -43,34 +49,75 @@ class BridgeTools:
         return format_prompts_list(self.prompts_catalog)
 
     async def get_prompt_tool(self, name: str = "", arguments: Optional[Dict] = None, **kwargs) -> Any:
-        """Execute a specific prompt by name with arguments."""
+        """Execute a specific prompt by name with arguments.
+
+        Uses prompt_handler to actually run the prompt logic; the catalog
+        entries themselves do not carry handlers.
+        """
         if not name:
             return {"error": "Parametro 'name' obrigatorio. Use glpi_list_prompts para ver prompts disponiveis."}
 
-        # Find prompt in catalog
         prompt = next((p for p in self.prompts_catalog if p.get("name") == name), None)
         if not prompt:
-            available = ", ".join(p.get("name", "") for p in self.prompts_catalog[:5])
+            names = [p.get("name", "") for p in self.prompts_catalog]
             return {
-                "error": f"Prompt '{name}' nao encontrado. "
-                f"Disponiveis: {available}... Use glpi_list_prompts para lista completa."
+                "error": (
+                    f"Prompt '{name}' nao encontrado. "
+                    f"Disponiveis ({len(names)}): {', '.join(names)}"
+                )
             }
 
-        # Delegate to prompt handler if available
-        handler = prompt.get("handler")
-        if handler:
-            return await handler(arguments or {})
-
-        return {"message": f"Prompt '{name}' encontrado mas sem handler configurado."}
+        try:
+            return await prompt_handler.get_prompt(name, arguments or {})
+        except Exception as e:
+            logger.error(f"get_prompt_tool error for '{name}': {e}")
+            return {"error": f"Falha ao executar prompt '{name}': {e}"}
 
     async def search_knowledge(self, query: str = "", limit: int = 10, **kwargs) -> Any:
-        """Search GLPI knowledge base."""
+        """Search GLPI knowledge base (KnowbaseItem).
+
+        GLPI field map for KnowbaseItem (apirest.php/search/KnowbaseItem):
+          1 = name/title, 4 = answer/content, 7 = view count, 8 = category
+        """
         if not query or len(query) < 2:
             return {"error": "Parametro 'query' obrigatorio (minimo 2 caracteres)."}
-        limit = min(limit, 50)
-        # Delegate to existing search functionality
-        # This will be connected to the ticket search with knowledge base scope
-        return {"message": f"Busca na base de conhecimento por: '{query}' (limit: {limit})", "data": []}
+        limit = min(max(limit, 1), 50)
+
+        try:
+            result = await glpi_client.search(
+                "KnowbaseItem",
+                criteria=[
+                    {"field": 1, "searchtype": "contains", "value": query, "link": "OR"},
+                    {"field": 4, "searchtype": "contains", "value": query, "link": "OR"},
+                ],
+                forcedisplay=["2", "1", "4", "8", "7"],  # id, name, answer, category, view
+                range_limit=limit,
+                range_offset=0,
+            )
+        except Exception as e:
+            logger.error(f"search_knowledge GLPI error: {e}")
+            return {"articles": [], "query": query, "error": str(e)}
+
+        articles = []
+        if isinstance(result, dict) and isinstance(result.get("data"), list):
+            for item in result["data"]:
+                articles.append(
+                    {
+                        "id": item.get("2") or item.get("id"),
+                        "name": item.get("1") or item.get("name", ""),
+                        "answer": item.get("4") or item.get("answer", ""),
+                        "category": item.get("8") or item.get("knowbaseitemcategories_id", ""),
+                        "views": item.get("7") or item.get("view", 0),
+                    }
+                )
+
+        total = result.get("totalcount", len(articles)) if isinstance(result, dict) else len(articles)
+        return {
+            "articles": articles,
+            "query": query,
+            "count": len(articles),
+            "total": total,
+        }
 
 
-bridge_tools = BridgeTools()
+bridge_tools = BridgeTools(prompts_catalog=PROMPTS_CATALOG)
