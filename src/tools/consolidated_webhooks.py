@@ -33,7 +33,7 @@ def _validate_webhook_id(value) -> dict:
 # ---------------------------------------------------------------------------
 
 async def search_webhooks(
-    scope: str,
+    scope: str = "list",
     webhook_id: Optional[str] = None,
     limit: int = 10,
     offset: int = 0,

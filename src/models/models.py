@@ -55,48 +55,76 @@ class ToolsListResponse(BaseModel):
 
 
 class GLPIEntity(BaseModel):
-    """Entidade base do GLPI."""
+    """Entidade base do GLPI 11 — campos opcionais e extras permitidos."""
+    model_config = ConfigDict(extra="allow")  # GLPI retorna 80+ fields, nao queremos rejeitar
     id: int = Field(..., description="ID da entidade")
-    name: str = Field(..., description="Nome da entidade")
+    name: Optional[str] = Field(default="", description="Nome da entidade")
 
 
 class Ticket(GLPIEntity):
-    """Modelo de Ticket."""
-    title: str = Field(..., description="Título do ticket")
+    """Modelo de Ticket — permissivo para o shape do GLPI 11.
+
+    @MX:NOTE: GLPI 11 retorna `status: int` (1=Novo..6=Fechado) e nao tem `title`
+    (usa `name`). Campos opcionais para tolerar variacoes do payload.
+    @MX:REASON: Prompts (glpi_ticket_summary etc.) crashavam com pydantic
+    ValidationError porque o model legacy era estrito demais.
+    """
+    title: Optional[str] = Field(default=None, description="Alias legado de name")
+    content: Optional[str] = None
     description: Optional[str] = None
-    status: str = Field(default="new", description="Status do ticket")
-    priority: int = Field(default=3, description="Prioridade (1-5)")
-    requesters: List[int] = Field(default_factory=list, description="IDs dos solicitantes")
+    status: Optional[int] = Field(default=None, description="Status code GLPI (1-6)")
+    priority: Optional[int] = Field(default=None, description="Prioridade (1-6)")
+    urgency: Optional[int] = None
+    impact: Optional[int] = None
+    requesters: List[int] = Field(default_factory=list)
     assigned_to: Optional[int] = None
+    entities_id: Optional[int] = None
+    users_id_recipient: Optional[int] = None
+    date: Optional[str] = None
+    date_mod: Optional[str] = None
+    time_to_resolve: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
-    @field_validator("priority")
+    @field_validator("priority", "status", "urgency", "impact", mode="before")
     @classmethod
-    def validate_priority(cls, v):
-        """Valida prioridade (1-5)."""
-        if not 1 <= v <= 5:
-            raise ValueError("Priority must be between 1 and 5")
-        return v
+    def coerce_to_int(cls, v):
+        """Coerce numeric strings to int (GLPI as vezes retorna string)."""
+        if v is None or v == "":
+            return None
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
 
 
 class Asset(GLPIEntity):
-    """Modelo de Asset."""
-    asset_type: str = Field(..., description="Tipo de asset (Computer, Monitor, Printer)")
+    """Modelo de Asset — permissivo para o shape do GLPI 11."""
+    asset_type: Optional[str] = Field(default=None, description="Tipo (Computer, Monitor, ...)")
+    serial: Optional[str] = None
     serial_number: Optional[str] = None
+    otherserial: Optional[str] = None  # patrimonio no GLPI
     model: Optional[str] = None
+    models_id: Optional[int] = None
     manufacturer: Optional[str] = None
-    status: str = Field(default="active", description="Status do asset")
+    manufacturers_id: Optional[int] = None
+    status: Optional[int] = None
+    states_id: Optional[int] = None
     location_id: Optional[int] = None
+    locations_id: Optional[int] = None
+    entities_id: Optional[int] = None
+    users_id: Optional[int] = None
 
 
 class User(GLPIEntity):
-    """Modelo de Usuário."""
-    firstname: str = Field(..., description="Primeiro nome")
-    lastname: str = Field(..., description="Último nome")
+    """Modelo de Usuário — permissivo para o shape do GLPI 11."""
+    firstname: Optional[str] = Field(default=None, description="Primeiro nome")
+    lastname: Optional[str] = Field(default=None, description="Último nome")
+    realname: Optional[str] = None  # alias legado do lastname
     email: Optional[str] = None
     phone: Optional[str] = None
-    is_active: bool = Field(default=True)
+    is_active: Optional[int] = Field(default=1)
+    entities_id: Optional[int] = None
 
 
 class Group(GLPIEntity):

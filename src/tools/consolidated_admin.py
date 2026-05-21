@@ -23,7 +23,7 @@ _MAX_LIMIT = 50
 
 
 async def search_admin(
-    resource: Literal["users", "groups", "entities", "locations"],
+    resource: Literal["users", "groups", "entities", "locations"] = "users",
     query: Optional[str] = None,
     entity_id: Optional[int] = None,
     entity_name: Optional[str] = None,

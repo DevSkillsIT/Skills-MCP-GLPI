@@ -12,8 +12,28 @@ import logging
 
 from src.glpi_service import GLPIService
 from src.models import NotFoundError, ValidationError, GLPIError
+from src.formatters.markdown_helpers import fmt_status, fmt_priority
+from src.services.dropdown_cache import dropdown_cache
 
 logger = logging.getLogger(__name__)
+
+
+# @MX:ANCHOR: header padrao para disambiguar PROMPT TEMPLATE vs TOOL RESULT.
+# @MX:REASON: LLMs (especialmente modelos menores) confundiam a resposta de
+# get_prompt_template com dados live retornados por tools — gerava conclusoes
+# erradas como se template fosse verdade. O header marca claramente a natureza.
+_PROMPT_DISAMBIGUATION = (
+    "> 📋 **PROMPT TEMPLATE** (`{name}`) — saida formatada pelo MCP GLPI a partir "
+    "de queries pontuais. Para serie temporal completa, agregacoes customizadas "
+    "ou dados em tempo real, use as tools `glpi_search_*` / `glpi_manage_*`.\n\n"
+)
+
+
+def _wrap_with_disambiguation(prompt_name: str, body: str) -> str:
+    """Prepende header de disambiguacao a saidas de prompt template."""
+    if not body:
+        return body
+    return _PROMPT_DISAMBIGUATION.format(name=prompt_name) + body
 
 
 # ============= CATÁLOGO DE PROMPTS =============
@@ -354,7 +374,18 @@ class PromptHandler:
         if not handler:
             raise GLPIError(500, f"Handler não implementado para prompt: {name}")
 
-        return await handler(arguments)
+        result = await handler(arguments)
+
+        # @MX:NOTE: injeta header de disambiguacao em compact/detailed
+        # @MX:REASON: LLMs confundiam prompt output com tool result. Header marca a natureza.
+        if isinstance(result, dict):
+            compact = result.get("compact")
+            if isinstance(compact, str) and compact:
+                result["compact"] = _wrap_with_disambiguation(name, compact)
+            detailed = result.get("detailed")
+            if isinstance(detailed, str) and detailed:
+                result["detailed"] = _wrap_with_disambiguation(name, detailed)
+        return result
 
     # ============= PROMPTS DE GESTÃO =============
 
@@ -431,51 +462,104 @@ class PromptHandler:
         }
 
     async def _prompt_ticket_trends(self, args: Dict) -> Dict:
-        """Análise de tendências de tickets."""
+        """Análise de tendências por categoria — resolve IDs via dropdown_cache."""
         entity_name = args.get("entity_name")
         period_days = args.get("period_days", 30)
 
-        # Buscar tickets do período
-        tickets = await self.service.list_tickets(limit=500)
+        # Buscar tickets do periodo via search com criterio de data
+        from src.services.glpi_client import glpi_client as _client
+        date_from = (datetime.now() - timedelta(days=period_days)).strftime("%Y-%m-%d 00:00:00")
+        params: Dict[str, Any] = {
+            "range": "0-499",
+            "criteria[0][field]": 15,
+            "criteria[0][searchtype]": "morethan",
+            "criteria[0][value]": date_from,
+        }
+        try:
+            search_result = await _client.get("/apirest.php/search/Ticket", params=params, use_cache=False)
+        except Exception as exc:
+            logger.warning(f"ticket_trends search failed: {exc}")
+            search_result = {}
 
-        # Análise simples de categorias
-        categories = {}
-        for ticket in tickets:
-            cat = getattr(ticket, 'itilcategories_id', 'Sem Categoria')
-            categories[cat] = categories.get(cat, 0) + 1
+        items: List[Any] = []
+        if isinstance(search_result, dict):
+            items = search_result.get("data") or []
 
-        top_categories = sorted(categories.items(), key=lambda x: x[1], reverse=True)[:5]
+        # @MX:NOTE: search options field IDs nao expoem itilcategories_id direto.
+        # @MX:REASON: Fazemos GET /Ticket/{id} para extrair categoria de cada
+        # ticket (paralelo, limitado, com fallback gracioso).
+        import asyncio as _asyncio
+        sem = _asyncio.Semaphore(8)
 
+        async def _fetch_category(it: Any) -> int:
+            if not isinstance(it, dict):
+                return 0
+            tid = it.get("2") or it.get("id")
+            if not tid:
+                return 0
+            try:
+                async with sem:
+                    tdata = await _client.get(f"/apirest.php/Ticket/{int(tid)}", use_cache=True)
+                if isinstance(tdata, dict):
+                    cat = tdata.get("itilcategories_id") or 0
+                    return int(cat) if cat else 0
+            except Exception:  # noqa: BLE001
+                return 0
+            return 0
+
+        # Limita expansao a 100 tickets para nao explodir
+        sample = items[:100]
+        cat_ids = await _asyncio.gather(*[_fetch_category(it) for it in sample])
+        categories: Dict[int, int] = {}
+        for cat_int in cat_ids:
+            categories[cat_int] = categories.get(cat_int, 0) + 1
+
+        # Resolver IDs -> nomes via cache
+        cat_names = await dropdown_cache.get_many_names(
+            "ITILCategory", list(categories.keys())
+        ) if categories else {}
+
+        # Tipos resolvidos
+        top_categories = sorted(
+            [(cat_names.get(cid) or f"Sem Categoria (#{cid})", count) for cid, count in categories.items()],
+            key=lambda x: x[1],
+            reverse=True,
+        )[:5]
+
+        total = len(items)
         compact = f"""📊 Tendências de Tickets - {period_days} dias
 {'Cliente: ' + entity_name if entity_name else 'Global'}
+Total no período: {total}
 
 🔝 Top 5 Categorias:
 """
+        if not top_categories:
+            compact += "(sem dados no período)\n"
         for i, (cat, count) in enumerate(top_categories, 1):
             compact += f"{i}. {cat}: {count} tickets\n"
 
         detailed = f"""# Análise de Tendências de Tickets
 
-**Período:** {period_days} dias
-**Total de Tickets:** {len(tickets)}
+**Período:** Últimos {period_days} dias
+**Total de Tickets:** {total}
+**Cliente:** {entity_name if entity_name else 'Global'}
 
 ## 📊 Distribuição por Categoria
 
 | Posição | Categoria | Quantidade | Percentual |
 |---------|-----------|------------|------------|
 """
-        total = len(tickets)
         for i, (cat, count) in enumerate(top_categories, 1):
             pct = (count / total * 100) if total > 0 else 0
             detailed += f"| {i} | {cat} | {count} | {pct:.1f}% |\n"
-
-        detailed += "\n---\n*Relatório gerado pelo Skills MCP GLPI*"
+        if not top_categories:
+            detailed += "| (sem dados) | | | |\n"
 
         return {
             "prompt_name": "glpi_ticket_trends",
             "compact": compact,
             "detailed": detailed,
-            "metadata": {"period_days": period_days}
+            "metadata": {"period_days": period_days, "total": total}
         }
 
     async def _prompt_asset_roi(self, args: Dict) -> Dict:
@@ -739,22 +823,34 @@ Min. {min_occurrences} ocorrências
     # ============= PROMPTS DE SUPORTE =============
 
     async def _prompt_ticket_summary(self, args: Dict) -> Dict:
-        """Resumo rápido de ticket."""
+        """Resumo rápido de ticket — usa enrich de status/priority/user/entity."""
         ticket_id = args["ticket_id"]
 
-        # Buscar ticket
+        # Buscar ticket via service moderno (glpi_client + session_manager)
         ticket = await self.service.get_ticket(ticket_id)
 
+        # Enrich: codigos GLPI -> labels humanos
+        status_label = fmt_status(getattr(ticket, "status", None))
+        priority_label = fmt_priority(getattr(ticket, "priority", None))
+        requester_id = getattr(ticket, "users_id_recipient", None) or getattr(ticket, "users_id", None)
+        requester_label = await dropdown_cache.get_name("User", requester_id, fallback="N/A") if requester_id else "N/A"
+        entity_id = getattr(ticket, "entities_id", None)
+        entity_label = await dropdown_cache.get_name("Entity", entity_id, fallback="") if entity_id is not None else ""
+
+        title = getattr(ticket, "name", "") or getattr(ticket, "title", "") or "Sem titulo"
+        content_raw = getattr(ticket, "content", "") or ""
+
         compact = f"""🎫 Ticket #{ticket_id}
-{ticket.name}
+{title}
 
 📅 Aberto: {getattr(ticket, 'date', 'N/A')}
-👤 Solicitante: {getattr(ticket, 'requester', 'N/A')}
-🔴 Prioridade: {getattr(ticket, 'priority', 'N/A')}
-📊 Status: {getattr(ticket, 'status', 'N/A')}
+🏢 Entidade: {entity_label or 'N/A'}
+👤 Solicitante: {requester_label}
+🔴 Prioridade: {priority_label}
+📊 Status: {status_label}
 
 📝 Resumo:
-{getattr(ticket, 'content', 'Sem descrição')[:200]}...
+{content_raw[:200]}{'...' if len(content_raw) > 200 else ''}
 """
 
         detailed = f"""# Ticket #{ticket_id}
@@ -793,55 +889,121 @@ Min. {min_occurrences} ocorrências
         }
 
     async def _prompt_user_ticket_history(self, args: Dict) -> Dict:
-        """Histórico de tickets do usuário."""
+        """Histórico de tickets do usuário (dados REAIS via ticket_service)."""
         username = args["username"]
 
-        # Buscar usuário
+        # Buscar usuario
         users = await self.service.search_users(username)
         if not users:
             raise NotFoundError("User", username)
-
         user = users[0]
+        user_id = getattr(user, "id", None)
+        user_name = getattr(user, "name", username)
+        user_email = getattr(user, "email", None) or "N/A"
+
+        # Buscar tickets reais do usuario via search com criterio field=4 (requester user)
+        # GLPI 11 search field 4 = users_id_requester
+        from src.services.ticket_service import ticket_service as _ts
+        from src.services.glpi_client import glpi_client as _client
+
+        params: Dict[str, Any] = {"range": "0-49"}
+        if user_id:
+            params["criteria[0][field]"] = 4
+            params["criteria[0][searchtype]"] = "equals"
+            params["criteria[0][value]"] = user_id
+
+        try:
+            search_result = await _client.get("/apirest.php/search/Ticket", params=params, use_cache=False)
+        except Exception as exc:
+            logger.warning(f"user_ticket_history search failed: {exc}")
+            search_result = {}
+
+        # Normalizar resultado
+        items = []
+        total = 0
+        if isinstance(search_result, dict):
+            items = search_result.get("data") or []
+            total = int(search_result.get("totalcount", 0) or len(items))
+
+        # Agregacao por status
+        by_status: Dict[int, int] = {}
+        for it in items:
+            if isinstance(it, dict):
+                # GLPI search retorna fields com codigos numericos
+                # field 12 = status no search options
+                st = it.get("12") or it.get("status")
+                try:
+                    st_int = int(st) if st is not None else 0
+                except (TypeError, ValueError):
+                    st_int = 0
+                by_status[st_int] = by_status.get(st_int, 0) + 1
+
+        opened = by_status.get(1, 0) + by_status.get(2, 0) + by_status.get(3, 0) + by_status.get(4, 0)
+        resolved = by_status.get(5, 0)
+        closed = by_status.get(6, 0)
+
+        # Top 3 mais recentes (assumindo retorno ordenado por id desc)
+        top_lines = []
+        for it in items[:3]:
+            if isinstance(it, dict):
+                tid = it.get("2") or it.get("id")  # field 2 = id
+                tname = it.get("1") or it.get("name") or "Sem titulo"  # field 1 = name
+                tst = it.get("12") or it.get("status")
+                try:
+                    st_label = fmt_status(int(tst)) if tst else "N/A"
+                except (TypeError, ValueError):
+                    st_label = "N/A"
+                top_lines.append(f"#{tid} - {str(tname)[:60]} ({st_label})")
+
+        top_block = "\n".join(f"{i+1}. {l}" for i, l in enumerate(top_lines)) if top_lines else "(sem tickets recentes)"
 
         compact = f"""👤 Histórico de Tickets - {username}
 
-📊 Total de Tickets: 12
-📈 Abertos: 2
-✅ Resolvidos: 8
-❌ Fechados: 2
+📊 Total de Tickets: {total}
+📈 Abertos: {opened}
+✅ Resolvidos: {resolved}
+❌ Fechados: {closed}
 
 🔝 Últimos 3:
-1. #345 - Senha bloqueada (Resolvido)
-2. #338 - Email não envia (Em andamento)
-3. #322 - VPN não conecta (Fechado)
+{top_block}
 """
+
+        # Detailed com tabela real (ate 10)
+        detail_rows = []
+        for it in items[:10]:
+            if isinstance(it, dict):
+                tid = it.get("2") or it.get("id")
+                tname = it.get("1") or it.get("name") or "Sem titulo"
+                tst = it.get("12") or it.get("status")
+                tdate = it.get("15") or it.get("date") or ""
+                try:
+                    st_label = fmt_status(int(tst)) if tst else "N/A"
+                except (TypeError, ValueError):
+                    st_label = "N/A"
+                detail_rows.append(f"| #{tid} | {str(tname)[:80]} | {st_label} | {tdate} |")
+
+        detail_table = "\n".join(detail_rows) if detail_rows else "| (sem dados) | | | |"
 
         detailed = f"""# Histórico de Tickets - {username}
 
-**Usuário:** {user.name if hasattr(user, 'name') else username}
-**Email:** {getattr(user, 'email', 'N/A')}
-**Setor:** {getattr(user, 'department', 'N/A')}
+**Usuário:** {user_name}
+**Email:** {user_email}
+**User ID GLPI:** {user_id}
 
 ## 📊 Estatísticas
 
 | Métrica | Valor |
 |---------|-------|
-| Total de Tickets | 12 |
-| Tickets Abertos | 2 |
-| Tickets Resolvidos | 8 |
-| Tickets Fechados | 2 |
-| Tempo Médio de Resolução | 4.5 horas |
+| Total de Tickets | {total} |
+| Tickets Abertos | {opened} |
+| Tickets Resolvidos | {resolved} |
+| Tickets Fechados | {closed} |
 
 ## 📋 Últimos 10 Tickets
 
 | ID | Título | Status | Data |
 |----|--------|--------|------|
-| #345 | Senha bloqueada | Resolvido | 10/12/2025 |
-| #338 | Email não envia | Em andamento | 08/12/2025 |
-| #322 | VPN não conecta | Fechado | 05/12/2025 |
-
----
-*Gerado pelo Skills MCP GLPI*
+{detail_table}
 """
 
         return {
@@ -852,48 +1014,68 @@ Min. {min_occurrences} ocorrências
         }
 
     async def _prompt_asset_lookup(self, args: Dict) -> Dict:
-        """Busca rápida de ativo."""
+        """Busca rápida de ativo — usa asset_service e enriquece IDs."""
         search_term = args["search_term"]
 
-        # Buscar ativos
-        assets = await self.service.search_assets(search_term)
+        # Buscar ativos via service moderno
+        from src.services.asset_service import asset_service as _as
+        try:
+            items = await _as.search_assets(query=search_term, asset_type="Computer", limit=5)
+        except Exception as exc:
+            logger.warning(f"asset_lookup search failed: {exc}")
+            items = []
 
-        if not assets:
+        if isinstance(items, dict):
+            items = items.get("data") or items.get("items") or []
+
+        if not items:
             compact = f"❌ Nenhum ativo encontrado para: {search_term}"
             detailed = f"# Busca de Ativos\n\nNenhum resultado para: **{search_term}**"
         else:
-            asset = assets[0]
-            compact = f"""💻 Ativo Encontrado
-{getattr(asset, 'name', 'N/A')}
+            asset = items[0] if isinstance(items[0], dict) else {}
+            name = asset.get("name", "N/A")
+            serial = asset.get("serial", "N/A")
+            other = asset.get("otherserial", "N/A")
 
-🏷️ Serial: {getattr(asset, 'serial', 'N/A')}
-👤 Usuário: {getattr(asset, 'user', 'N/A')}
-📍 Local: {getattr(asset, 'location', 'N/A')}
-📊 Status: {getattr(asset, 'status', 'N/A')}
+            user_label = await dropdown_cache.get_name("User", asset.get("users_id"), fallback="N/A")
+            location_label = await dropdown_cache.get_name("Location", asset.get("locations_id"), fallback="N/A")
+            entity_label = await dropdown_cache.get_name("Entity", asset.get("entities_id"), fallback="N/A")
+            manufacturer_label = await dropdown_cache.get_name("Manufacturer", asset.get("manufacturers_id"), fallback="N/A")
+            state_label = await dropdown_cache.get_name("State", asset.get("states_id"), fallback="N/A")
+
+            compact = f"""💻 Ativo Encontrado
+{name}
+
+🏷️ Serial: {serial}
+🏷️ Patrimônio: {other}
+👤 Usuário: {user_label}
+📍 Local: {location_label}
+🏢 Entidade: {entity_label}
+📊 Status: {state_label}
 """
+
+            other_results = ""
+            if len(items) > 1:
+                other_results = "\n## 🔎 Outros resultados\n\n"
+                for it in items[1:5]:
+                    if isinstance(it, dict):
+                        other_results += f"- **{it.get('name','?')}** (serial: {it.get('serial','?')}, ID: {it.get('id','?')})\n"
 
             detailed = f"""# Detalhes do Ativo
 
-## {getattr(asset, 'name', 'N/A')}
+## {name}
 
-**Tipo:** {getattr(asset, 'type', 'N/A')}
-**Serial:** {getattr(asset, 'serial', 'N/A')}
-**Patrimônio:** {getattr(asset, 'otherserial', 'N/A')}
+**Serial:** {serial}
+**Patrimônio:** {other}
+**Fabricante:** {manufacturer_label}
+**Entidade:** {entity_label}
 
 ## 👤 Usuário Atual
 
-- **Nome:** {getattr(asset, 'user', 'N/A')}
-- **Setor:** {getattr(asset, 'department', 'N/A')}
-- **Local:** {getattr(asset, 'location', 'N/A')}
-
-## 🔧 Especificações
-
-- **Processador:** {getattr(asset, 'cpu', 'N/A')}
-- **Memória RAM:** {getattr(asset, 'memory', 'N/A')}
-- **Sistema Operacional:** {getattr(asset, 'os', 'N/A')}
-
----
-*Gerado pelo Skills MCP GLPI*
+- **Nome:** {user_label}
+- **Local:** {location_label}
+- **Status:** {state_label}
+{other_results}
 """
 
         return {

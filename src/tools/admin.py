@@ -66,7 +66,7 @@ class AdminTools:
             # Resolver entity_name para entity_id se fornecido
             if entity_name:
                 resolved_id = await entity_resolver.resolve_entity_name(entity_name)
-                if resolved_id:
+                if resolved_id is not None:
                     entity_id = resolved_id
                     logger.info(f"list_users: entity_name '{entity_name}' resolvido para ID {entity_id}")
                 else:
@@ -199,7 +199,7 @@ class AdminTools:
             # Resolver entity_name para entity_id se fornecido
             if entity_name:
                 resolved_id = await entity_resolver.resolve_entity_name(entity_name)
-                if resolved_id:
+                if resolved_id is not None:
                     entity_id = resolved_id
                     logger.info(f"create_user: entity_name '{entity_name}' resolvido para ID {entity_id}")
                 else:
@@ -427,7 +427,7 @@ class AdminTools:
             # Resolver entity_name para entity_id se fornecido
             if entity_name:
                 resolved_id = await entity_resolver.resolve_entity_name(entity_name)
-                if resolved_id:
+                if resolved_id is not None:
                     entity_id = resolved_id
                     logger.info(f"list_groups: entity_name '{entity_name}' resolvido para ID {entity_id}")
                 else:
@@ -530,7 +530,7 @@ class AdminTools:
             # Resolver entity_name para entity_id se fornecido
             if entity_name:
                 resolved_id = await entity_resolver.resolve_entity_name(entity_name)
-                if resolved_id:
+                if resolved_id is not None:
                     entity_id = resolved_id
                     logger.info(f"create_group: entity_name '{entity_name}' resolvido para ID {entity_id}")
                 else:
@@ -679,7 +679,7 @@ class AdminTools:
             # Resolver entity_name para entity_id se fornecido
             if entity_name:
                 resolved_id = await entity_resolver.resolve_entity_name(entity_name)
-                if resolved_id:
+                if resolved_id is not None:
                     entity_id = resolved_id
                     logger.info(f"list_locations: entity_name '{entity_name}' resolvido para ID {entity_id}")
                 else:
@@ -781,7 +781,7 @@ class AdminTools:
             # Resolver entity_name para entity_id se fornecido
             if entity_name:
                 resolved_id = await entity_resolver.resolve_entity_name(entity_name)
-                if resolved_id:
+                if resolved_id is not None:
                     entity_id = resolved_id
                     logger.info(f"create_location: entity_name '{entity_name}' resolvido para ID {entity_id}")
                 else:
@@ -859,7 +859,7 @@ class AdminTools:
             # Resolver entity_name para entity_id se fornecido
             if entity_name:
                 resolved_id = await entity_resolver.resolve_entity_name(entity_name)
-                if resolved_id:
+                if resolved_id is not None:
                     entity_id = resolved_id
                     logger.info(f"get_admin_stats: entity_name '{entity_name}' resolvido para ID {entity_id}")
                 else:
@@ -927,7 +927,7 @@ class AdminTools:
             # Resolver entity_name para entity_id se fornecido
             if entity_name:
                 resolved_id = await entity_resolver.resolve_entity_name(entity_name)
-                if resolved_id:
+                if resolved_id is not None:
                     entity_id = resolved_id
                     logger.info(f"search_users: entity_name '{entity_name}' resolvido para ID {entity_id}")
                 else:

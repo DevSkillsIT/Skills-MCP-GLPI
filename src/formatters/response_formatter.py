@@ -10,8 +10,9 @@ SPEC-GLPI-ENHANCE-001/F01 — Section 4.1.3
 """
 
 import json
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
+from src.services.dropdown_cache import dropdown_cache
 from src.formatters.glpi_formatters import (
     format_admin_detail,
     format_ai_analysis_result,
@@ -47,6 +48,31 @@ from src.formatters.markdown_helpers import check_response_size
 # Pattern: dispatch functions with if/elif instead of nested lambda dicts.
 # Reason: lambda dicts are hard to debug, test, and produce legible stack traces.
 # Reference: Hudu uses simple if/Array.isArray branching.
+
+
+def _format_prompt_template(data: Any) -> str:
+    """Format prompt-template execution result as Markdown.
+
+    Handles the dict shape produced by prompt_handler (prompt_name + compact body),
+    falling back to a sensible textual representation for legacy callers.
+    """
+    if isinstance(data, str):
+        return data
+    if isinstance(data, dict):
+        # Standard prompt_handler shape: {prompt_name, compact, ...}
+        compact = data.get("compact")
+        if isinstance(compact, str) and compact:
+            name = data.get("prompt_name", "")
+            header = f"# {name}\n\n" if name else ""
+            return header + compact
+        # Fallback: render dict as labelled lines
+        lines = []
+        for k, v in data.items():
+            if k in ("compact",):
+                continue
+            lines.append(f"- **{k}:** {v}")
+        return "\n".join(lines) if lines else json.dumps(data, ensure_ascii=False, default=str, indent=2)
+    return json.dumps(data, ensure_ascii=False, default=str, indent=2)
 
 
 def _dispatch_manage_tickets(data: Any, args: dict) -> str:
@@ -196,11 +222,130 @@ TOOL_FORMATTERS: dict[str, Any] = {
     "glpi_list_available_resources": lambda data, args: data if isinstance(data, str) else format_resources_list(data),
     "glpi_read_resource_by_uri": lambda data, args: data if isinstance(data, str) else str(data),
     "glpi_list_available_prompts": lambda data, args: data if isinstance(data, str) else format_prompts_list(data),
-    "glpi_get_prompt_template": lambda data, args: data if isinstance(data, str) else str(data),
+    "glpi_get_prompt_template": lambda data, args: _format_prompt_template(data),
 }
 
 
-def format_tool_response(
+# =====================================================================
+# ID -> Name enrichment (Bugs #3/#4/#5)
+# =====================================================================
+# Substitui IDs crus por strings "Nome (#ID)" usando dropdown_cache.
+# Roda ANTES do dispatch para que os formatters sync nao precisem awaitar.
+
+# Mapeamento de campos GLPI -> itemtype no dropdown_cache
+_ID_FIELD_TO_TYPE: dict[str, str] = {
+    "entities_id": "Entity",
+    "locations_id": "Location",
+    "manufacturers_id": "Manufacturer",
+    "states_id": "State",
+    "groups_id": "Group",
+    "operatingsystems_id": "OperatingSystem",
+    "operatingsystemversions_id": "OperatingSystemVersion",
+    "filesystems_id": "Filesystem",
+    "users_id": "User",
+    "users_id_recipient": "User",
+    "users_id_lastupdater": "User",
+    "softwares_id": "Software",
+    "softwareversions_id": "SoftwareVersion",
+    "deviceprocessors_id": "ItemDeviceProcessor",
+    "devicememories_id": "ItemDeviceMemory",
+}
+
+
+async def _resolve_label(itemtype: str, value: Any) -> str:
+    """Resolve ID -> 'Nome (#ID)'. Mantem fallback se cache miss."""
+    if value is None or value == "":
+        return ""
+    try:
+        ivalue = int(value)
+    except (TypeError, ValueError):
+        return str(value)
+    name = await dropdown_cache.get_name(itemtype, ivalue, fallback="")
+    if name and name != str(ivalue):
+        return f"{name} (#{ivalue})"
+    return str(ivalue)
+
+
+async def _enrich_id_fields(obj: dict) -> None:
+    """Substitui campos *_id por strings 'Nome (#ID)' in-place."""
+    for field, itemtype in _ID_FIELD_TO_TYPE.items():
+        if field in obj and obj[field] not in (None, ""):
+            obj[field] = await _resolve_label(itemtype, obj[field])
+
+
+async def _enrich_dict_keys(d: dict, itemtype: str) -> dict:
+    """Substitui keys numericas (IDs) por 'Nome (#ID)'."""
+    if not isinstance(d, dict) or not d:
+        return d
+    ids: list[Any] = []
+    for k in d.keys():
+        try:
+            ids.append(int(k))
+        except (TypeError, ValueError):
+            pass
+    if not ids:
+        return d
+    names = await dropdown_cache.get_many_names(itemtype, ids)
+    new_d: dict[str, Any] = {}
+    for k, v in d.items():
+        try:
+            ik = int(k)
+            label = names.get(ik)
+            new_d[f"{label} (#{ik})" if label else f"#{ik}"] = v
+        except (TypeError, ValueError):
+            new_d[str(k)] = v
+    return new_d
+
+
+async def _enrich_sub_items(items: Iterable[Any]) -> None:
+    """Aplica _enrich_id_fields a cada dict da lista."""
+    if not items:
+        return
+    for it in items:
+        if isinstance(it, dict):
+            await _enrich_id_fields(it)
+
+
+async def enrich_response(tool_name: str, data: Any, args: Optional[dict] = None) -> Any:
+    """Pre-resolve IDs no dict (in-place). Garante que formatters sync vejam nomes."""
+    if not isinstance(data, dict):
+        return data
+    if data.get("isError") is True or data.get("error"):
+        return data
+
+    # Detalhes de asset/ticket: top-level fields
+    await _enrich_id_fields(data)
+
+    # asset enriched (data["asset"] e data["software"]/data["disks"]/etc.)
+    asset = data.get("asset")
+    if isinstance(asset, dict):
+        await _enrich_id_fields(asset)
+    for sub_key in ("operating_systems", "disks", "processors", "memories", "networks", "software"):
+        sub = data.get(sub_key)
+        if isinstance(sub, list):
+            await _enrich_sub_items(sub)
+
+    # Listas (assets/tickets): cada item tem entities_id/locations_id
+    for list_key in ("data", "items", "users", "groups", "entities", "locations", "tickets", "assets"):
+        lst = data.get(list_key)
+        if isinstance(lst, list):
+            await _enrich_sub_items(lst)
+
+    # Stats com breakdowns
+    if "by_location" in data and isinstance(data["by_location"], dict):
+        data["by_location"] = await _enrich_dict_keys(data["by_location"], "Location")
+    if "by_manufacturer" in data and isinstance(data["by_manufacturer"], dict):
+        data["by_manufacturer"] = await _enrich_dict_keys(data["by_manufacturer"], "Manufacturer")
+    if "by_entity" in data and isinstance(data["by_entity"], dict):
+        data["by_entity"] = await _enrich_dict_keys(data["by_entity"], "Entity")
+
+    return data
+
+
+# =====================================================================
+
+
+async def format_tool_response(
     tool_name: str,
     data: Any,
     args: Optional[dict] = None,
@@ -221,6 +366,28 @@ def format_tool_response(
     """
     if args is None:
         args = {}
+
+    # @MX:NOTE: Enrichment de IDs antes do dispatch (Bugs #3/#4/#5).
+    # @MX:REASON: Pre-resolve para nomes via dropdown_cache, formatters seguem sync.
+    try:
+        data = await enrich_response(tool_name, data, args)
+    except Exception:  # noqa: BLE001 — enrichment opcional, nao deve quebrar resposta
+        pass
+
+    # Case 0: MCP error envelope (isError=True or top-level error)
+    # Must come BEFORE the dispatcher, otherwise detail formatters render
+    # the error payload as a fake entity with N/A fields (e.g. ticket detail
+    # with the error text leaked into the "Descricao" column).
+    if isinstance(data, dict) and (data.get("isError") is True or data.get("error")):
+        err_text = ""
+        content = data.get("content")
+        if isinstance(content, list) and content:
+            first = content[0]
+            if isinstance(first, dict):
+                err_text = first.get("text", "") or ""
+        if not err_text:
+            err_text = str(data.get("error") or data.get("message") or "Erro desconhecido")
+        return f"Erro: {err_text}"
 
     # Case 1: data is already a string (bridge tools return Markdown directly)
     if isinstance(data, str):

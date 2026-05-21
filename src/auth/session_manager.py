@@ -172,8 +172,14 @@ class SessionManager:
                 if session_token:
                     client.headers["Session-Token"] = session_token
                     logger.info(f"GLPI session created for user_token: {user_token[:10]}...")
+            else:
+                # @MX:NOTE: surface real GLPI error (Bug Ramada — User-Token invalid)
+                logger.error(
+                    f"initSession FAILED user={user_token[:10]}... "
+                    f"status={response.status_code} body={response.text[:300]}"
+                )
         except Exception as e:
-            logger.warning(f"Failed to init session for user_token: {e}")
+            logger.warning(f"Failed to init session for user_token: {e}", exc_info=True)
         
         # Salvar no pool
         self._user_sessions[user_token] = {

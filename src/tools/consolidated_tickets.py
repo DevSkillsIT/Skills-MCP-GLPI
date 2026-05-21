@@ -66,9 +66,13 @@ AI_ACTIONS = ["trigger", "get_result", "publish"]
 
 
 async def _resolve_entity(entity_name: str) -> int:
-    """Resolve entity_name to entity_id, raising ValidationError if not found."""
+    """Resolve entity_name to entity_id, raising ValidationError if not found.
+
+    @MX:NOTE: `is not None` em vez de truthy — entity_id=0 (root) e valido.
+    @MX:REASON: Bug Ramada — entity_name='RAMADA' resolvia para 0 mas era rejeitado.
+    """
     resolved_id = await entity_resolver.resolve_entity_name(entity_name)
-    if resolved_id:
+    if resolved_id is not None:
         return resolved_id
     available = await entity_resolver.list_available_entities()
     raise ValidationError(

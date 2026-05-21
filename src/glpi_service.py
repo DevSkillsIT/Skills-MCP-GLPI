@@ -1,9 +1,17 @@
 """
 Serviço principal de integração com GLPI.
+
+@MX:ANCHOR: Usa glpi_client (services/glpi_client.py) que integra com
+session_manager + contextvars do user_token dinamico per-request.
+
+@MX:REASON: Bug — antes usava http_client (legacy estatico), o que fazia
+prompts API-dependentes (sla_performance, ticket_summary, ...) falharem
+com ERROR_SESSION_TOKEN_MISSING porque http_client nao chama initSession
+nem usa o user_token do header X-GLPI-User-Token.
 """
 
 from typing import Optional, List, Dict, Any
-from src.http_client import http_client
+from src.services.glpi_client import glpi_client as http_client
 from src.models import (
     Ticket, Asset, User, Group, Entity, Location,
     NotFoundError, ValidationError, GLPIError
@@ -124,7 +132,7 @@ class GLPIService:
             payload["_users_id_requester"] = requesters
 
         logger.info(f"Creating ticket: {title}")
-        result = await self.client.post("/apirest.php/Ticket", json=payload)
+        result = await self.client.post("/apirest.php/Ticket", data=payload)
 
         if "id" not in result:
             raise GLPIError(500, "Failed to create ticket")
@@ -154,7 +162,7 @@ class GLPIService:
             payload["urgency"] = priority
 
         logger.info(f"Updating ticket {ticket_id}")
-        await self.client.put(f"/apirest.php/Ticket/{ticket_id}", json=payload)
+        await self.client.put(f"/apirest.php/Ticket/{ticket_id}", data=payload)
 
         return await self.get_ticket(ticket_id)
 
@@ -168,7 +176,7 @@ class GLPIService:
         """Atribui um ticket a um usuário."""
         logger.info(f"Assigning ticket {ticket_id} to user {user_id}")
         payload = {"_users_id_assign": [{"users_id": user_id}]}
-        await self.client.put(f"/apirest.php/Ticket/{ticket_id}", json=payload)
+        await self.client.put(f"/apirest.php/Ticket/{ticket_id}", data=payload)
         return await self.get_ticket(ticket_id)
 
     async def close_ticket(self, ticket_id: int, resolution: str = "") -> Ticket:
@@ -178,7 +186,7 @@ class GLPIService:
             "status": "closed",
             "solution": resolution
         }
-        await self.client.put(f"/apirest.php/Ticket/{ticket_id}", json=payload)
+        await self.client.put(f"/apirest.php/Ticket/{ticket_id}", data=payload)
         return await self.get_ticket(ticket_id)
 
     # ============= ASSETS =============
@@ -237,7 +245,7 @@ class GLPIService:
             payload["manufacturer"] = manufacturer
 
         logger.info(f"Creating {asset_type}: {name}")
-        result = await self.client.post(f"/apirest.php/{asset_type}", json=payload)
+        result = await self.client.post(f"/apirest.php/{asset_type}", data=payload)
 
         if "id" not in result:
             raise GLPIError(500, f"Failed to create {asset_type}")
@@ -252,7 +260,7 @@ class GLPIService:
     ) -> Asset:
         """Atualiza um asset existente."""
         logger.info(f"Updating {asset_type} {asset_id}")
-        await self.client.put(f"/apirest.php/{asset_type}/{asset_id}", json=kwargs)
+        await self.client.put(f"/apirest.php/{asset_type}/{asset_id}", data=kwargs)
         return await self.get_asset(asset_type, asset_id)
 
     async def delete_asset(self, asset_type: str, asset_id: int) -> bool:
@@ -309,7 +317,7 @@ class GLPIService:
             payload["phone"] = phone
 
         logger.info(f"Creating user: {firstname} {lastname}")
-        result = await self.client.post("/apirest.php/User", json=payload)
+        result = await self.client.post("/apirest.php/User", data=payload)
 
         if "id" not in result:
             raise GLPIError(500, "Failed to create user")
@@ -319,7 +327,7 @@ class GLPIService:
     async def update_user(self, user_id: int, **kwargs) -> User:
         """Atualiza um usuário."""
         logger.info(f"Updating user {user_id}")
-        await self.client.put(f"/apirest.php/User/{user_id}", json=kwargs)
+        await self.client.put(f"/apirest.php/User/{user_id}", data=kwargs)
         return await self.get_user(user_id)
 
     async def delete_user(self, user_id: int) -> bool:
@@ -362,7 +370,7 @@ class GLPIService:
             payload["comment"] = comment
 
         logger.info(f"Creating group: {name}")
-        result = await self.client.post("/apirest.php/Group", json=payload)
+        result = await self.client.post("/apirest.php/Group", data=payload)
 
         if "id" not in result:
             raise GLPIError(500, "Failed to create group")
@@ -372,7 +380,7 @@ class GLPIService:
     async def update_group(self, group_id: int, **kwargs) -> Group:
         """Atualiza um grupo."""
         logger.info(f"Updating group {group_id}")
-        await self.client.put(f"/apirest.php/Group/{group_id}", json=kwargs)
+        await self.client.put(f"/apirest.php/Group/{group_id}", data=kwargs)
         return await self.get_group(group_id)
 
     async def delete_group(self, group_id: int) -> bool:
@@ -422,7 +430,7 @@ class GLPIService:
             payload["phone"] = phone
 
         logger.info(f"Creating entity: {name}")
-        result = await self.client.post("/apirest.php/Entity", json=payload)
+        result = await self.client.post("/apirest.php/Entity", data=payload)
 
         if "id" not in result:
             raise GLPIError(500, "Failed to create entity")
@@ -432,7 +440,7 @@ class GLPIService:
     async def update_entity(self, entity_id: int, **kwargs) -> Entity:
         """Atualiza uma entidade."""
         logger.info(f"Updating entity {entity_id}")
-        await self.client.put(f"/apirest.php/Entity/{entity_id}", json=kwargs)
+        await self.client.put(f"/apirest.php/Entity/{entity_id}", data=kwargs)
         return await self.get_entity(entity_id)
 
     async def delete_entity(self, entity_id: int) -> bool:
@@ -482,7 +490,7 @@ class GLPIService:
             payload["phone"] = phone
 
         logger.info(f"Creating location: {name}")
-        result = await self.client.post("/apirest.php/Location", json=payload)
+        result = await self.client.post("/apirest.php/Location", data=payload)
 
         if "id" not in result:
             raise GLPIError(500, "Failed to create location")
@@ -492,7 +500,7 @@ class GLPIService:
     async def update_location(self, location_id: int, **kwargs) -> Location:
         """Atualiza uma localização."""
         logger.info(f"Updating location {location_id}")
-        await self.client.put(f"/apirest.php/Location/{location_id}", json=kwargs)
+        await self.client.put(f"/apirest.php/Location/{location_id}", data=kwargs)
         return await self.get_location(location_id)
 
     async def delete_location(self, location_id: int) -> bool:

@@ -80,7 +80,8 @@ async def _resolve_entity(
     if not entity_name:
         return entity_id
     resolved_id = await entity_resolver.resolve_entity_name(entity_name)
-    if resolved_id:
+    # @MX:NOTE: `is not None` em vez de truthy — entity_id=0 (root) e valido (Bug Ramada)
+    if resolved_id is not None:
         logger.info(f"Entity name '{entity_name}' resolved to ID {resolved_id}")
         return resolved_id
     available = await entity_resolver.list_available_entities()

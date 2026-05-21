@@ -663,7 +663,9 @@ class EntityResolver:
         Returns:
             Nome da entidade ou None
         """
-        if not entity_id:
+        # @MX:NOTE: entity_id=0 e a root entity valida (ex: "MSP Skills").
+        # @MX:REASON: Bug #4 — `not entity_id` rejeitava id=0 como falsy.
+        if entity_id is None:
             return None
 
         from src.services.admin_service import admin_service
@@ -686,9 +688,11 @@ class EntityResolver:
 
         try:
             entities = await admin_service.list_entities(limit=500, use_cache=True)
+            # @MX:NOTE: `is not None` em vez de truthy — preserva entity id=0 (root).
+            # @MX:REASON: Bug #4 — entity ID=0 era filtrada como falsy, sumindo da lista.
             return [
                 {"id": e.get("id"), "name": e.get("name"), "completename": e.get("completename")}
-                for e in entities if isinstance(e, dict) and e.get("id")
+                for e in entities if isinstance(e, dict) and e.get("id") is not None
             ]
         except Exception as e:
             logger.error(f"EntityResolver: erro ao listar entidades: {e}")

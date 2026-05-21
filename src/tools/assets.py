@@ -70,7 +70,7 @@ class AssetTools:
             # Resolver entity_name para entity_id se fornecido
             if entity_name:
                 resolved_id = await entity_resolver.resolve_entity_name(entity_name)
-                if resolved_id:
+                if resolved_id is not None:
                     entity_id = resolved_id
                     logger.info(f"list_assets: entity_name '{entity_name}' resolvido para ID {entity_id}")
                 else:
@@ -432,7 +432,7 @@ class AssetTools:
             # Resolver entity_name para entity_id se fornecido
             if entity_name:
                 resolved_id = await entity_resolver.resolve_entity_name(entity_name)
-                if resolved_id:
+                if resolved_id is not None:
                     entity_id = resolved_id
                     logger.info(f"search_assets: entity_name '{entity_name}' resolvido para ID {entity_id}")
                 else:
@@ -571,7 +571,7 @@ class AssetTools:
             # Resolver entity_name para entity_id se fornecido
             if entity_name:
                 resolved_id = await entity_resolver.resolve_entity_name(entity_name)
-                if resolved_id:
+                if resolved_id is not None:
                     entity_id = resolved_id
                     logger.info(f"list_reservable_items: entity_name '{entity_name}' resolvido para ID {entity_id}")
                 else:
@@ -725,7 +725,7 @@ class AssetTools:
             # Resolver entity_name para entity_id se fornecido
             if entity_name:
                 resolved_id = await entity_resolver.resolve_entity_name(entity_name)
-                if resolved_id:
+                if resolved_id is not None:
                     entity_id = resolved_id
                     logger.info(f"get_asset_stats: entity_name '{entity_name}' resolvido para ID {entity_id}")
                 else:
@@ -788,7 +788,7 @@ class AssetTools:
             # Resolver entity_name para entity_id se fornecido
             if entity_name:
                 resolved_id = await entity_resolver.resolve_entity_name(entity_name)
-                if resolved_id:
+                if resolved_id is not None:
                     entity_id = resolved_id
                     logger.info(f"list_computers: entity_name '{entity_name}' resolvido para ID {entity_id}")
                 else:
@@ -942,7 +942,7 @@ class AssetTools:
             # Resolver entity_name para entity_id se fornecido
             if entity_name:
                 resolved_id = await entity_resolver.resolve_entity_name(entity_name)
-                if resolved_id:
+                if resolved_id is not None:
                     entity_id = resolved_id
                     logger.info(f"list_monitors: entity_name '{entity_name}' resolvido para ID {entity_id}")
                 else:

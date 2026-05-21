@@ -76,8 +76,10 @@ class BridgeTools:
     async def search_knowledge(self, query: str = "", limit: int = 10, **kwargs) -> Any:
         """Search GLPI knowledge base (KnowbaseItem).
 
-        GLPI field map for KnowbaseItem (apirest.php/search/KnowbaseItem):
-          1 = name/title, 4 = answer/content, 7 = view count, 8 = category
+        GLPI 11 KnowbaseItem field map (from listSearchOptions/KnowbaseItem):
+          1 = Assunto/name, 2 = ID, 7 = Conteudo/answer, 9 = Visualizacoes,
+          79 = Categoria, 19 = Ultima atualizacao.
+        NOTE: GLPI 11 renumbered these vs GLPI 10 (was 4=answer, 8=category, 7=view).
         """
         if not query or len(query) < 2:
             return {"error": "Parametro 'query' obrigatorio (minimo 2 caracteres)."}
@@ -88,9 +90,9 @@ class BridgeTools:
                 "KnowbaseItem",
                 criteria=[
                     {"field": 1, "searchtype": "contains", "value": query, "link": "OR"},
-                    {"field": 4, "searchtype": "contains", "value": query, "link": "OR"},
+                    {"field": 7, "searchtype": "contains", "value": query, "link": "OR"},
                 ],
-                forcedisplay=["2", "1", "4", "8", "7"],  # id, name, answer, category, view
+                forcedisplay=["2", "1", "79", "9", "19"],  # id, name, category, views, last_update
                 range_limit=limit,
                 range_offset=0,
             )
@@ -105,9 +107,9 @@ class BridgeTools:
                     {
                         "id": item.get("2") or item.get("id"),
                         "name": item.get("1") or item.get("name", ""),
-                        "answer": item.get("4") or item.get("answer", ""),
-                        "category": item.get("8") or item.get("knowbaseitemcategories_id", ""),
-                        "views": item.get("7") or item.get("view", 0),
+                        "category": item.get("79") or item.get("knowbaseitemcategories_id", ""),
+                        "views": item.get("9") or item.get("view", 0),
+                        "last_update": item.get("19") or item.get("date_mod", ""),
                     }
                 )
 

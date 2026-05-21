@@ -350,36 +350,63 @@ def format_admin_detail(data: dict, resource: str) -> str:
 
 
 def format_webhooks_list(data, args: dict) -> str:
-    """Format webhooks list."""
-    items = data if isinstance(data, list) else data.get("data", data.get("items", []))
+    """Format webhooks list (GLPI 11 native: itemtype/event/event_type)."""
+    if isinstance(data, dict) and isinstance(data.get("webhooks"), list):
+        items = data["webhooks"]
+    elif isinstance(data, list):
+        items = data
+    elif isinstance(data, dict):
+        items = data.get("data") or data.get("items") or []
+    else:
+        items = []
     if not items:
         return "Nenhum webhook encontrado."
     rows = []
     for w in items:
+        event_label = w.get("event_type") or (
+            f"{w.get('itemtype', '?')}.{w.get('event', '?')}"
+            if w.get("itemtype")
+            else "N/A"
+        )
         rows.append(
             f"| {esc(w.get('id'))} "
             f"| {esc(w.get('name', 'N/A'))} "
             f"| {truncate_field(w.get('url', ''), 60)} "
             f"| {'Ativo' if w.get('is_active') else 'Inativo'} "
-            f"| {esc(w.get('event', 'N/A'))} |"
+            f"| {esc(event_label)} |"
         )
     table = "\n".join(rows)
     return f"**{len(items)} webhooks**\n\n| ID | Nome | URL | Status | Evento |\n|---|---|---|---|---|\n{table}"
 
 
 def format_webhook_detail(data: dict) -> str:
-    """Format webhook details."""
+    """Format webhook details (GLPI 11 native fields)."""
     if not data:
         return "Webhook nao encontrado."
+    event_label = data.get("event_type") or (
+        f"{data.get('itemtype', '?')}.{data.get('event', '?')}"
+        if data.get("itemtype")
+        else "N/A"
+    )
     return (
         f"# Webhook: {esc(data.get('name', 'N/A'))}\n\n"
         f"| Campo | Valor |\n|---|---|\n"
         f"| ID | {esc(data.get('id'))} |\n"
         f"| Nome | {esc(data.get('name'))} |\n"
         f"| URL | {esc(data.get('url', 'N/A'))} |\n"
-        f"| Evento | {esc(data.get('event', 'N/A'))} |\n"
+        f"| Evento (MCP) | {esc(event_label)} |\n"
+        f"| Itemtype | {esc(data.get('itemtype', 'N/A'))} |\n"
+        f"| Event (GLPI) | {esc(data.get('event', 'N/A'))} |\n"
+        f"| HTTP Method | {esc(data.get('http_method', 'POST'))} |\n"
         f"| Ativo | {'Sim' if data.get('is_active') else 'Nao'} |\n"
-        f"| Secret | {'Configurado' if data.get('secret') else 'Nao configurado'} |"
+        f"| Secret | {'Configurado' if data.get('secret') else 'Nao configurado'} |\n"
+        f"| Custom Headers | {esc(str(data.get('custom_headers') or {}))} |\n"
+        f"| Use default payload | {'Sim' if data.get('use_default_payload') else 'Nao'} |\n"
+        f"| Entidade | {esc(data.get('entities_id', 'N/A'))} |\n"
+        f"| Recursivo | {'Sim' if data.get('is_recursive') else 'Nao'} |\n"
+        f"| Criado | {esc(data.get('created_at', 'N/A'))} |\n"
+        f"| Atualizado | {esc(data.get('updated_at', 'N/A'))} |\n"
+        f"| Comentario | {truncate_field(data.get('comment', ''), 500)} |"
     )
 
 

@@ -297,14 +297,13 @@ class TicketService:
                 params[f"criteria[{idx}][searchtype]"] = c["searchtype"]
                 params[f"criteria[{idx}][value]"] = c["value"]
                 idx += 1
-            try:
-                result = await glpi_client.get(
-                    "/apirest.php/search/Ticket", params=params, use_cache=False
-                )
-                if isinstance(result, dict):
-                    return int(result.get("totalcount", 0) or 0)
-            except Exception as e:
-                logger.warning(f"get_ticket_stats count failed: {e}")
+            # @MX:NOTE: Propaga erro em vez de retornar 0 silenciosamente.
+            # @MX:REASON: Bug #2 — zeros silenciosos enganavam o LLM quando auth/API falhava.
+            result = await glpi_client.get(
+                "/apirest.php/search/Ticket", params=params, use_cache=False
+            )
+            if isinstance(result, dict):
+                return int(result.get("totalcount", 0) or 0)
             return 0
 
         # Status 12 is the GLPI search field id for "status"

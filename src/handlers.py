@@ -66,7 +66,7 @@ class MCPHandler:
                 "input_schema": {
                     "type": "object",
                     "properties": {
-                        "status": {"type": "string", "description": "Status do chamado no GLPI. Valores: new (novo), processing (em atendimento), pending (pendente), solved (solucionado), closed (fechado)", "enum": ["new", "processing", "pending", "solved", "closed"]},
+                        "status": {"type": "string", "description": "Status do chamado no GLPI. Valores: new (novo), assigned (atribuido), planned (planejado), pending (pendente), solved (solucionado), closed (fechado)", "enum": ["new", "assigned", "planned", "pending", "solved", "closed"]},
                         "priority": {"type": "integer", "description": "Prioridade do chamado. Valores: 1 (muito baixa), 2 (baixa), 3 (media), 4 (alta), 5 (muito alta)", "minimum": 1, "maximum": 5},
                         "entity_id": {"type": "integer", "description": "ID da entidade/cliente no GLPI"},
                         "entity_name": {"type": "string", "description": "Nome da entidade/cliente (ex: 'Acme', 'Example Client')"},
@@ -95,7 +95,7 @@ class MCPHandler:
                         "title": {"type": "string", "description": "Titulo do chamado (obrigatorio para create)"},
                         "description": {"type": "string", "description": "Descricao detalhada do problema (obrigatorio para create)"},
                         "content": {"type": "string", "description": "Conteudo do acompanhamento (obrigatorio para add_followup)"},
-                        "status": {"type": "string", "description": "Novo status. Valores: new, processing, pending, solved, closed", "enum": ["new", "processing", "pending", "solved", "closed"]},
+                        "status": {"type": "string", "description": "Novo status. Valores: new (novo), assigned (atribuido), planned (planejado), pending (pendente), solved (solucionado), closed (fechado)", "enum": ["new", "assigned", "planned", "pending", "solved", "closed"]},
                         "priority": {"type": "integer", "description": "Prioridade. Valores: 1 (muito baixa) a 5 (muito alta)", "minimum": 1, "maximum": 5},
                         "entity_id": {"type": "integer", "description": "ID da entidade/cliente no GLPI"},
                         "entity_name": {"type": "string", "description": "Nome da entidade/cliente no GLPI"},
@@ -470,8 +470,8 @@ class MCPHandler:
                 "properties": {
                     "status": {
                         "type": "string",
-                        "description": "Status do chamado no GLPI. Valores: new (novo), processing (em atendimento), pending (pendente), solved (solucionado), closed (fechado)",
-                        "enum": ["new", "processing", "pending", "solved", "closed"],
+                        "description": "Status do chamado no GLPI. Valores: new (novo), assigned (atribuido), planned (planejado), pending (pendente), solved (solucionado), closed (fechado)",
+                        "enum": ["new", "assigned", "planned", "pending", "solved", "closed"],
                     },
                     "entity_id": {
                         "type": "integer",
@@ -553,8 +553,8 @@ class MCPHandler:
                     "ticket_id": {"type": "integer", "description": "ID do ticket"},
                     "status": {
                         "type": "string",
-                        "description": "Novo status do chamado no GLPI. Valores: new, processing, pending, solved, closed",
-                        "enum": ["new", "processing", "pending", "solved", "closed"],
+                        "description": "Novo status do chamado no GLPI. Valores: new (novo), assigned (atribuido), planned (planejado), pending (pendente), solved (solucionado), closed (fechado)",
+                        "enum": ["new", "assigned", "planned", "pending", "solved", "closed"],
                     },
                     "priority": {"type": "integer", "minimum": 1, "maximum": 5},
                     "assignee_id": {
@@ -1409,8 +1409,8 @@ class MCPHandler:
             return result
 
         except Exception as e:
-            logger.error(f"tools/list error: {e}")
-            raise GLPIError(500, f"Failed to list tools: {str(e)}")
+            logger.error(f"tools/list error: {e}", exc_info=True)
+            raise GLPIError(500, f"Failed to list tools: {str(e)}") from None
 
     async def handle_call_tool(
         self, tool_name: str, arguments: Dict[str, Any]
@@ -1447,7 +1447,7 @@ class MCPHandler:
             # SPEC-GLPI-ENHANCE-001/F01: Interceptor Markdown centralizado
             # Pattern identico ao Hudu server.ts:388 com fallback chain de 3 niveis:
             # 1. Markdown formatado | 2. result.message | 3. JSON fallback
-            markdown = format_tool_response(tool_name, result, arguments)
+            markdown = await format_tool_response(tool_name, result, arguments)
             fallback_message = result.get("message", "") if isinstance(result, dict) else ""
             final_text = markdown or fallback_message or json.dumps(result, ensure_ascii=False, default=str)
 
@@ -1465,29 +1465,105 @@ class MCPHandler:
             return wrapped_result
 
         except (GLPIError, NotFoundError, ValidationError, SimilarityError) as e:
+            # @MX:NOTE: re-raise limpo, mensagem ja esta clara no exception original
             logger.error(f"tools/call validation error for {tool_name}: {e.message}")
             raise
         except Exception as e:
-            logger.error(f"tools/call unexpected error for {tool_name}: {e}")
-            raise GLPIError(500, f"Failed to execute tool {tool_name}: {str(e)}")
+            # @MX:NOTE: stack completo no log, mensagem unica para o LLM (Bug #9 — flatten)
+            logger.error(
+                f"tools/call unexpected error for {tool_name}: {e}", exc_info=True
+            )
+            raise GLPIError(500, f"Tool '{tool_name}' falhou: {str(e)}") from None
 
     def _validate_arguments(
         self, tool_name: str, arguments: Dict[str, Any], schema: Dict[str, Any]
     ):
         """
-        Valida argumentos contra schema JSON.
+        Valida argumentos contra schema JSON: type/required/enum/minimum/maximum/minLength.
 
-        Args:
-            tool_name: Nome da tool
-            arguments: Argumentos fornecidos
-            schema: Schema JSON para validação
+        @MX:ANCHOR: Single source of truth para validacao de input antes do dispatch.
+        @MX:REASON: Bug #7 — limit=999 (schema max 50) passava por aqui sem rejeicao.
         """
-        # Validação básica - verificar se é objeto
         if schema.get("type") == "object" and not isinstance(arguments, dict):
             raise ValidationError("Arguments must be a JSON object", "arguments")
 
-        # TODO: Implementar validação JSON Schema completa
-        # Por enquanto, validação básica é suficiente
+        properties = schema.get("properties", {}) or {}
+        required = schema.get("required", []) or []
+
+        # Required fields
+        for field in required:
+            if field not in arguments or arguments[field] is None:
+                raise ValidationError(
+                    f"Parametro '{field}' e obrigatorio. Schema da tool '{tool_name}' "
+                    f"exige: {required}",
+                    field,
+                )
+
+        # Per-property constraints
+        for name, value in arguments.items():
+            if value is None:
+                continue
+            spec = properties.get(name)
+            if not isinstance(spec, dict):
+                continue
+
+            expected_type = spec.get("type")
+            if expected_type == "integer" and not isinstance(value, bool) and not isinstance(value, int):
+                raise ValidationError(
+                    f"Parametro '{name}' deve ser inteiro, recebido {type(value).__name__}",
+                    name,
+                )
+            if expected_type == "number" and not isinstance(value, (int, float)) or isinstance(value, bool):
+                if expected_type == "number":
+                    raise ValidationError(
+                        f"Parametro '{name}' deve ser numero, recebido {type(value).__name__}",
+                        name,
+                    )
+            if expected_type == "string" and not isinstance(value, str):
+                raise ValidationError(
+                    f"Parametro '{name}' deve ser string, recebido {type(value).__name__}",
+                    name,
+                )
+            if expected_type == "boolean" and not isinstance(value, bool):
+                raise ValidationError(
+                    f"Parametro '{name}' deve ser boolean, recebido {type(value).__name__}",
+                    name,
+                )
+
+            enum = spec.get("enum")
+            if enum and value not in enum:
+                raise ValidationError(
+                    f"Parametro '{name}'='{value}' invalido. Valores aceitos: {enum}",
+                    name,
+                )
+
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                minimum = spec.get("minimum")
+                maximum = spec.get("maximum")
+                if minimum is not None and value < minimum:
+                    raise ValidationError(
+                        f"Parametro '{name}'={value} abaixo do minimo {minimum}",
+                        name,
+                    )
+                if maximum is not None and value > maximum:
+                    raise ValidationError(
+                        f"Parametro '{name}'={value} acima do maximo {maximum}",
+                        name,
+                    )
+
+            if isinstance(value, str):
+                min_len = spec.get("minLength")
+                max_len = spec.get("maxLength")
+                if min_len is not None and len(value) < min_len:
+                    raise ValidationError(
+                        f"Parametro '{name}' precisa de pelo menos {min_len} caracteres",
+                        name,
+                    )
+                if max_len is not None and len(value) > max_len:
+                    raise ValidationError(
+                        f"Parametro '{name}' excede {max_len} caracteres",
+                        name,
+                    )
 
         logger.debug(f"Arguments validated for tool: {tool_name}")
 
