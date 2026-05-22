@@ -1,0 +1,48 @@
+{
+  "embedding": {
+    "provider": "vllm",
+    "base_url": "http://your-vllm-host:8090/v1",
+    "api_key": "",
+    "model": "/model",
+    "dimensions": 2560,
+    "timeout": 60
+  },
+  "sources": [
+    {
+      "name": "chamados",
+      "label": "CHAMADOS",
+      "enabled": true,
+      "is_official": false,
+      "dsn": "host=localhost port=5432 dbname=glpi_kb user=glpi_kb password=CHANGE_ME",
+      "relation": "kb_search",
+      "weight": 1.0,
+      "dedup": false,
+      "lang": "pt-BR",
+      "description": "Chamados resolvidos do proprio GLPI (problema + solucao)."
+    },
+    {
+      "name": "help",
+      "label": "HELP",
+      "enabled": true,
+      "is_official": true,
+      "dsn": "host=localhost port=5432 dbname=help_kb user=ro password=CHANGE_ME",
+      "relation": "kb_search_help",
+      "weight": 1.1,
+      "dedup": false,
+      "lang": "pt-BR",
+      "description": "Central de Ajuda oficial (boost por ser oficial)."
+    },
+    {
+      "name": "comunidade",
+      "label": "COMUNIDADE",
+      "enabled": false,
+      "is_official": false,
+      "dsn": "host=localhost port=5432 dbname=community_kb user=ro password=CHANGE_ME",
+      "relation": "kb_search_community",
+      "weight": 0.95,
+      "dedup": true,
+      "lang": "pt-BR",
+      "description": "Forum da comunidade. enabled=false: desligada sem remover do arquivo."
+    }
+  ]
+}

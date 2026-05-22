@@ -41,7 +41,10 @@ The source registry lives in the MCP's CENTRAL config: a `knowledge_base`
 section in the per-instance JSON (`GLPI_MCP_CONFIG`), or the `KNOWLEDGE_BASE`
 env (JSON string) for the `.env` fallback. Validated by Pydantic at load.
 Shape: `{"embedding": {provider,base_url,api_key,model,dimensions}, "sources": [...]}`.
-Per source: `name`, `label`, `relation`, `dsn`, `is_official`, `weight`, `dedup`.
+Per source — required: `name`, `label`, `relation`, `dsn`. Optional: `enabled`
+(default `true`; set `false` to disable a source without removing it),
+`is_official`, `weight` (RRF boost), `dedup`, `lang`, `description`.
+Full example: `knowledge_base.example.json`.
 - `weight` boosts a source in cross-source RRF (`rrf = weight / (k + rank)`).
   **RRF scores are compressed** (rank-1 ≈ 0.0164, rank-10 ≈ 0.0143), so even a
   small weight has outsized effect: `1.1` lets a source's top results outrank

@@ -32,13 +32,16 @@ class EmbeddingConfig(BaseModel):
 
 
 class SourceConfig(BaseModel):
-    name: str
-    label: str
-    is_official: bool = False
-    dsn: str
-    relation: str
-    weight: float = 1.0
-    dedup: bool = False
+    name: str  # stable key used by the `source` filter (e.g. "chamados")
+    label: str  # display label in results (e.g. "CHAMADOS")
+    dsn: str  # libpq conninfo for the source's database
+    relation: str  # table/view exposing the kb_search contract
+    enabled: bool = True  # toggle a source on/off without removing it
+    is_official: bool = False  # official docs vs community/forum (display + RRF)
+    weight: float = 1.0  # RRF boost (official docs > forum)
+    dedup: bool = False  # collapse repost-prone titles within the source
+    description: str = ""  # human note: what this source contains (docs/routing)
+    lang: str = ""  # default language hint (e.g. "pt-BR"); informational
 
     @field_validator("relation")
     @classmethod
@@ -61,8 +64,11 @@ class Registry(BaseModel):
 
 
 def load_registry(kb_config: dict[str, Any]) -> Registry:
-    """Validate the knowledge_base config dict into a Registry (fail-fast)."""
-    return Registry.model_validate(kb_config or {})
+    """Validate the knowledge_base config into a Registry (fail-fast), keeping
+    only enabled sources — a disabled source stays in the file but is skipped."""
+    reg = Registry.model_validate(kb_config or {})
+    reg.sources = [s for s in reg.sources if s.enabled]
+    return reg
 
 
 class PoolManager:

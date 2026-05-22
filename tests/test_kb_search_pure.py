@@ -6,7 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from src.services.kb_search.index_compat import check_index_compatibility, models_match
-from src.services.kb_search.registry import SourceConfig
+from src.services.kb_search.registry import SourceConfig, load_registry
 from src.services.kb_search.rrf import (
     Hit,
     SourceResults,
@@ -102,6 +102,27 @@ class TestRegistryValidate:
     def test_nonpositive_weight_rejected(self) -> None:
         with pytest.raises(ValidationError):
             self._src(weight=0.0)
+
+
+class TestLoadRegistry:
+    def _cfg(self) -> dict:
+        return {
+            "embedding": {"provider": "none"},
+            "sources": [
+                {"name": "a", "label": "A", "dsn": "d", "relation": "kb_search", "enabled": True},
+                {"name": "b", "label": "B", "dsn": "d", "relation": "kb_search", "enabled": False},
+                {"name": "c", "label": "C", "dsn": "d", "relation": "kb_search"},  # default enabled
+            ],
+        }
+
+    def test_skips_disabled_sources(self) -> None:
+        reg = load_registry(self._cfg())
+        assert [s.name for s in reg.sources] == ["a", "c"]  # b disabled, c default on
+
+    def test_invalid_source_fails_fast(self) -> None:
+        bad = {"sources": [{"name": "x", "label": "X", "dsn": "d", "relation": "x; DROP"}]}
+        with pytest.raises(ValidationError):
+            load_registry(bad)
 
 
 class TestFormatAndDisplayTitle:
