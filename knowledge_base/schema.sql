@@ -118,3 +118,31 @@ CREATE TABLE IF NOT EXISTS sync_state (
 );
 
 INSERT INTO sync_state (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+
+-- ---------------------------------------------------------------------
+-- kb_search — standard KB contract view (see kb_search/CONTRACT.md).
+-- Lets the GLPI MCP unified-search engine query this KB through one fixed
+-- shape, identical to any other source. This is the reference template:
+-- future ETLs we own should expose the same columns.
+-- ---------------------------------------------------------------------
+CREATE OR REPLACE VIEW kb_search AS
+SELECT
+    id::text                                AS id,
+    titulo                                  AS title,
+    body_text                               AS body,
+    NULLIF(solution_text, '')               AS solution,
+    '/front/ticket.form.php?id=' || id::text AS url,
+    categoria                               AS context,
+    NULL::text[]                            AS tags,
+    'pt-BR'                                  AS lang,
+    NULLIF(entidade, '')                    AS tenant,
+    'internal'                              AS visibility,
+    NULL::text                              AS canonical_id,
+    source_date                             AS source_date,
+    date_mod                                AS updated_at,
+    TRUE                                    AS active,
+    embedding                               AS embedding,
+    fts                                     AS fts,
+    embedding_model                         AS embedding_model,
+    metadata                                AS metadata
+FROM tickets;

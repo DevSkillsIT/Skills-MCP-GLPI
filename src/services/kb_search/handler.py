@@ -41,14 +41,15 @@ def _service_or_error() -> KbSearchService | None:
 
 
 async def search_knowledge_unified(
-    query: str = "", source: str = "all", limit: int = 15, **_kwargs: object
+    query: str = "", source: str = "all", limit: int = 15,
+    tenant: str | None = None, **_kwargs: object
 ) -> dict[str, str]:
     """Run unified KB search; return {'message': <Markdown table>}."""
     svc = _service_or_error()
     if svc is None:
         return {"message": f"Busca de conhecimento indisponivel (config): {_init_error}"}
     try:
-        hits = await svc.search(query=query, source=source, limit=limit)
+        hits = await svc.search(query=query, source=source, limit=limit, tenant=tenant)
         return {"message": format_markdown(hits)}
     except Exception as exc:  # noqa: BLE001 - never crash the dispatch on a query
         logger.error("kb_search query failed: %s", exc, exc_info=True)

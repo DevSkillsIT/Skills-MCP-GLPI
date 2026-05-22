@@ -1,20 +1,17 @@
-"""Generic parameterized hybrid search — faithful port of the reference db.ts.
+"""Fixed hybrid search over the kb_search contract — faithful RRF port.
 
-ONE query shape, parameterized by a SourceConfig (table + column expressions),
-so the public MCP carries no source-specific SQL. Identical algorithm to the
-reference:
-  - semantic CTE: ROW_NUMBER() OVER (ORDER BY embedding <=> qvec) LIMIT 50
-  - keyword CTE:  ROW_NUMBER() OVER (ORDER BY ts_rank_cd(fts, plainto_tsquery(
-                  'portuguese_unaccent', q)) DESC) LIMIT 50
-  - fused: SUM(1.0 / (k + rank)), k=60
-  - similarity = 1 - (embedding <=> qvec); stable tiebreak by id (+ optional boost)
+ONE query shape for every source (all expose the contract columns). Identical
+algorithm to the reference: semantic CTE (ROW_NUMBER over embedding <=> qvec) +
+keyword CTE (ts_rank_cd over a portuguese_unaccent FTS), fused by SUM(1/(k+rank)),
+k=60. Enterprise filters: always ``active``; optional tenant / lang; private
+visibility excluded unless explicitly included.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
-from .registry import SourceConfig
 from .rrf import Hit
 
 if TYPE_CHECKING:
@@ -24,81 +21,95 @@ Mode = Literal["hybrid", "semantic", "keyword"]
 RRF_K = 60
 _CTE_LIMIT = 50
 _TSCONFIG = "portuguese_unaccent"
+_BODY_SNIPPET = 240
+
+
+@dataclass(slots=True)
+class SearchFilters:
+    tenant: str | None = None
+    lang: str | None = None
+    include_private: bool = False
 
 
 def _vec_literal(qvec: list[float]) -> str:
-    """pgvector text literal '[v1,v2,...]' (cast to ::halfvec in SQL)."""
     return "[" + ",".join(repr(float(x)) for x in qvec) + "]"
+
+
+def _where(filters: SearchFilters, params: dict[str, Any]) -> str:
+    """Build the shared filter clause (bind params added to `params`)."""
+    clauses = ["active"]
+    if not filters.include_private:
+        clauses.append("visibility <> 'private'")
+    if filters.tenant:
+        clauses.append("(tenant IS NULL OR tenant = %(tenant)s)")
+        params["tenant"] = filters.tenant
+    if filters.lang:
+        clauses.append("(lang IS NULL OR lang = %(lang)s)")
+        params["lang"] = filters.lang
+    return " AND ".join(clauses)
 
 
 async def hybrid_search(
     pool: AsyncConnectionPool,
-    src: SourceConfig,
+    relation: str,
     *,
     query: str,
     qvec: list[float] | None,
     limit: int,
     mode: Mode,
+    filters: SearchFilters | None = None,
     rrf_k: int = RRF_K,
 ) -> list[Hit]:
-    """Run hybrid/semantic/keyword search for one source. Returns ordered Hits."""
-    effective_mode: Mode = mode
-    if mode in ("hybrid", "semantic") and qvec is None:
-        # No vector available -> keyword (hybrid degrades; semantic empty per ref,
-        # but here we prefer keyword so the source still contributes).
-        effective_mode = "keyword"
+    """Run hybrid/semantic/keyword search over a kb_search-contract relation."""
+    filters = filters or SearchFilters()
+    eff: Mode = "keyword" if (mode in ("hybrid", "semantic") and qvec is None) else mode
 
-    t = src.table
-    idx = src.id_expr
-    title = src.title_expr
-    url = src.url_expr
-    ctx = src.context_expr
-    emb = src.embedding_col
-    fts = src.fts_col
-    extra = f" {src.extra_filter} " if src.extra_filter else " "
-    boost = f"{src.boost_order}, " if src.boost_order else ""
+    params: dict[str, Any] = {"lim": limit}
+    where = _where(filters, params)
+    r = relation  # validated by SourceConfig._validate
 
-    if effective_mode == "keyword":
+    if eff == "keyword":
+        params["q"] = query
         sql = f"""
-            SELECT {idx} AS id, {title} AS title, {ctx} AS context, {url} AS url,
-                   ts_rank_cd({fts}, plainto_tsquery('{_TSCONFIG}', %(q)s)) AS score,
+            SELECT id, title, context, url, canonical_id,
+                   left(body, {_BODY_SNIPPET}) AS body,
+                   ts_rank_cd(fts, plainto_tsquery('{_TSCONFIG}', %(q)s)) AS score,
                    NULL::float8 AS similarity
-            FROM {t} t
-            WHERE {fts} @@ plainto_tsquery('{_TSCONFIG}', %(q)s){extra}
-            ORDER BY score DESC, {boost}{idx}
+            FROM {r}
+            WHERE fts @@ plainto_tsquery('{_TSCONFIG}', %(q)s) AND {where}
+            ORDER BY score DESC, id
             LIMIT %(lim)s;
-        """
-        params: dict[str, Any] = {"q": query, "lim": limit}
-    elif effective_mode == "semantic":
-        vec = _vec_literal(qvec)  # type: ignore[arg-type]
+        """  # noqa: S608 - relation validated; values bound
+    elif eff == "semantic":
+        params["vec"] = _vec_literal(qvec)  # type: ignore[arg-type]
         sql = f"""
-            SELECT {idx} AS id, {title} AS title, {ctx} AS context, {url} AS url,
-                   1.0 - ({emb} <=> %(vec)s::halfvec) AS score,
-                   1.0 - ({emb} <=> %(vec)s::halfvec) AS similarity
-            FROM {t} t
-            WHERE {emb} IS NOT NULL{extra}
-            ORDER BY {emb} <=> %(vec)s::halfvec, {boost}{idx}
+            SELECT id, title, context, url, canonical_id,
+                   left(body, {_BODY_SNIPPET}) AS body,
+                   1.0 - (embedding <=> %(vec)s::halfvec) AS score,
+                   1.0 - (embedding <=> %(vec)s::halfvec) AS similarity
+            FROM {r}
+            WHERE embedding IS NOT NULL AND {where}
+            ORDER BY embedding <=> %(vec)s::halfvec, id
             LIMIT %(lim)s;
-        """
-        params = {"vec": vec, "lim": limit}
+        """  # noqa: S608
     else:  # hybrid
-        vec = _vec_literal(qvec)  # type: ignore[arg-type]
+        params["vec"] = _vec_literal(qvec)  # type: ignore[arg-type]
+        params["q"] = query
+        params["k"] = rrf_k
         sql = f"""
             WITH semantic AS (
-                SELECT {idx} AS id,
-                       ROW_NUMBER() OVER (ORDER BY {emb} <=> %(vec)s::halfvec) AS rank
-                FROM {t} t
-                WHERE {emb} IS NOT NULL{extra}
-                ORDER BY {emb} <=> %(vec)s::halfvec
+                SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> %(vec)s::halfvec) AS rank
+                FROM {r}
+                WHERE embedding IS NOT NULL AND {where}
+                ORDER BY embedding <=> %(vec)s::halfvec
                 LIMIT {_CTE_LIMIT}
             ),
             keyword AS (
-                SELECT {idx} AS id,
-                       ROW_NUMBER() OVER (
-                           ORDER BY ts_rank_cd({fts}, plainto_tsquery('{_TSCONFIG}', %(q)s)) DESC
-                       ) AS rank
-                FROM {t} t
-                WHERE {fts} @@ plainto_tsquery('{_TSCONFIG}', %(q)s){extra}
+                SELECT id, ROW_NUMBER() OVER (
+                    ORDER BY ts_rank_cd(fts, plainto_tsquery('{_TSCONFIG}', %(q)s)) DESC
+                ) AS rank
+                FROM {r}
+                WHERE fts @@ plainto_tsquery('{_TSCONFIG}', %(q)s) AND {where}
                 LIMIT {_CTE_LIMIT}
             ),
             fused AS (
@@ -106,15 +117,15 @@ async def hybrid_search(
                 FROM (SELECT id, rank FROM semantic UNION ALL SELECT id, rank FROM keyword) u
                 GROUP BY id
             )
-            SELECT {idx} AS id, {title} AS title, {ctx} AS context, {url} AS url,
+            SELECT t.id, t.title, t.context, t.url, t.canonical_id,
+                   left(t.body, {_BODY_SNIPPET}) AS body,
                    f.rrf_score AS score,
-                   1.0 - ({emb} <=> %(vec)s::halfvec) AS similarity
+                   1.0 - (t.embedding <=> %(vec)s::halfvec) AS similarity
             FROM fused f
-            JOIN {t} t ON ({idx}) = f.id
-            ORDER BY f.rrf_score DESC, {boost}{idx}
+            JOIN {r} t ON t.id = f.id
+            ORDER BY f.rrf_score DESC, t.id
             LIMIT %(lim)s;
-        """
-        params = {"vec": vec, "q": query, "k": rrf_k, "lim": limit}
+        """  # noqa: S608
 
     async with pool.connection() as conn:
         cur = await conn.execute(sql, params)
@@ -122,23 +133,22 @@ async def hybrid_search(
 
     return [
         Hit(
-            id=str(r["id"]),
-            title=r["title"] or "",
-            url=r["url"] or "",
-            context=r["context"],
-            similarity=(float(r["similarity"]) if r["similarity"] is not None else None),
+            id=str(row["id"]),
+            title=row["title"] or "",
+            url=row["url"] or "",
+            context=row["context"],
+            similarity=(float(row["similarity"]) if row["similarity"] is not None else None),
+            canonical_id=row.get("canonical_id"),
+            body=row.get("body") or "",
         )
-        for r in rows
+        for row in rows
     ]
 
 
-async def distinct_embedding_models(pool: AsyncConnectionPool, src: SourceConfig) -> list[str | None]:
-    """Distinct embedding_model values for a source (feeds index-compat)."""
-    sql = (
-        f"SELECT DISTINCT {src.embedding_model_col} AS m "
-        f"FROM {src.table} t WHERE {src.embedding_col} IS NOT NULL"
-    )
+async def distinct_embedding_models(pool: AsyncConnectionPool, relation: str) -> list[str | None]:
+    """Distinct embedding_model values among embedded rows (feeds index-compat)."""
+    sql = f"SELECT DISTINCT embedding_model AS m FROM {relation} WHERE embedding IS NOT NULL"  # noqa: S608
     async with pool.connection() as conn:
         cur = await conn.execute(sql)
         rows = await cur.fetchall()
-    return [r["m"] for r in rows]
+    return [row["m"] for row in rows]

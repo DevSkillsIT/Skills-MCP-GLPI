@@ -367,6 +367,7 @@ class MCPHandler:
                         "query": {"type": "string", "description": "Texto livre da duvida, erro ou sintoma para buscar na base de conhecimento do GLPI (minimo 2 caracteres)."},
                         "source": {"type": "string", "enum": ["all", "chamados", "help", "comunidade"], "default": "all", "description": "Fonte: all (todas com RRF), chamados (resolvidos do GLPI), help (artigos de ajuda), comunidade (forum)."},
                         "limit": {"type": "integer", "description": "Quantidade maxima de resultados (padrao 15, maximo 50).", "minimum": 1, "maximum": 50, "default": 15},
+                        "tenant": {"type": "string", "description": "Opcional: restringe a busca a uma entidade/cliente (multi-tenant). Itens globais sempre aparecem."},
                     },
                     "required": ["query"],
                 },
