@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from src.services.kb_search.index_compat import check_index_compatibility, models_match
-from src.services.kb_search.registry import RegistryError, SourceConfig
+from src.services.kb_search.registry import SourceConfig
 from src.services.kb_search.rrf import (
     Hit,
     SourceResults,
@@ -91,16 +92,16 @@ class TestRegistryValidate:
         return SourceConfig(**base)  # type: ignore[arg-type]
 
     def test_valid_relation(self) -> None:
-        self._src()._validate()
-        self._src(relation="public.kb_search_help")._validate()
+        self._src()  # constructs without error
+        self._src(relation="public.kb_search_help")
 
     def test_unsafe_relation_rejected(self) -> None:
-        with pytest.raises(RegistryError):
-            self._src(relation="kb_search; DROP TABLE x")._validate()
+        with pytest.raises(ValidationError):
+            self._src(relation="kb_search; DROP TABLE x")
 
     def test_nonpositive_weight_rejected(self) -> None:
-        with pytest.raises(RegistryError):
-            self._src(weight=0.0)._validate()
+        with pytest.raises(ValidationError):
+            self._src(weight=0.0)
 
 
 class TestFormatAndDisplayTitle:

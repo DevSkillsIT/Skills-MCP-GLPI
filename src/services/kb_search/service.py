@@ -49,8 +49,9 @@ class KbSearchService:
         self._ready: dict[str, bool] | None = None
 
     @classmethod
-    def from_env(cls) -> KbSearchService:
-        return cls(load_registry())
+    def from_config(cls, kb_config: dict) -> KbSearchService:
+        """Build from the central Settings knowledge_base section (validated)."""
+        return cls(load_registry(kb_config))
 
     async def _ensure_ready(self) -> dict[str, bool]:
         """Per source: True if it can serve hybrid (healthy + index-compatible);

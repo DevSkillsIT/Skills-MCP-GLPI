@@ -32,11 +32,16 @@ source-specific SQL lives in the MCP.
   configured provider degrades to keyword **only for itself**; others stay hybrid.
 - Sources we build: the ETL writes a table with these columns directly.
 - Foreign sources (not ours): expose a read-only `kb_search*` **view** mapping
-  their columns to this contract (NULL where a field is absent). See
-  `sankhya_views.sql`.
+  their columns to this contract (NULL where a field is absent). The view's DDL
+  belongs to the source's OWN repo, not here (e.g. the Sankhya views live at
+  `sankhya_ajuda/sql/kb_search_views.sql`).
 
-## Registry knobs (`sources.json`)
-Per source: `relation`, `dsn_env`, `is_official`, `weight`, `dedup`.
+## Config (centralized — no per-module files)
+The source registry lives in the MCP's CENTRAL config: a `knowledge_base`
+section in the per-instance JSON (`GLPI_MCP_CONFIG`), or the `KNOWLEDGE_BASE`
+env (JSON string) for the `.env` fallback. Validated by Pydantic at load.
+Shape: `{"embedding": {provider,base_url,api_key,model,dimensions}, "sources": [...]}`.
+Per source: `name`, `label`, `relation`, `dsn`, `is_official`, `weight`, `dedup`.
 - `weight` boosts a source in cross-source RRF (`rrf = weight / (k + rank)`).
   **RRF scores are compressed** (rank-1 ≈ 0.0164, rank-10 ≈ 0.0143), so even a
   small weight has outsized effect: `1.1` lets a source's top results outrank

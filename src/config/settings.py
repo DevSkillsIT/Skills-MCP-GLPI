@@ -127,6 +127,13 @@ class Settings(BaseSettings):
         default=True, alias="ENABLE_SESSION_MANAGEMENT"
     )
 
+    # ============= Knowledge Base (unified vector search) =============
+    # Centralized config for the glpi_search_knowledge_unified tool: embedding
+    # provider + vectorized sources (each exposes the kb_search contract).
+    # From the per-instance JSON `knowledge_base` section, or the KNOWLEDGE_BASE
+    # env (JSON string) in the .env fallback. None = tool disabled.
+    knowledge_base: dict | None = Field(default=None, alias="KNOWLEDGE_BASE")
+
     class Config:
         env_file = ".env"
         case_sensitive = False
@@ -284,6 +291,10 @@ class Settings(BaseSettings):
         safety = data.get("safety", {})
         if safety.get("webhook_secret"):
             flat["WEBHOOK_SECRET"] = safety["webhook_secret"]
+
+        # Seção knowledge_base (busca unificada de KB) — passada inteira.
+        if data.get("knowledge_base") is not None:
+            flat["KNOWLEDGE_BASE"] = data["knowledge_base"]
 
         logger.info(
             f"Configuração carregada: client={flat.get('CLIENT_NAME', 'unknown')}, port={flat.get('MCP_PORT', '?')}"

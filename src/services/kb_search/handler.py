@@ -1,39 +1,40 @@
 """Tool entrypoint for glpi_search_knowledge_unified.
 
-Wires the kb_search service into the GLPI MCP tool dispatch: the handler is
-called as ``await handler(**arguments)`` and returns ``{"message": markdown}``,
-which the dispatch surfaces as the tool's text content.
+Reads its config from the MCP's CENTRAL Settings (the per-instance JSON
+`knowledge_base` section, or the `KNOWLEDGE_BASE` env for the .env fallback) —
+no per-module .env or sources file. The handler is called as
+``await handler(**arguments)`` and returns ``{"message": markdown}``.
 """
 
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 from .service import KbSearchService, format_markdown
 
 logger = logging.getLogger(__name__)
 
-# Load the kb_search .env (DSNs + embedding config) if present, without
-# overriding anything already set in the process environment.
-_ENV_FILE = Path(__file__).with_name(".env")
-try:
-    from dotenv import load_dotenv
-
-    if _ENV_FILE.exists():
-        load_dotenv(_ENV_FILE, override=False)
-except ImportError:  # pragma: no cover - dotenv is a core dependency
-    pass
-
 _service: KbSearchService | None = None
 _init_error: str | None = None
+
+
+def _kb_config() -> dict | None:
+    """Pull the knowledge_base section from the central Settings."""
+    from src.config.settings import load_settings
+
+    settings = load_settings()
+    return getattr(settings, "knowledge_base", None)
 
 
 def _service_or_error() -> KbSearchService | None:
     global _service, _init_error  # noqa: PLW0603 - module-level lazy singleton
     if _service is None and _init_error is None:
         try:
-            _service = KbSearchService.from_env()
+            cfg = _kb_config()
+            if not cfg or not cfg.get("sources"):
+                _init_error = "knowledge_base nao configurado (secao ausente no config do MCP)"
+            else:
+                _service = KbSearchService.from_config(cfg)
         except Exception as exc:  # noqa: BLE001 - surface config errors to the caller
             _init_error = str(exc)
             logger.error("kb_search init failed: %s", exc)
