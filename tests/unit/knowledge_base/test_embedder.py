@@ -55,6 +55,7 @@ def test_openai_without_key_raises() -> None:
         build_embedding_client(_settings("openai", openai_key=""))
 
 
+@pytest.mark.asyncio
 async def test_null_client_embed_raises() -> None:
     client = NullEmbeddingClient()
     with pytest.raises(EmbeddingError):

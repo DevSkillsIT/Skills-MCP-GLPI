@@ -5,6 +5,9 @@ algorithm to the reference: semantic CTE (ROW_NUMBER over embedding <=> qvec) +
 keyword CTE (ts_rank_cd over a portuguese_unaccent FTS), fused by SUM(1/(k+rank)),
 k=60. Enterprise filters: always ``active``; optional tenant / lang; private
 visibility excluded unless explicitly included.
+
+``build_search_sql`` is a pure (no-I/O) builder so the generated SQL + bound
+params are unit-testable without a database.
 """
 
 from __future__ import annotations
@@ -36,7 +39,7 @@ def _vec_literal(qvec: list[float]) -> str:
 
 
 def _where(filters: SearchFilters, params: dict[str, Any]) -> str:
-    """Build the shared filter clause (bind params added to `params`)."""
+    """Shared filter clause; binds values into `params`. Never interpolates input."""
     clauses = ["active"]
     if not filters.include_private:
         clauses.append("visibility <> 'private'")
@@ -49,24 +52,29 @@ def _where(filters: SearchFilters, params: dict[str, Any]) -> str:
     return " AND ".join(clauses)
 
 
-async def hybrid_search(
-    pool: AsyncConnectionPool,
+def effective_mode(mode: Mode, has_vec: bool) -> Mode:
+    """Hybrid/semantic without a query vector degrade to keyword."""
+    if mode in ("hybrid", "semantic") and not has_vec:
+        return "keyword"
+    return mode
+
+
+def build_search_sql(
     relation: str,
     *,
-    query: str,
-    qvec: list[float] | None,
-    limit: int,
     mode: Mode,
-    filters: SearchFilters | None = None,
+    query: str,
+    vec_literal: str | None,
+    limit: int,
+    filters: SearchFilters,
     rrf_k: int = RRF_K,
-) -> list[Hit]:
-    """Run hybrid/semantic/keyword search over a kb_search-contract relation."""
-    filters = filters or SearchFilters()
-    eff: Mode = "keyword" if (mode in ("hybrid", "semantic") and qvec is None) else mode
-
+) -> tuple[str, dict[str, Any]]:
+    """Pure builder: returns (sql, params) for the effective mode. `relation` is
+    interpolated (validated upstream by SourceConfig); all values are bound."""
+    eff = effective_mode(mode, vec_literal is not None)
     params: dict[str, Any] = {"lim": limit}
     where = _where(filters, params)
-    r = relation  # validated by SourceConfig._validate
+    r = relation
 
     if eff == "keyword":
         params["q"] = query
@@ -79,9 +87,9 @@ async def hybrid_search(
             WHERE fts @@ plainto_tsquery('{_TSCONFIG}', %(q)s) AND {where}
             ORDER BY score DESC, id
             LIMIT %(lim)s;
-        """  # noqa: S608 - relation validated; values bound
+        """  # noqa: S608 - relation validated; _TSCONFIG is a constant; values bound
     elif eff == "semantic":
-        params["vec"] = _vec_literal(qvec)  # type: ignore[arg-type]
+        params["vec"] = vec_literal
         sql = f"""
             SELECT id, title, context, url, canonical_id,
                    left(body, {_BODY_SNIPPET}) AS body,
@@ -93,7 +101,7 @@ async def hybrid_search(
             LIMIT %(lim)s;
         """  # noqa: S608
     else:  # hybrid
-        params["vec"] = _vec_literal(qvec)  # type: ignore[arg-type]
+        params["vec"] = vec_literal
         params["q"] = query
         params["k"] = rrf_k
         sql = f"""
@@ -126,7 +134,27 @@ async def hybrid_search(
             ORDER BY f.rrf_score DESC, t.id
             LIMIT %(lim)s;
         """  # noqa: S608
+    return sql, params
 
+
+async def hybrid_search(
+    pool: AsyncConnectionPool,
+    relation: str,
+    *,
+    query: str,
+    qvec: list[float] | None,
+    limit: int,
+    mode: Mode,
+    filters: SearchFilters | None = None,
+    rrf_k: int = RRF_K,
+) -> list[Hit]:
+    """Run hybrid/semantic/keyword search over a kb_search-contract relation."""
+    filters = filters or SearchFilters()
+    vec_literal = _vec_literal(qvec) if qvec is not None else None
+    sql, params = build_search_sql(
+        relation, mode=mode, query=query, vec_literal=vec_literal,
+        limit=limit, filters=filters, rrf_k=rrf_k,
+    )
     async with pool.connection() as conn:
         cur = await conn.execute(sql, params)
         rows = await cur.fetchall()

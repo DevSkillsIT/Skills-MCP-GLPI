@@ -114,11 +114,25 @@ class KbSearchService:
 
         async def run(src: SourceConfig) -> SourceResults:
             mode = "hybrid" if (qvec is not None and ready.get(src.name)) else "keyword"
-            pool = await self._pools.get(src.dsn)
-            hits: list[Hit] = await hybrid_search(
-                pool, src.relation, query=query, qvec=qvec, limit=per_source,
-                mode=mode, filters=filters,
-            )
+            try:
+                pool = await self._pools.get(src.dsn)
+                hits: list[Hit] = await hybrid_search(
+                    pool, src.relation, query=query, qvec=qvec, limit=per_source,
+                    mode=mode, filters=filters,
+                )
+            except Exception as exc:  # noqa: BLE001 - one source must not crash the whole search
+                # Mid-session failure (DB down, view dropped). Degrade THIS source
+                # to keyword; if that also fails, drop it and keep the others.
+                log.warning("kb_search source '%s' failed (%s); degrading to keyword", src.name, exc)
+                try:
+                    pool = await self._pools.get(src.dsn)
+                    hits = await hybrid_search(
+                        pool, src.relation, query=query, qvec=None, limit=per_source,
+                        mode="keyword", filters=filters,
+                    )
+                except Exception as exc2:  # noqa: BLE001 - drop this source from the fusion
+                    log.error("kb_search source '%s' unavailable: %s", src.name, exc2)
+                    hits = []
             if src.dedup:
                 hits = dedup_by_title(hits)
             return SourceResults(name=src.label, is_official=src.is_official, hits=hits, weight=src.weight)

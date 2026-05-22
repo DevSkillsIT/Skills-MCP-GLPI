@@ -10,7 +10,7 @@ source-specific SQL lives in the MCP.
 | `id` | `text` | Stable id within the source. |
 | `title` | `text` | Display title. |
 | `body` | `text` | The embedded / full-text searchable text. |
-| `solution` | `text` NULL | Resolution, for ticket/Q&A sources. |
+| `solution` | `text` NULL | Resolution/answer, for ticket/Q&A sources. NULL if N/A. For structured/multi-part solutions, flatten to text or use `metadata`. |
 | `url` | `text` NULL | Link back to the canonical item. |
 | `context` | `text` NULL | Human context (breadcrumb, category, space). |
 | `tags` | `text[]` NULL | Labels / keywords. |
@@ -25,6 +25,14 @@ source-specific SQL lives in the MCP.
 | `fts` | `tsvector` | Full-text, built with `portuguese_unaccent`. |
 | `embedding_model` | `text` NULL | Model that produced `embedding`; drives per-source index-compat. |
 | `metadata` | `jsonb` | Source-specific extras (votes, answered flag, …). |
+
+## Deduplication (`canonical_id`)
+If a row's `canonical_id` is non-null, it is a cross-source dedup key: when
+multiple sources return rows sharing the same `canonical_id`, only the
+best-ranked (highest RRF) is kept and the rest are collapsed. Use it when a row
+mirrors content in another source (e.g. an official doc reposted to the forum).
+Leave it NULL if the row is unique to its source. Within a single source,
+repost-prone titles can also be collapsed via the registry `dedup` flag.
 
 ## Rules
 - All sources in one deployment SHOULD share the same embedding model/dimension

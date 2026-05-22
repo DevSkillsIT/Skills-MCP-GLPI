@@ -103,7 +103,8 @@ class PoolManager:
                 await conn.execute(f"SELECT 1 FROM {src.relation} LIMIT 0")  # noqa: S608 - relation validated
             return None
         except Exception as exc:  # noqa: BLE001 - report, don't crash
-            return str(exc)[:200]
+            msg = str(exc)
+            return msg if len(msg) <= 200 else msg[:197] + "…"
 
     async def close_all(self) -> None:
         for pool in self._pools.values():
