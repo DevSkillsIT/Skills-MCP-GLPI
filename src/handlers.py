@@ -68,7 +68,7 @@ class MCPHandler:
                     "type": "object",
                     "properties": {
                         "status": {"type": "string", "description": "Status do chamado no GLPI. Valores: new (novo), assigned (atribuido), planned (planejado), pending (pendente), solved (solucionado), closed (fechado)", "enum": ["new", "assigned", "planned", "pending", "solved", "closed"]},
-                        "priority": {"type": "integer", "description": "Prioridade do chamado. Valores: 1 (muito baixa), 2 (baixa), 3 (media), 4 (alta), 5 (muito alta)", "minimum": 1, "maximum": 5},
+                        "priority": {"type": "integer", "description": "Prioridade do chamado. Valores: 1 (muito baixa), 2 (baixa), 3 (media), 4 (alta), 5 (muito alta), 6 (maior)", "minimum": 1, "maximum": 6},
                         "entity_id": {"type": "integer", "description": "ID da entidade/cliente no GLPI"},
                         "entity_name": {"type": "string", "description": "Nome da entidade/cliente (ex: 'Acme', 'Example Client')"},
                         "query": {"type": "string", "description": "Texto para busca em titulo e conteudo (minimo 2 caracteres)"},
@@ -97,7 +97,7 @@ class MCPHandler:
                         "description": {"type": "string", "description": "Descricao detalhada do problema (obrigatorio para create)"},
                         "content": {"type": "string", "description": "Conteudo do acompanhamento (obrigatorio para add_followup)"},
                         "status": {"type": "string", "description": "Novo status. Valores: new (novo), assigned (atribuido), planned (planejado), pending (pendente), solved (solucionado), closed (fechado)", "enum": ["new", "assigned", "planned", "pending", "solved", "closed"]},
-                        "priority": {"type": "integer", "description": "Prioridade. Valores: 1 (muito baixa) a 5 (muito alta)", "minimum": 1, "maximum": 5},
+                        "priority": {"type": "integer", "description": "Prioridade. Valores: 1 (muito baixa) a 5 (muito alta), 6 (maior)", "minimum": 1, "maximum": 6},
                         "entity_id": {"type": "integer", "description": "ID da entidade/cliente no GLPI"},
                         "entity_name": {"type": "string", "description": "Nome da entidade/cliente no GLPI"},
                         "user_id": {"type": "integer", "description": "ID do tecnico para atribuicao (obrigatorio para assign)"},

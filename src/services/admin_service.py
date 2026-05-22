@@ -188,9 +188,17 @@ class AdminService:
             
         except NotFoundError:
             raise
+        except GLPIError as e:
+            # 404 from the GLPI API means the user doesn't exist — surface a
+            # clean NotFoundError instead of wrapping into a 500 with a doubled
+            # "Failed to get user" prefix.
+            if getattr(e, "code", None) == 404:
+                raise NotFoundError("User", user_id)
+            logger.error(f"Failed to get user {user_id}: {e}")
+            raise
         except Exception as e:
             logger.error(f"Failed to get user {user_id}: {e}")
-            raise GLPIError(500, f"Failed to get user: {str(e)}")
+            raise GLPIError(500, f"Failed to get user {user_id}: {str(e)}")
     
     async def create_user(
         self,

@@ -161,14 +161,18 @@ def _display_title(hit: UnifiedHit) -> str:
 def format_markdown(hits: list[UnifiedHit]) -> str:
     if not hits:
         return "Nenhum resultado encontrado."
-    headers = ["Fonte", "Oficial", "ID", "Titulo", "Contexto", "Score", "URL"]
+    # "#" = posição final no ranking RRF (ordem autoritativa). "Sim." é a
+    # similaridade vetorial bruta da fonte (informativa) — NÃO é a chave de
+    # ordenação e é incomparável entre corpora; por isso pode não ser monotônica
+    # ao longo das linhas. A coluna "#" deixa a ordem inequívoca para a LLM.
+    headers = ["#", "Fonte", "Oficial", "ID", "Titulo", "Contexto", "Sim.", "URL"]
     lines = ["| " + " | ".join(headers) + " |", "|" + "---|" * len(headers)]
-    for h in hits:
+    for pos, h in enumerate(hits, start=1):
         oficial = "Sim" if h.is_official else "Nao"
         titulo = _escape(_truncate(_display_title(h), _TITLE_MAX))
         contexto = _escape(_truncate(h.context, _CONTEXT_MAX)) if h.context else "—"
         score = f"{h.similarity:.3f}" if h.similarity is not None else "—"
         lines.append(
-            f"| {h.source} | {oficial} | {_escape(h.id)} | {titulo} | {contexto} | {score} | {_escape(h.url)} |"
+            f"| {pos} | {h.source} | {oficial} | {_escape(h.id)} | {titulo} | {contexto} | {score} | {_escape(h.url)} |"
         )
     return "\n".join(lines)

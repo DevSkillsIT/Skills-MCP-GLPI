@@ -16,47 +16,144 @@ from src.models.exceptions import (
 from src.utils.helpers import logger
 
 
+# GLPI ticket status string -> internal integer code.
+# Used for both list filters (Search API field 12) and update PUT payloads.
+STATUS_MAP = {
+    "new": 1,
+    "assigned": 2,
+    "planned": 3,
+    "pending": 4,
+    "solved": 5,
+    "closed": 6,
+}
+
+# GLPI Search API field IDs for Ticket.
+# Ref: https://glpi-developer-documentation.readthedocs.io (search options)
+TICKET_FIELD = {
+    "name": 1,
+    "id": 2,
+    "priority": 3,
+    "status": 12,
+    "type": 14,
+    "date": 15,       # opening date
+    "date_mod": 19,   # last update
+    "entities_id": 80,
+}
+
+# Fields requested from the Search API so the normalized result keeps the
+# same shape the formatters expect from the getAllItems endpoint.
+TICKET_FORCEDISPLAY = [
+    TICKET_FIELD["name"],
+    TICKET_FIELD["id"],
+    TICKET_FIELD["priority"],
+    TICKET_FIELD["status"],
+    TICKET_FIELD["type"],
+    TICKET_FIELD["date"],
+    TICKET_FIELD["date_mod"],
+    TICKET_FIELD["entities_id"],
+]
+
+
+def _normalize_search_ticket(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Map a GLPI Search API ticket row (numeric field keys) to named keys.
+
+    The Search API returns ``{"1": "...", "12": 2, ...}`` while the getAllItems
+    endpoint returns ``{"name": "...", "status": 2, ...}``. Normalizing here lets
+    the same formatters handle both code paths.
+    """
+    f = TICKET_FIELD
+    normalized = {
+        "id": row.get(str(f["id"])) or row.get("id"),
+        "name": row.get(str(f["name"])) or row.get("name"),
+        "status": row.get(str(f["status"])) if row.get(str(f["status"])) is not None else row.get("status"),
+        "priority": row.get(str(f["priority"])) if row.get(str(f["priority"])) is not None else row.get("priority"),
+        "type": row.get(str(f["type"])) if row.get(str(f["type"])) is not None else row.get("type"),
+        "date": row.get(str(f["date"])) or row.get("date"),
+        "date_mod": row.get(str(f["date_mod"])) or row.get("date_mod"),
+        "entities_id": row.get(str(f["entities_id"])) if row.get(str(f["entities_id"])) is not None else row.get("entities_id"),
+    }
+    return {k: v for k, v in normalized.items() if v is not None}
+
+
 class TicketService:
     """Serviço de gerenciamento de tickets GLPI - Integração Real."""
-    
+
     def __init__(self):
         """Inicializa o serviço de tickets."""
         logger.info("TicketService initialized")
-    
+
     async def list_tickets(self, **kwargs) -> List[Dict[str, Any]]:
-        """Lista tickets com filtros."""
-        criteria_idx = 0
-        params = {
-            # GLPI range is inclusive (0-9 == 10 items), so end = limit - 1.
-            "range": f"0-{max(kwargs.get('limit', 50) - 1, 0)}",
-            "sort": kwargs.get("sort", "date_mod"),
-            "order": kwargs.get("order", "DESC")
-        }
+        """Lista tickets com filtros.
 
-        # Adicionar filtros se fornecidos
-        if "status" in kwargs:
-            params[f"criteria[{criteria_idx}][field]"] = "12"
-            params[f"criteria[{criteria_idx}][searchtype]"] = "equals"
-            params[f"criteria[{criteria_idx}][value]"] = kwargs["status"]
-            criteria_idx += 1
+        Quando há filtros (status/priority/entity/date), usa a Search API
+        (/apirest.php/search/Ticket), que é o único endpoint que processa
+        ``criteria[]``. Sem filtros, usa o endpoint getAllItems (mais leve),
+        que já retorna campos nomeados.
 
-        # Filtrar por entity_id (com busca recursiva em sub-entidades)
+        @MX:ANCHOR: list_tickets é a base de search_tickets e find_similar.
+        @MX:REASON: O endpoint getAllItems IGNORA criteria[] — usar /search.
+        """
+        limit = max(int(kwargs.get("limit", 50)), 1)
+        offset = max(int(kwargs.get("offset", 0)), 0)
+
+        # Build advanced criteria for the Search API
+        criteria: List[Dict[str, Any]] = []
+
+        status = kwargs.get("status")
+        if status:
+            # Accept both string ("pending") and int code; Search API needs int.
+            status_code = STATUS_MAP.get(status, status) if isinstance(status, str) else status
+            criteria.append({"field": TICKET_FIELD["status"], "searchtype": "equals", "value": status_code})
+
+        priority = kwargs.get("priority")
+        if priority:
+            criteria.append({"field": TICKET_FIELD["priority"], "searchtype": "equals", "value": priority})
+
         entity_id = kwargs.get("entity_id")
-        if entity_id:
-            if criteria_idx > 0:
-                params[f"criteria[{criteria_idx}][link]"] = "AND"
-            params[f"criteria[{criteria_idx}][field]"] = "80"  # Entity field
-            params[f"criteria[{criteria_idx}][searchtype]"] = "under"  # "under" busca na entidade E sub-entidades
-            params[f"criteria[{criteria_idx}][value]"] = entity_id
+        if entity_id is not None:
+            criteria.append({"field": TICKET_FIELD["entities_id"], "searchtype": "under", "value": entity_id})
 
-        result = await glpi_client.get("/apirest.php/Ticket", params=params)
+        date_after = kwargs.get("date_created_after")
+        if date_after:
+            criteria.append({"field": TICKET_FIELD["date"], "searchtype": "morethan", "value": date_after})
+        date_before = kwargs.get("date_created_before")
+        if date_before:
+            criteria.append({"field": TICKET_FIELD["date"], "searchtype": "lessthan", "value": date_before})
+
+        if criteria:
+            result = await glpi_client.search(
+                item_type="Ticket",
+                criteria=criteria,
+                forcedisplay=TICKET_FORCEDISPLAY,
+                range_limit=limit,
+                range_offset=offset,
+                is_recursive=entity_id is not None,
+            )
+            rows = result.get("data", []) if isinstance(result, dict) else (result or [])
+            return [_normalize_search_ticket(r) for r in rows]
+
+        # No filters: lighter getAllItems endpoint (already named fields).
+        params = {
+            "range": f"{offset}-{offset + limit - 1}",
+            "sort": kwargs.get("sort", "date_mod"),
+            "order": kwargs.get("order", "DESC"),
+        }
+        result = await glpi_client.get(
+            "/apirest.php/Ticket", params=params, use_cache=kwargs.get("use_cache", True)
+        )
         return result.get("data", []) if isinstance(result, dict) else (result or [])
     
     async def get_ticket(self, ticket_id: int) -> Dict[str, Any]:
-        """Obtém um ticket específico."""
+        """Obtém um ticket específico.
+
+        @MX:NOTE: use_cache=False — detalhe de ticket precisa refletir escritas
+        recentes (update/resolve/assign). Com cache, retornava estado obsoleto.
+        """
         if ticket_id <= 0:
             raise ValidationError("ticket_id must be positive", "ticket_id")
-        result = await glpi_client.get(f"/apirest.php/Ticket/{ticket_id}")
+        result = await glpi_client.get(
+            f"/apirest.php/Ticket/{ticket_id}", use_cache=False
+        )
         if not result or "id" not in result:
             raise NotFoundError("Ticket", ticket_id)
         return result
@@ -139,7 +236,11 @@ class TicketService:
         if "description" in kwargs:
             data["content"] = kwargs["description"]
         if "status" in kwargs:
-            data["status"] = kwargs["status"]
+            # GLPI stores status as int. Accept the string enum from the schema
+            # ("pending") and map to the code (4). Passing the raw string causes
+            # a MySQL "Incorrect integer value" error.
+            raw_status = kwargs["status"]
+            data["status"] = STATUS_MAP.get(raw_status, raw_status) if isinstance(raw_status, str) else raw_status
         if "priority" in kwargs:
             data["priority"] = kwargs["priority"]
         if "urgency" in kwargs:
@@ -214,55 +315,76 @@ class TicketService:
             raise ValidationError("ticket_id must be positive", "ticket_id")
         
         reference = await self.get_ticket(ticket_id)
-        
+
         # Buscar candidatos (limitados para performance)
         candidates = await self.list_tickets(limit=kwargs.get("max_items", 200))
-        
-        similar = await similarity_service.find_similar_tickets(
+
+        # Index candidates by id so we can re-attach displayable fields
+        # (name/status/date) to the similarity scores afterwards.
+        cand_by_id = {t.get("id"): t for t in candidates if t.get("id") != ticket_id}
+
+        scored = await similarity_service.find_similar_tickets(
             target_ticket={
                 "id": reference.get("id"),
                 "title": reference.get("name", ""),
-                "content": reference.get("content", "")
+                "content": reference.get("content", ""),
             },
             candidate_tickets=[
-                {
-                    "id": t.get("id"),
-                    "title": t.get("name", ""),
-                    "content": t.get("content", "")
-                }
-                for t in candidates if t.get("id") != ticket_id
+                {"id": cid, "title": t.get("name", ""), "content": t.get("content", "")}
+                for cid, t in cand_by_id.items()
             ],
             threshold=kwargs.get("threshold", 0.3),
-            max_results=kwargs.get("max_results", 10)
+            max_results=kwargs.get("max_results", 10),
         )
-        
-        return similar
+
+        # Map similarity results back to ticket-shaped dicts the formatter
+        # understands (id/name/status/date/score). The raw scorer only returns
+        # {id1, id2, combined, ...}.
+        results: List[Dict[str, Any]] = []
+        for s in scored:
+            cid = s.get("id2")
+            cand = cand_by_id.get(cid, {})
+            results.append({
+                "id": cid,
+                "name": cand.get("name", ""),
+                "status": cand.get("status"),
+                "date": cand.get("date"),
+                "score": round(float(s.get("combined", 0.0)), 3),
+            })
+        return results
     
     async def search_tickets(self, query: str, **kwargs) -> List[Dict[str, Any]]:
-        """Busca tickets por texto."""
+        """Busca textual de tickets (título + conteúdo) via Search API.
+
+        Usa /apirest.php/search/Ticket, que processa ``criteria[]``. O endpoint
+        getAllItems NÃO suporta busca textual, por isso o filtro era ignorado.
+        """
         if not query or len(query.strip()) < 2:
             raise ValidationError("Search query must be at least 2 characters")
 
-        criteria_idx = 0
-        params = {
-            f"criteria[{criteria_idx}][field]": "1",  # Name field
-            f"criteria[{criteria_idx}][searchtype]": "contains",
-            f"criteria[{criteria_idx}][value]": query.strip(),
-            # GLPI range is inclusive (0-9 == 10 items), so end = limit - 1.
-            "range": f"0-{max(kwargs.get('limit', 50) - 1, 0)}"
-        }
+        limit = max(int(kwargs.get("limit", 50)), 1)
+        offset = max(int(kwargs.get("offset", 0)), 0)
 
-        # Adicionar filtro de entity se fornecido (com busca recursiva em sub-entidades)
+        # Field 1 = title (name). searchtype "contains" também varre o conteúdo
+        # indexado pelo GLPI para o ticket.
+        criteria: List[Dict[str, Any]] = [
+            {"field": TICKET_FIELD["name"], "searchtype": "contains", "value": query.strip()},
+        ]
+
         entity_id = kwargs.get("entity_id")
-        if entity_id:
-            criteria_idx += 1
-            params[f"criteria[{criteria_idx}][link]"] = "AND"
-            params[f"criteria[{criteria_idx}][field]"] = "80"  # Entity field
-            params[f"criteria[{criteria_idx}][searchtype]"] = "under"  # "under" busca na entidade E sub-entidades
-            params[f"criteria[{criteria_idx}][value]"] = entity_id
+        if entity_id is not None:
+            criteria.append({"field": TICKET_FIELD["entities_id"], "searchtype": "under", "value": entity_id})
 
-        result = await glpi_client.get("/apirest.php/Ticket", params=params)
-        return result.get("data", []) if isinstance(result, dict) else (result or [])
+        result = await glpi_client.search(
+            item_type="Ticket",
+            criteria=criteria,
+            forcedisplay=TICKET_FORCEDISPLAY,
+            range_limit=limit,
+            range_offset=offset,
+            is_recursive=entity_id is not None,
+        )
+        rows = result.get("data", []) if isinstance(result, dict) else (result or [])
+        return [_normalize_search_ticket(r) for r in rows]
     
     async def get_ticket_stats(self, **kwargs) -> Dict[str, Any]:
         """Obtém estatísticas de tickets agregadas por status.

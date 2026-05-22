@@ -27,3 +27,11 @@ async def test_empty_sources_treated_as_unconfigured(monkeypatch: pytest.MonkeyP
 
     result = await h.search_knowledge_unified(query="x")
     assert "indispon" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_short_query_rejected_when_service_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    # With a working service, a 1-char query must be rejected (schema says min 2).
+    monkeypatch.setattr(h, "_service_or_error", lambda: object())
+    result = await h.search_knowledge_unified(query="a")
+    assert "2 caracteres" in result

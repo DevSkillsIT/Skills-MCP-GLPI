@@ -53,6 +53,10 @@ async def search_knowledge_unified(
     svc = _service_or_error()
     if svc is None:
         return f"Busca de conhecimento indisponivel (config): {_init_error}"
+    # Enforce the documented minimum query length (schema says "min 2 chars" but
+    # nothing validated it — a 1-char query returned semantic noise).
+    if not query or len(query.strip()) < 2:
+        return "Consulta invalida: informe ao menos 2 caracteres para a busca de conhecimento."
     try:
         hits = await svc.search(query=query, source=source, limit=limit, tenant=tenant)
         return format_markdown(hits)

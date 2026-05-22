@@ -12,7 +12,7 @@ import logging
 
 from src.glpi_service import GLPIService
 from src.models import NotFoundError, ValidationError, GLPIError
-from src.formatters.markdown_helpers import fmt_status, fmt_priority
+from src.formatters.markdown_helpers import fmt_status, fmt_priority, strip_html
 from src.services.dropdown_cache import dropdown_cache
 
 logger = logging.getLogger(__name__)
@@ -402,8 +402,25 @@ class PromptHandler:
             if entity:
                 entity_id = entity.id
 
-        # Step 2: Buscar estatísticas de tickets
-        stats = await self.service.get_ticket_stats(entity_id=entity_id)
+        # Step 2: Buscar estatísticas de tickets do período (period_days).
+        # Sem date_from, o relatório de "últimos N dias" contava o histórico
+        # inteiro — número enganoso. Filtra pela data de abertura.
+        try:
+            _days = int(period_days)
+        except (TypeError, ValueError):
+            _days = 30
+        date_from = (datetime.now() - timedelta(days=_days)).strftime("%Y-%m-%d")
+        stats = await self.service.get_ticket_stats(entity_id=entity_id, date_from=date_from)
+        # get_ticket_stats agrupa contagens em by_status; o relatório lia chaves
+        # de topo (solved/opened/in_progress) que não existiam -> sempre 0.
+        # Derivar os agregados a partir do formato real.
+        _by = stats.get("by_status", {}) if isinstance(stats, dict) else {}
+        stats = {
+            **stats,
+            "solved": _by.get("solved", 0) + _by.get("closed", 0),
+            "opened": stats.get("open_tickets", 0),
+            "in_progress": _by.get("assigned", 0) + _by.get("planned", 0) + _by.get("pending", 0),
+        }
 
         # Step 3: Gerar relatório compacto (WhatsApp/Teams)
         compact = f"""📊 SLA Performance - Últimos {period_days} dias
@@ -838,7 +855,9 @@ Min. {min_occurrences} ocorrências
         entity_label = await dropdown_cache.get_name("Entity", entity_id, fallback="") if entity_id is not None else ""
 
         title = getattr(ticket, "name", "") or getattr(ticket, "title", "") or "Sem titulo"
-        content_raw = getattr(ticket, "content", "") or ""
+        # Ticket bodies come as HTML (form templates). Strip tags so the summary
+        # is clean for WhatsApp/Teams, which is the declared purpose of this prompt.
+        content_raw = strip_html(getattr(ticket, "content", "") or "")
 
         compact = f"""🎫 Ticket #{ticket_id}
 {title}

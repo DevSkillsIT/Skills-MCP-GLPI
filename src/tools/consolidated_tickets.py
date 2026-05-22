@@ -30,6 +30,33 @@ MAX_LIMIT = 50
 # Valid ticket statuses accepted by the GLPI API
 VALID_STATUSES = ["new", "assigned", "planned", "pending", "solved", "closed"]
 
+# Reverse map: GLPI status code -> string enum. Lets us accept a numeric status
+# (4 or "4") from a less-strict external agent and normalize to "pending".
+_INT_TO_STATUS = {1: "new", 2: "assigned", 3: "planned", 4: "pending", 5: "solved", 6: "closed"}
+
+
+def _coerce_int(value):
+    """Best-effort int coercion for loose inputs (e.g. priority='6' from an
+    agent that ignores the JSON Schema type). Leaves non-numeric values intact."""
+    if isinstance(value, bool):  # bool is a subclass of int — never coerce silently
+        return value
+    if isinstance(value, str):
+        s = value.strip()
+        if s.lstrip("-").isdigit():
+            return int(s)
+    return value
+
+
+def _normalize_status(value):
+    """Accept the string enum ('pending'), an int code (4) or a numeric string
+    ('4') and normalize to the string enum the rest of the pipeline expects."""
+    if value is None:
+        return None
+    coerced = _coerce_int(value)
+    if isinstance(coerced, int):
+        return _INT_TO_STATUS.get(coerced, value)
+    return coerced
+
 # Valid actions for manage_tickets
 MANAGE_ACTIONS = [
     "get",
@@ -124,6 +151,11 @@ async def search_tickets(
         Dict with ticket list and pagination metadata.
     """
     try:
+        # Normalize loose inputs from less-strict external agents (Codex suggestion).
+        status = _normalize_status(status)
+        priority = _coerce_int(priority)
+        entity_id = _coerce_int(entity_id)
+
         # Cap limit
         limit = min(int(limit), MAX_LIMIT)
 
@@ -147,9 +179,9 @@ async def search_tickets(
 
         # Validate priority
         if priority is not None:
-            if not isinstance(priority, int) or priority < 1 or priority > 5:
+            if not isinstance(priority, int) or priority < 1 or priority > 6:
                 raise ValidationError(
-                    "Priority must be integer between 1 and 5", "priority"
+                    "Priority must be integer between 1 and 6", "priority"
                 )
 
         # Validate dates
@@ -290,6 +322,20 @@ async def manage_tickets(
         Dict with action-specific response data.
     """
     try:
+        # Normalize loose inputs from less-strict external agents (Codex suggestion):
+        # accept numeric strings for ints and int/numeric status codes.
+        ticket_id = _coerce_int(ticket_id)
+        priority = _coerce_int(priority)
+        urgency = _coerce_int(urgency)
+        category_id = _coerce_int(category_id)
+        entity_id = _coerce_int(entity_id)
+        requester_id = _coerce_int(requester_id)
+        assignee_id = _coerce_int(assignee_id)
+        location_id = _coerce_int(location_id)
+        user_id = _coerce_int(user_id)
+        max_results = _coerce_int(max_results)
+        status = _normalize_status(status)
+
         # Validate action
         if action not in MANAGE_ACTIONS:
             return create_mcp_error(
@@ -448,14 +494,12 @@ async def manage_tickets(
             return response_truncator.truncate_json_response(followups)
 
         if action == "get_history":
-            ticket = await ticket_service.get_ticket(ticket_id)
-            history = ticket.get("history", [])
-            history = response_truncator.truncate_json_response(history)
-            return {
-                "ticket_id": ticket_id,
-                "history": history,
-                "count": len(history),
-            }
+            # Use the dedicated /Ticket/{id}/Log endpoint. get_ticket() does NOT
+            # include a "history" field, so the old ticket.get("history", [])
+            # always returned empty. The formatter expects a list (like
+            # get_followups), not a {history: [...]} wrapper.
+            history = await ticket_service.get_ticket_history(ticket_id)
+            return response_truncator.truncate_json_response(history)
 
         if action == "get_stats":
             if date_from or date_to:
@@ -479,13 +523,9 @@ async def manage_tickets(
             similar = await ticket_service.find_similar_tickets(
                 ticket_id=ticket_id, threshold=threshold, max_results=max_results
             )
-            similar = response_truncator.truncate_json_response(similar)
-            return {
-                "ticket_id": ticket_id,
-                "threshold": threshold,
-                "similar_tickets": similar,
-                "count": len(similar),
-            }
+            # Return a list (like get_followups/get_history): format_similar_tickets
+            # expects a list, not a {similar_tickets: [...]} wrapper.
+            return response_truncator.truncate_json_response(similar)
 
         # Should never reach here given the action validation above
         return create_mcp_error(

@@ -250,7 +250,7 @@ class GLPIClient:
         search_text: Optional[str] = None,
         filters: Optional[Dict[str, Any]] = None,
         criteria: Optional[List[Dict[str, Any]]] = None,
-        forcedisplay: Optional[List[str]] = None,
+        forcedisplay: Optional[List[Any]] = None,
         range_limit: Optional[int] = None,
         range_offset: int = 0,
         is_recursive: bool = False

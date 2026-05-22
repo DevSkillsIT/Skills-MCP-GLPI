@@ -4,6 +4,7 @@ Extrai e adapta TextSimilarity da fonte Anfaia com ProcessPoolExecutor
 Implementa 4 algoritmos: Jaccard, Cosine, Levenshtein, TF-IDF
 """
 
+import asyncio
 import math
 import re
 import unicodedata
@@ -226,10 +227,18 @@ class TextSimilarity:
     
     @staticmethod
     def combined_similarity(text1: str, text2: str, title1: str = "", title2: str = "") -> float:
-        """Calcula similaridade combinada usando múltiplos algoritmos."""
+        """Calcula similaridade combinada usando múltiplos algoritmos.
+
+        Quando o conteúdo (text1/text2) está ausente — comum em tickets criados
+        por formulário, cujo corpo é template — recai sobre a similaridade de
+        TÍTULO, que é o sinal mais forte num helpdesk. Antes, o early-return
+        zerava tudo e tickets de título idêntico nunca casavam.
+        """
         if not text1 or not text2:
+            if title1 and title2:
+                return TextSimilarity.sequence_similarity(title1, title2)
             return 0.0
-        
+
         # Pesos para cada algoritmo conforme SPEC.md (BUG-IMP-01/BUG-IMP-02)
         # Auditoria: 0.30/0.30/0.25/0.15 para sequence/cosine/jaccard/title_bonus
         weights = {
@@ -238,7 +247,7 @@ class TextSimilarity:
             'jaccard': 0.25,
             'title_bonus': 0.15
         }
-        
+
         # Similaridade de sequência
         seq_sim = TextSimilarity.sequence_similarity(text1, text2)
         
@@ -279,7 +288,7 @@ class SimilarityService:
         
         logger.info(f"SimilarityService initialized: max_workers={self.max_workers}, max_items={self.max_items}")
     
-    def _calculate_single_similarity(self, args: Tuple[str, str, str, str, str]) -> Dict[str, Any]:
+    def _calculate_single_similarity(self, args: Tuple[str, str, str, str, str, str]) -> Dict[str, Any]:
         """
         Calcula similaridade para um único par de textos.
         Função auxiliar para ProcessPoolExecutor.
@@ -321,8 +330,8 @@ class SimilarityService:
     
     async def find_similar_tickets(
         self,
-        target_ticket: Dict[str, str],
-        candidate_tickets: List[Dict[str, str]],
+        target_ticket: Dict[str, Any],
+        candidate_tickets: List[Dict[str, Any]],
         threshold: float = 0.3,
         max_results: int = 10
     ) -> List[Dict[str, Any]]:
@@ -362,38 +371,23 @@ class SimilarityService:
             )
             args_list.append(args)
         
-        # Processar em paralelo com ProcessPoolExecutor
-        similarities = []
-        
-        try:
-            with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
-                # Submeter todas as tarefas
-                future_to_args = {
-                    executor.submit(self._calculate_single_similarity, args): args
-                    for args in args_list
-                }
-                
-                # Coletar resultados
-                for future in as_completed(future_to_args):
-                    try:
-                        result = future.result(timeout=30)  # Timeout por segurança
-                        if 'error' not in result and result['combined'] >= threshold:
-                            similarities.append(result)
-                    except Exception as e:
-                        args = future_to_args[future]
-                        logger.error(f"Parallel processing failed for args {args[0]}-{args[3]}: {e}")
-        
-        except Exception as e:
-            logger.error(f"ProcessPoolExecutor failed: {e}")
-            # Fallback para processamento sequencial
+        # Processamento inline (offloaded para thread para não bloquear o loop).
+        # @MX:NOTE: ProcessPoolExecutor foi removido — sob o servidor MCP async
+        # (uvicorn) os workers falhavam/expiravam silenciosamente e find_similar
+        # retornava sempre vazio. Para <=200 textos curtos, o custo é trivial.
+        def _compute() -> List[Dict[str, Any]]:
+            out: List[Dict[str, Any]] = []
             for args in args_list:
                 try:
                     result = self._calculate_single_similarity(args)
                     if 'error' not in result and result['combined'] >= threshold:
-                        similarities.append(result)
-                except Exception as e:
-                    logger.error(f"Sequential processing failed: {e}")
-        
+                        out.append(result)
+                except Exception as exc:  # noqa: BLE001 - log e segue
+                    logger.error(f"Similarity calc failed for {args[0]}-{args[3]}: {exc}")
+            return out
+
+        similarities = await asyncio.to_thread(_compute)
+
         # Ordenar por similaridade combinada
         similarities.sort(key=lambda x: x.get('combined', 0), reverse=True)
         

@@ -31,6 +31,17 @@ class TestFormatMarkdown:
         md = format_markdown([_hit(title="a | b")])
         assert "a \\| b" in md
 
+    def test_rank_column_reflects_order(self) -> None:
+        # "#" column makes the RRF order unambiguous even when the displayed
+        # similarity is non-monotonic across rows.
+        a = _hit(id="A", similarity=0.40)
+        b = _hit(id="B", similarity=0.90)
+        md = format_markdown([a, b])  # input order = RRF order
+        assert "| # |" in md  # header
+        lines = [ln for ln in md.splitlines() if ln.startswith("| ") and "http" in ln]
+        assert lines[0].startswith("| 1 |") and "| A |" in lines[0]
+        assert lines[1].startswith("| 2 |") and "| B |" in lines[1]
+
 
 class TestDisplayTitle:
     def test_weak_title_uses_body_snippet(self) -> None:

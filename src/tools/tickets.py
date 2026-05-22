@@ -99,8 +99,8 @@ class TicketTools:
                     raise ValidationError(f"Status must be one of: {valid_statuses}", "status")
             
             if priority is not None:
-                if not isinstance(priority, int) or priority < 1 or priority > 5:
-                    raise ValidationError("Priority must be integer between 1 and 5", "priority")
+                if not isinstance(priority, int) or priority < 1 or priority > 6:
+                    raise ValidationError("Priority must be integer between 1 and 6", "priority")
             
             # Validar datas
             if date_created_after or date_created_before:

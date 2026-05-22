@@ -346,7 +346,7 @@ class SessionManager:
             if e.response.status_code == 401:
                 raise AuthenticationError("Invalid credentials")
             elif e.response.status_code == 404:
-                raise GLPIError(404, f"Endpoint not found: {endpoint}")
+                raise GLPIError(404, f"Recurso nao encontrado no GLPI: {endpoint.replace('/apirest.php/', '').strip('/')}")
             else:
                 raise GLPIError(e.response.status_code, f"HTTP error: {e.response.text}")
         except Exception as e:
@@ -405,7 +405,7 @@ class SessionManager:
             if e.response.status_code == 401:
                 raise AuthenticationError("Invalid credentials")
             elif e.response.status_code == 404:
-                raise GLPIError(404, f"Endpoint not found: {endpoint}")
+                raise GLPIError(404, f"Recurso nao encontrado no GLPI: {endpoint.replace('/apirest.php/', '').strip('/')}")
             else:
                 raise GLPIError(e.response.status_code, f"HTTP error: {e.response.text}")
         except Exception as e:
@@ -469,7 +469,7 @@ class SessionManager:
             if e.response.status_code == 401:
                 raise AuthenticationError("Invalid credentials")
             elif e.response.status_code == 404:
-                raise GLPIError(404, f"Endpoint not found: {endpoint}")
+                raise GLPIError(404, f"Recurso nao encontrado no GLPI: {endpoint.replace('/apirest.php/', '').strip('/')}")
             else:
                 raise GLPIError(e.response.status_code, f"HTTP error: {e.response.text}")
         except Exception as e:
@@ -523,7 +523,7 @@ class SessionManager:
             if e.response.status_code == 401:
                 raise AuthenticationError("Invalid credentials")
             elif e.response.status_code == 404:
-                raise GLPIError(404, f"Endpoint not found: {endpoint}")
+                raise GLPIError(404, f"Recurso nao encontrado no GLPI: {endpoint.replace('/apirest.php/', '').strip('/')}")
             else:
                 raise GLPIError(e.response.status_code, f"HTTP error: {e.response.text}")
         except Exception as e:
