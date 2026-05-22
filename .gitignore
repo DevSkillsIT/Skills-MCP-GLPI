@@ -67,3 +67,8 @@ transform_handlers.py
 
 # Claude agent memory (local only)
 .claude/
+knowledge_base/.env
+.venv-kb/
+knowledge_base/__pycache__/
+src/services/kb_search/.env
+src/services/kb_search/sources.json

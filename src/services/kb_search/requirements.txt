@@ -1,0 +1,10 @@
+# kb_search (Phase 2 unified search) — optional dependencies.
+# Install on hosts that enable the glpi_search_knowledge_unified tool:
+#   pip install -r src/services/kb_search/requirements.txt
+#
+# httpx, python-dotenv and pydantic are already pinned by the MCP core.
+# Imports are lazy, so the MCP starts without these — the tool only needs them
+# at query time.
+psycopg[binary]>=3.2,<4
+psycopg-pool>=3.2,<4
+pgvector>=0.3.6

@@ -1,0 +1,22 @@
+{
+  "_comment": "Source registry for glpi_search_knowledge_unified. Copy to sources.json and edit. Secrets (DSNs) live in .env, referenced by dsn_env. Each source = one pgvector table exposing: an embedding column, an FTS tsvector, and an embedding_model column. context_expr/url_expr may be correlated subqueries referencing the aliased table `t`.",
+  "embedding": { "provider": "vllm" },
+  "sources": [
+    {
+      "name": "tickets",
+      "label": "CHAMADOS",
+      "is_official": false,
+      "dsn_env": "KB_TICKETS_DSN",
+      "table": "tickets",
+      "id_expr": "t.id",
+      "title_expr": "t.titulo",
+      "url_expr": "'/front/ticket.form.php?id=' || t.id::text",
+      "context_expr": "t.categoria",
+      "embedding_col": "t.embedding",
+      "fts_col": "t.fts",
+      "embedding_model_col": "t.embedding_model",
+      "extra_filter": "",
+      "dedup": false
+    }
+  ]
+}

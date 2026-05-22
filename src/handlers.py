@@ -19,6 +19,7 @@ from src.tools.consolidated_assets import search_assets, manage_assets
 from src.tools.consolidated_admin import search_admin, manage_admin
 from src.tools.consolidated_webhooks import search_webhooks, manage_webhooks
 from src.tools.bridge_tools import bridge_tools
+from src.services.kb_search.handler import search_knowledge_unified as kb_search_unified
 from src.models.exceptions import (
     GLPIError,
     NotFoundError,
@@ -348,6 +349,28 @@ class MCPHandler:
                     "required": ["query"],
                 },
                 "handler": bridge_tools.search_knowledge,
+                "category": "knowledge",
+                "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+            },
+            {
+                "name": "glpi_search_knowledge_unified",  # 29 chars
+                "description": (
+                    "Base de conhecimento unificada do GLPI — busca semantica (pgvector) e textual em chamados "
+                    "resolvidos, artigos de ajuda e posts de comunidade, com ranking RRF que mistura as fontes e "
+                    "rotula cada item. Use para duvidas, erros, mensagens de erro, sintomas ou how-to, achando "
+                    "solucoes ja aplicadas no GLPI. Diferente de glpi_search_knowledge_articles (so artigos nativos "
+                    "via REST). Retorna tabela Markdown."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Texto livre da duvida, erro ou sintoma para buscar na base de conhecimento do GLPI (minimo 2 caracteres)."},
+                        "source": {"type": "string", "enum": ["all", "chamados", "help", "comunidade"], "default": "all", "description": "Fonte: all (todas com RRF), chamados (resolvidos do GLPI), help (artigos de ajuda), comunidade (forum)."},
+                        "limit": {"type": "integer", "description": "Quantidade maxima de resultados (padrao 15, maximo 50).", "minimum": 1, "maximum": 50, "default": 15},
+                    },
+                    "required": ["query"],
+                },
+                "handler": kb_search_unified,
                 "category": "knowledge",
                 "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
             },
