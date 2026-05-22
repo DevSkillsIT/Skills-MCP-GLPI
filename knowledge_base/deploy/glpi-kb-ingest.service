@@ -1,0 +1,13 @@
+[Unit]
+Description=GLPI tickets knowledge-base incremental ingest
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Adjust to your deployment:
+WorkingDirectory=/opt/Skills-MCP-GLPI
+ExecStart=/opt/Skills-MCP-GLPI/.venv/bin/python -m knowledge_base.ingest_tickets
+# The pipeline reads knowledge_base/.env for all configuration.
+Nice=10
+TimeoutStartSec=1800

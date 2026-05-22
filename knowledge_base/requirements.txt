@@ -1,0 +1,10 @@
+# knowledge_base (Phase 1 ETL) — optional dependencies.
+# Install only on hosts that ingest the tickets KB:
+#   pip install -r knowledge_base/requirements.txt
+#
+# Reuses httpx / pydantic-settings already pinned by the MCP core
+# (see ../requirements.txt); these are the extras the pipeline needs.
+psycopg[binary]>=3.2,<4
+psycopg-pool>=3.2,<4
+pgvector>=0.3.6
+structlog>=24.1

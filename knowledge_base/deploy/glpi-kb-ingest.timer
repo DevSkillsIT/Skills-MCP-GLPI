@@ -1,0 +1,13 @@
+[Unit]
+Description=Run the GLPI knowledge-base ingest daily
+
+[Timer]
+# Daily at 03:00 (mirrors the reference KB sync cadence). Persistent catches up
+# after downtime; randomized delay avoids hammering the embedding endpoint if
+# several instances share it.
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target
