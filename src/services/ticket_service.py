@@ -27,7 +27,8 @@ class TicketService:
         """Lista tickets com filtros."""
         criteria_idx = 0
         params = {
-            "range": f"0-{kwargs.get('limit', 50)}",
+            # GLPI range is inclusive (0-9 == 10 items), so end = limit - 1.
+            "range": f"0-{max(kwargs.get('limit', 50) - 1, 0)}",
             "sort": kwargs.get("sort", "date_mod"),
             "order": kwargs.get("order", "DESC")
         }
@@ -247,7 +248,8 @@ class TicketService:
             f"criteria[{criteria_idx}][field]": "1",  # Name field
             f"criteria[{criteria_idx}][searchtype]": "contains",
             f"criteria[{criteria_idx}][value]": query.strip(),
-            "range": f"0-{kwargs.get('limit', 50)}"
+            # GLPI range is inclusive (0-9 == 10 items), so end = limit - 1.
+            "range": f"0-{max(kwargs.get('limit', 50) - 1, 0)}"
         }
 
         # Adicionar filtro de entity se fornecido (com busca recursiva em sub-entidades)
