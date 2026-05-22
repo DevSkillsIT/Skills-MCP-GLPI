@@ -53,6 +53,19 @@ class TestCrossSourceRRF:
     def test_empty_sources(self) -> None:
         assert cross_source_rrf([]) == []
 
+    def test_similarity_tiebreak_beats_official(self) -> None:
+        # v1.1.0 AD-C02: same rrf position, the more semantically similar result
+        # wins even against an official source.
+        h = SourceResults("HELP", True, [Hit(id="h1", title="A", url="u", similarity=0.52)])
+        c = SourceResults("COMUNIDADE", False, [Hit(id="c1", title="B", url="u", similarity=0.74)])
+        assert cross_source_rrf([h, c])[0].id == "c1"
+
+    def test_null_similarity_falls_back_to_official(self) -> None:
+        # Degraded/keyword mode (null similarity) keeps the v1.0 official-first rule.
+        h = SourceResults("HELP", True, [Hit(id="h1", title="A", url="u", similarity=None)])
+        c = SourceResults("COMUNIDADE", False, [Hit(id="c1", title="B", url="u", similarity=None)])
+        assert cross_source_rrf([h, c])[0].id == "h1"
+
 
 class TestCanonicalDedup:
     def test_collapses_cross_source_by_canonical_id(self) -> None:

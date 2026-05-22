@@ -110,7 +110,10 @@ class KbSearchService:
         if not usable:
             return []
         filters = SearchFilters(tenant=tenant, lang=lang, include_private=include_private)
-        per_source = limit if len(usable) == 1 else _FETCH_PER_SOURCE
+        # Recall scaling (v1.1.0): for source=all, each source contributes at least
+        # `limit` candidates (floor 20) so cross-source RRF can fill the requested
+        # limit with well-ranked results instead of padding with leftovers.
+        per_source = limit if len(usable) == 1 else max(_FETCH_PER_SOURCE, limit)
 
         async def run(src: SourceConfig) -> SourceResults:
             mode = "hybrid" if (qvec is not None and ready.get(src.name)) else "keyword"

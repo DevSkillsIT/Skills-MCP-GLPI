@@ -84,7 +84,15 @@ def cross_source_rrf(sources: list[SourceResults], k: int = DEFAULT_K) -> list[U
 
     sourceRank = 1-indexed array position within each source.
     rrf_score  = weight / (k + sourceRank).
-    Tiebreak: higher rrf_score; then official first; then id ascending.
+    Tiebreak (v1.1.0 AD-C02 reversal, in order):
+      1. rrf_score DESC      — RRF position is the backbone.
+      2. similarity DESC     — at the same rrf position, the more semantically
+                               similar result wins regardless of source (null
+                               similarity = lowest, so degraded/keyword mode keeps
+                               the v1.0 official-first behaviour via step 3).
+      3. official first      — only when similarities tie or are both null.
+      4. id ascending        — determinism within a source.
+    Then cross-source duplicates sharing a non-null canonical_id collapse.
     """
     unified: list[UnifiedHit] = []
     for src in sources:
@@ -106,7 +114,14 @@ def cross_source_rrf(sources: list[SourceResults], k: int = DEFAULT_K) -> list[U
                 )
             )
 
-    unified.sort(key=lambda u: (-u.rrf_score, 0 if u.is_official else 1, u.id))
+    unified.sort(
+        key=lambda u: (
+            -u.rrf_score,
+            -(u.similarity if u.similarity is not None else float("-inf")),
+            0 if u.is_official else 1,
+            u.id,
+        )
+    )
     return _dedup_canonical(unified)
 
 
