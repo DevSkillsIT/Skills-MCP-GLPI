@@ -66,7 +66,7 @@ def html_content() -> str:
 class TestMarkdownSmallerThanJson:
     """Markdown output must be at least 40% smaller than raw JSON."""
 
-    def test_markdown_at_least_40_percent_smaller(
+    async def test_markdown_at_least_40_percent_smaller(
         self, large_ticket_list: dict, default_args: dict
     ) -> None:
         """Markdown representation uses fewer chars than JSON."""
@@ -84,11 +84,11 @@ class TestMarkdownSmallerThanJson:
             f"Markdown: {markdown_size} chars, JSON: {json_size} chars"
         )
 
-    def test_markdown_smaller_via_format_tool_response(
+    async def test_markdown_smaller_via_format_tool_response(
         self, large_ticket_list: dict, default_args: dict
     ) -> None:
         """format_tool_response also produces smaller output than JSON."""
-        markdown_output = format_tool_response(
+        markdown_output = await format_tool_response(
             "glpi_search_ticket_requests", large_ticket_list, default_args
         )
         json_output = json.dumps(
@@ -104,7 +104,7 @@ class TestMarkdownSmallerThanJson:
 class TestResponseSizeLimit:
     """No formatted response should exceed 400KB."""
 
-    def test_small_response_within_limit(
+    async def test_small_response_within_limit(
         self, large_ticket_list: dict, default_args: dict
     ) -> None:
         """A 50-ticket response stays well within 400KB."""
@@ -112,21 +112,21 @@ class TestResponseSizeLimit:
         size_check = check_response_size(markdown_output)
         assert size_check["exceeded"] is False
 
-    def test_check_response_size_detects_oversized(self) -> None:
+    async def test_check_response_size_detects_oversized(self) -> None:
         """check_response_size flags content exceeding the limit."""
         oversized_content = "x" * (401 * 1024)
         size_check = check_response_size(oversized_content)
         assert size_check["exceeded"] is True
         assert "400KB" in size_check["message"]
 
-    def test_check_response_size_reports_byte_count(self) -> None:
+    async def test_check_response_size_reports_byte_count(self) -> None:
         """check_response_size returns actual byte size."""
         content = "Hello World"
         size_check = check_response_size(content)
         assert size_check["exceeded"] is False
         assert size_check["size"] == len(content.encode("utf-8"))
 
-    def test_format_tool_response_handles_oversized(self) -> None:
+    async def test_format_tool_response_handles_oversized(self) -> None:
         """format_tool_response returns size error for oversized data."""
         huge_list = {
             "data": [
@@ -134,7 +134,7 @@ class TestResponseSizeLimit:
                 for i in range(100)
             ]
         }
-        result = format_tool_response(
+        result = await format_tool_response(
             "glpi_search_ticket_requests", huge_list, {"limit": 100, "offset": 0}
         )
         # Either the result is valid Markdown or a size-exceeded message
@@ -150,12 +150,12 @@ class TestResponseSizeLimit:
 class TestHtmlStrippingReducesSize:
     """strip_html must reduce the size of HTML content."""
 
-    def test_stripped_smaller_than_original(self, html_content: str) -> None:
+    async def test_stripped_smaller_than_original(self, html_content: str) -> None:
         """Stripped text is shorter than the original HTML."""
         stripped = strip_html(html_content)
         assert len(stripped) < len(html_content)
 
-    def test_no_html_tags_remain(self, html_content: str) -> None:
+    async def test_no_html_tags_remain(self, html_content: str) -> None:
         """No HTML tags remain after stripping."""
         stripped = strip_html(html_content)
         assert "<p>" not in stripped
@@ -165,23 +165,23 @@ class TestHtmlStrippingReducesSize:
         assert "<li>" not in stripped
         assert "</p>" not in stripped
 
-    def test_html_entities_decoded(self, html_content: str) -> None:
+    async def test_html_entities_decoded(self, html_content: str) -> None:
         """HTML entities like &amp; are decoded."""
         stripped = strip_html(html_content)
         assert "&amp;" not in stripped
         assert "&" in stripped
 
-    def test_empty_input_returns_empty(self) -> None:
+    async def test_empty_input_returns_empty(self) -> None:
         """strip_html on empty/None returns empty string."""
         assert strip_html("") == ""
         assert strip_html(None) == ""
 
-    def test_plain_text_unchanged(self) -> None:
+    async def test_plain_text_unchanged(self) -> None:
         """Plain text without HTML passes through unchanged."""
         plain = "Texto sem HTML aqui"
         assert strip_html(plain) == plain
 
-    def test_br_converted_to_newline(self) -> None:
+    async def test_br_converted_to_newline(self) -> None:
         """<br> and <br/> tags are converted to newlines."""
         html = "Linha 1<br>Linha 2<br/>Linha 3"
         stripped = strip_html(html)

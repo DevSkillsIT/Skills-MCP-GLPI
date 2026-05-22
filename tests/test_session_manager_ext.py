@@ -2,7 +2,6 @@
 Testes adicionais para SessionManager cobrindo cache e rate limit.
 """
 
-import asyncio
 import time
 import pytest
 from unittest.mock import AsyncMock, MagicMock
@@ -21,7 +20,11 @@ async def test_get_uses_cache_and_rate_limit():
     response.json.return_value = {"ok": True}
     response.raise_for_status.return_value = None
     mock_client.get.return_value = response
-    manager._client = mock_client
+    # GLPI 11 auth: o client agora vem do pool por user_token (não mais de
+    # um _client único). Fornecemos um token e injetamos o client mockado
+    # via _get_session_for_user para isolar o teste de cache/rate-limit.
+    manager.set_current_user_token("test-token")
+    manager._get_session_for_user = AsyncMock(return_value=mock_client)
 
     # primeira chamada popula cache
     data1 = await manager.get("/api/test", params={"a": 1}, use_cache=True, user_id="u1")

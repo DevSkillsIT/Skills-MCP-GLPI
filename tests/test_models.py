@@ -2,8 +2,6 @@
 Testes para validação de modelos Pydantic.
 """
 
-import pytest
-from datetime import datetime
 from src.models import (
     Ticket, Asset, User, Group, Entity, Location,
     ValidationError, NotFoundError, AuthenticationError,
@@ -15,17 +13,17 @@ class TestTicketModel:
     """Testes para o modelo Ticket."""
 
     def test_create_valid_ticket(self):
-        """Testa criação de ticket válido."""
+        """Testa criação de ticket válido (GLPI 11: status é int 1-6)."""
         ticket = Ticket(
             id=1,
             name="Test Ticket",
             title="Test Title",
-            status="new",
+            status=1,  # GLPI 11: 1=Novo (status é código int, não string)
             priority=3
         )
         assert ticket.id == 1
         assert ticket.title == "Test Title"
-        assert ticket.status == "new"
+        assert ticket.status == 1
         assert ticket.priority == 3
 
     def test_ticket_priority_validation_low(self):
@@ -48,25 +46,20 @@ class TestTicketModel:
         )
         assert ticket.priority == 5
 
-    def test_ticket_priority_validation_invalid_low(self):
-        """Testa validação de prioridade inválida (muito baixa)."""
-        with pytest.raises(ValueError):
-            Ticket(
-                id=1,
-                name="Test",
-                title="Test",
-                priority=0
-            )
+    def test_ticket_priority_out_of_range_is_tolerated_low(self):
+        """GLPI 11: model é permissivo — prioridade fora da faixa não levanta erro.
 
-    def test_ticket_priority_validation_invalid_high(self):
-        """Testa validação de prioridade inválida (muito alta)."""
-        with pytest.raises(ValueError):
-            Ticket(
-                id=1,
-                name="Test",
-                title="Test",
-                priority=6
-            )
+        @MX:NOTE: a validação estrita de range foi removida de propósito porque
+        o model estrito crashava os prompts com payloads reais do GLPI 11.
+        O valor é apenas coagido para int e armazenado como veio.
+        """
+        ticket = Ticket(id=1, name="Test", title="Test", priority=0)
+        assert ticket.priority == 0
+
+    def test_ticket_priority_out_of_range_is_tolerated_high(self):
+        """GLPI 11: prioridade acima de 5 é tolerada (model permissivo)."""
+        ticket = Ticket(id=1, name="Test", title="Test", priority=6)
+        assert ticket.priority == 6
 
     def test_ticket_with_requesters(self):
         """Testa ticket com múltiplos solicitantes."""
@@ -120,18 +113,18 @@ class TestUserModel:
         assert user.id == 1
         assert user.firstname == "John"
         assert user.lastname == "Doe"
-        assert user.is_active is True
+        assert user.is_active == 1  # GLPI 11: is_active é int (1=ativo), default 1
 
     def test_user_inactive(self):
-        """Testa usuário inativo."""
+        """Testa usuário inativo (GLPI 11: is_active=0)."""
         user = User(
             id=1,
             name="Jane Doe",
             firstname="Jane",
             lastname="Doe",
-            is_active=False
+            is_active=0
         )
-        assert user.is_active is False
+        assert user.is_active == 0
 
 
 class TestGroupModel:

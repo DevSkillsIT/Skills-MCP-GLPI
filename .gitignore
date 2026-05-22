@@ -70,3 +70,6 @@ transform_handlers.py
 knowledge_base/.env
 .venv-kb/
 knowledge_base/__pycache__/
+
+# MoAI tooling session state (local only — not product code)
+.moai/

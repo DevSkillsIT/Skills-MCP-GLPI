@@ -98,14 +98,14 @@ def default_args() -> dict:
 class TestSearchTicketsMarkdown:
     """search_tickets must return Markdown table, not JSON."""
 
-    def test_returns_table_with_id_header(
+    async def test_returns_table_with_id_header(
         self, sample_tickets: dict, default_args: dict
     ) -> None:
         """Output contains Markdown table header '| ID |'."""
         result = format_tickets_list(sample_tickets, default_args)
         assert "| ID |" in result
 
-    def test_does_not_return_json(
+    async def test_does_not_return_json(
         self, sample_tickets: dict, default_args: dict
     ) -> None:
         """Output must NOT contain JSON key patterns."""
@@ -113,11 +113,11 @@ class TestSearchTicketsMarkdown:
         assert '"id":' not in result
         assert '"name":' not in result
 
-    def test_via_format_tool_response(
+    async def test_via_format_tool_response(
         self, sample_tickets: dict, default_args: dict
     ) -> None:
         """format_tool_response routes correctly to Markdown formatter."""
-        result = format_tool_response(
+        result = await format_tool_response(
             "glpi_search_ticket_requests", sample_tickets, default_args
         )
         assert "| ID |" in result
@@ -130,7 +130,7 @@ class TestSearchTicketsMarkdown:
 class TestSearchAssetsMarkdown:
     """search_assets must return Markdown table, not JSON."""
 
-    def test_returns_table_not_json(
+    async def test_returns_table_not_json(
         self, sample_assets: dict, default_args: dict
     ) -> None:
         """Output has table separator and no JSON."""
@@ -145,19 +145,19 @@ class TestSearchAssetsMarkdown:
 class TestManageTicketsGetMarkdown:
     """manage_tickets with action=get returns '# Ticket' heading."""
 
-    def test_returns_ticket_heading(self, sample_ticket_detail: dict) -> None:
+    async def test_returns_ticket_heading(self, sample_ticket_detail: dict) -> None:
         """Detail output starts with '# Ticket' heading."""
         result = format_ticket_detail(sample_ticket_detail)
         assert result.startswith("# Ticket")
 
-    def test_contains_field_value_table(self, sample_ticket_detail: dict) -> None:
+    async def test_contains_field_value_table(self, sample_ticket_detail: dict) -> None:
         """Detail output has '| Campo | Valor |' field-value table."""
         result = format_ticket_detail(sample_ticket_detail)
         assert "| Campo | Valor |" in result
 
-    def test_via_dispatch(self, sample_ticket_detail: dict) -> None:
+    async def test_via_dispatch(self, sample_ticket_detail: dict) -> None:
         """format_tool_response dispatches manage_tickets get correctly."""
-        result = format_tool_response(
+        result = await format_tool_response(
             "glpi_manage_ticket_operations",
             sample_ticket_detail,
             {"action": "get"},
@@ -213,11 +213,11 @@ class TestAllSearchToolsReturnMarkdown:
     """All search tools must return Markdown, not JSON."""
 
     @pytest.mark.parametrize("tool_name", SEARCH_TOOL_NAMES)
-    def test_search_tool_returns_markdown(
+    async def test_search_tool_returns_markdown(
         self, tool_name: str, generic_list_data: dict, default_args: dict
     ) -> None:
         """Each search tool returns Markdown containing '|' (table separator)."""
-        result = format_tool_response(tool_name, generic_list_data, default_args)
+        result = await format_tool_response(tool_name, generic_list_data, default_args)
         assert "|" in result, f"{tool_name} did not return Markdown table"
         assert '"id":' not in result, f"{tool_name} returned JSON instead of Markdown"
 
@@ -228,25 +228,25 @@ class TestAllSearchToolsReturnMarkdown:
 class TestEmptyListFriendlyMessage:
     """Empty data returns a human-friendly message, not '[]'."""
 
-    def test_empty_tickets_list(self, default_args: dict) -> None:
+    async def test_empty_tickets_list(self, default_args: dict) -> None:
         """Empty ticket list returns Portuguese message."""
         result = format_tickets_list({"data": []}, default_args)
         assert result == "Nenhum ticket encontrado."
         assert "[]" not in result
 
-    def test_empty_assets_list(self, default_args: dict) -> None:
+    async def test_empty_assets_list(self, default_args: dict) -> None:
         """Empty asset list returns Portuguese message."""
         result = format_assets_list({"data": []}, default_args)
         assert result == "Nenhum ativo encontrado."
         assert "[]" not in result
 
-    def test_none_search_via_format_tool_response(self) -> None:
+    async def test_none_search_via_format_tool_response(self) -> None:
         """None data for search tool returns friendly message."""
-        result = format_tool_response("glpi_search_ticket_requests", None, {})
+        result = await format_tool_response("glpi_search_ticket_requests", None, {})
         assert result == "Nenhum resultado encontrado."
         assert "[]" not in result
 
-    def test_empty_list_not_json_array(self, default_args: dict) -> None:
+    async def test_empty_list_not_json_array(self, default_args: dict) -> None:
         """Empty list never returns raw JSON '[]'."""
         result = format_tickets_list([], default_args)
         assert result != "[]"

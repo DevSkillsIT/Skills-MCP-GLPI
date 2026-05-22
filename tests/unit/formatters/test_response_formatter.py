@@ -59,9 +59,9 @@ def _user(uid: int = 1) -> dict:
 class TestSearchTicketsMarkdown:
     """1. search_tickets returns Markdown, not JSON."""
 
-    def test_returns_markdown(self) -> None:
+    async def test_returns_markdown(self) -> None:
         data = [_ticket(1), _ticket(2)]
-        result = format_tool_response("glpi_search_ticket_requests", data, {})
+        result = await format_tool_response("glpi_search_ticket_requests", data, {})
         assert "| ID |" in result
         assert result.startswith("**2 resultados**")
         # Should NOT be JSON
@@ -77,10 +77,10 @@ class TestSearchTicketsMarkdown:
 class TestManageTicketsGet:
     """2. manage_tickets get action returns detail format."""
 
-    def test_get_returns_detail(self) -> None:
+    async def test_get_returns_detail(self) -> None:
         ticket = _ticket(42)
         ticket["content"] = "Description"
-        result = format_tool_response("glpi_manage_ticket_operations", ticket, {"action": "get"})
+        result = await format_tool_response("glpi_manage_ticket_operations", ticket, {"action": "get"})
         assert "# Ticket #42" in result
 
 
@@ -92,9 +92,9 @@ class TestManageTicketsGet:
 class TestManageTicketsCreate:
     """3. manage_tickets create action returns success message."""
 
-    def test_create_returns_success(self) -> None:
+    async def test_create_returns_success(self) -> None:
         data = {"id": 100, "message": "Created"}
-        result = format_tool_response("glpi_manage_ticket_operations", data, {"action": "create"})
+        result = await format_tool_response("glpi_manage_ticket_operations", data, {"action": "create"})
         assert "criar ticket" in result
         assert "ID: 100" in result
 
@@ -107,16 +107,16 @@ class TestManageTicketsCreate:
 class TestNoneSearchResponse:
     """4. None response for search tool returns empty message."""
 
-    def test_search_none(self) -> None:
-        result = format_tool_response("glpi_search_ticket_requests", None, {})
+    async def test_search_none(self) -> None:
+        result = await format_tool_response("glpi_search_ticket_requests", None, {})
         assert result == "Nenhum resultado encontrado."
 
-    def test_search_assets_none(self) -> None:
-        result = format_tool_response("glpi_search_asset_inventory", None, {})
+    async def test_search_assets_none(self) -> None:
+        result = await format_tool_response("glpi_search_asset_inventory", None, {})
         assert result == "Nenhum resultado encontrado."
 
-    def test_search_admin_none(self) -> None:
-        result = format_tool_response("glpi_search_admin_resources", None, {})
+    async def test_search_admin_none(self) -> None:
+        result = await format_tool_response("glpi_search_admin_resources", None, {})
         assert result == "Nenhum resultado encontrado."
 
 
@@ -128,9 +128,9 @@ class TestNoneSearchResponse:
 class TestUnknownToolFallback:
     """5. Unknown tool name falls back to json.dumps."""
 
-    def test_unknown_tool(self) -> None:
+    async def test_unknown_tool(self) -> None:
         data = {"key": "value"}
-        result = format_tool_response("glpi_nonexistent_tool", data, {})
+        result = await format_tool_response("glpi_nonexistent_tool", data, {})
         parsed = json.loads(result)
         assert parsed == data
 
@@ -143,12 +143,12 @@ class TestUnknownToolFallback:
 class TestStringPassthrough:
     """6. String data is returned as-is."""
 
-    def test_string_data(self) -> None:
-        result = format_tool_response("glpi_search_ticket_requests", "already markdown", {})
+    async def test_string_data(self) -> None:
+        result = await format_tool_response("glpi_search_ticket_requests", "already markdown", {})
         assert result == "already markdown"
 
-    def test_bridge_string(self) -> None:
-        result = format_tool_response("glpi_read_resource_by_uri", "# Resource Content", {})
+    async def test_bridge_string(self) -> None:
+        result = await format_tool_response("glpi_read_resource_by_uri", "# Resource Content", {})
         assert result == "# Resource Content"
 
 
@@ -160,10 +160,10 @@ class TestStringPassthrough:
 class TestLargeResponse:
     """7. Response exceeding 400KB returns size error message."""
 
-    def test_large_response(self) -> None:
+    async def test_large_response(self) -> None:
         # Create data that will produce a large Markdown output
         tickets = [_ticket(i) for i in range(5000)]
-        result = format_tool_response("glpi_search_ticket_requests", tickets, {"limit": 5000, "offset": 0})
+        result = await format_tool_response("glpi_search_ticket_requests", tickets, {"limit": 5000, "offset": 0})
         # If the formatted output exceeds 400KB, we get the error message
         if "excede" in result:
             assert "400KB" in result or "KB" in result
@@ -198,10 +198,10 @@ class TestToolFormattersRegistry:
     ]
 
     @pytest.mark.parametrize("tool_name", EXPECTED_TOOLS)
-    def test_tool_registered(self, tool_name: str) -> None:
+    async def test_tool_registered(self, tool_name: str) -> None:
         assert tool_name in TOOL_FORMATTERS, f"{tool_name} not found in TOOL_FORMATTERS"
 
-    def test_total_count(self) -> None:
+    async def test_total_count(self) -> None:
         assert len(TOOL_FORMATTERS) == len(self.EXPECTED_TOOLS)
 
 
@@ -213,17 +213,17 @@ class TestToolFormattersRegistry:
 class TestManageAssetsActions:
     """9. manage_assets dispatches correctly for different actions."""
 
-    def test_get_returns_detail(self) -> None:
-        result = format_tool_response("glpi_manage_asset_operations", _asset(), {"action": "get"})
+    async def test_get_returns_detail(self) -> None:
+        result = await format_tool_response("glpi_manage_asset_operations", _asset(), {"action": "get"})
         assert "# Ativo:" in result
 
-    def test_create_returns_success(self) -> None:
-        result = format_tool_response("glpi_manage_asset_operations", {"id": 5}, {"action": "create"})
+    async def test_create_returns_success(self) -> None:
+        result = await format_tool_response("glpi_manage_asset_operations", {"id": 5}, {"action": "create"})
         assert "criar ativo" in result
 
-    def test_get_reservations(self) -> None:
+    async def test_get_reservations(self) -> None:
         reservations = [{"id": 1, "items_id": 10, "begin": "2024-01-01T08:00:00", "end": "2024-01-01T17:00:00", "users_id": 1}]
-        result = format_tool_response("glpi_manage_asset_operations", reservations, {"action": "get_reservations"})
+        result = await format_tool_response("glpi_manage_asset_operations", reservations, {"action": "get_reservations"})
         assert "reservas" in result
 
 
@@ -235,23 +235,23 @@ class TestManageAssetsActions:
 class TestSearchAdminResources:
     """10. search_admin dispatches correctly for different resources."""
 
-    def test_users(self) -> None:
-        result = format_tool_response("glpi_search_admin_resources", [_user()], {"resource": "users"})
+    async def test_users(self) -> None:
+        result = await format_tool_response("glpi_search_admin_resources", [_user()], {"resource": "users"})
         assert "| ID | Login |" in result
 
-    def test_groups(self) -> None:
+    async def test_groups(self) -> None:
         groups = [{"id": 1, "name": "IT"}]
-        result = format_tool_response("glpi_search_admin_resources", groups, {"resource": "groups"})
+        result = await format_tool_response("glpi_search_admin_resources", groups, {"resource": "groups"})
         assert "grupos" in result
 
-    def test_entities(self) -> None:
+    async def test_entities(self) -> None:
         entities = [{"id": 0, "name": "Root"}]
-        result = format_tool_response("glpi_search_admin_resources", entities, {"resource": "entities"})
+        result = await format_tool_response("glpi_search_admin_resources", entities, {"resource": "entities"})
         assert "entidades" in result
 
-    def test_locations(self) -> None:
+    async def test_locations(self) -> None:
         locations = [{"id": 1, "name": "HQ"}]
-        result = format_tool_response("glpi_search_admin_resources", locations, {"resource": "locations"})
+        result = await format_tool_response("glpi_search_admin_resources", locations, {"resource": "locations"})
         assert "localizacoes" in result
 
 
@@ -281,7 +281,7 @@ class TestDispatchManageTicketsActions:
             ("add_followup", "adicionar acompanhamento"),
         ],
     )
-    def test_action(self, action: str, expected_substring: str) -> None:
+    async def test_action(self, action: str, expected_substring: str) -> None:
         if action in ("get", "get_by_number"):
             data = _ticket(1)
             data["content"] = "desc"
@@ -311,7 +311,7 @@ class TestDispatchManageAiActions:
             ("publish", "publish analise IA"),
         ],
     )
-    def test_action(self, action: str, expected_substring: str) -> None:
+    async def test_action(self, action: str, expected_substring: str) -> None:
         if action == "get_result":
             data = {"classification": "Bug"}
         else:
@@ -332,7 +332,7 @@ class TestDispatchSearchAssetsScopes:
             ("reservable", "reservas"),
         ],
     )
-    def test_scope(self, scope: str, expected_substring: str) -> None:
+    async def test_scope(self, scope: str, expected_substring: str) -> None:
         if scope == "stats":
             data = {"total": 10}
         elif scope in ("reservations", "reservable"):
@@ -359,7 +359,7 @@ class TestDispatchManageAssetsActions:
             ("update_reservation", "atualizar reserva"),
         ],
     )
-    def test_action(self, action: str, expected_substring: str) -> None:
+    async def test_action(self, action: str, expected_substring: str) -> None:
         if action in ("get", "get_details"):
             data = _asset(1)
         elif action == "get_reservations":
@@ -382,7 +382,7 @@ class TestDispatchSearchAdminResources:
             ("locations", "localizacoes"),
         ],
     )
-    def test_resource(self, resource: str, expected_substring: str) -> None:
+    async def test_resource(self, resource: str, expected_substring: str) -> None:
         if resource == "users":
             data = [_user(1)]
         elif resource == "groups":
@@ -394,7 +394,7 @@ class TestDispatchSearchAdminResources:
         result = _dispatch_search_admin(data, {"resource": resource, "limit": 10, "offset": 0})
         assert expected_substring in result
 
-    def test_unknown_resource_defaults_to_users(self) -> None:
+    async def test_unknown_resource_defaults_to_users(self) -> None:
         data = [_user(1)]
         result = _dispatch_search_admin(data, {"resource": "unknown_resource", "limit": 10, "offset": 0})
         assert "Login" in result
@@ -414,7 +414,7 @@ class TestDispatchManageAdminCombos:
             ("delete", "entities", "delete entities"),
         ],
     )
-    def test_combo(self, action: str, resource: str, expected_substring: str) -> None:
+    async def test_combo(self, action: str, resource: str, expected_substring: str) -> None:
         if action == "get" and resource == "users":
             data = _user(1)
         elif action == "get":
@@ -436,7 +436,7 @@ class TestDispatchSearchWebhooksScopes:
             ("deliveries", "entregas"),
         ],
     )
-    def test_scope(self, scope: str, expected_substring: str) -> None:
+    async def test_scope(self, scope: str, expected_substring: str) -> None:
         if scope == "stats":
             data = {"total": 10}
         elif scope == "deliveries":
@@ -464,7 +464,7 @@ class TestDispatchManageWebhooksActions:
             ("retry", "retry webhook"),
         ],
     )
-    def test_action(self, action: str, expected_substring: str) -> None:
+    async def test_action(self, action: str, expected_substring: str) -> None:
         if action == "get":
             data = {"id": 1, "name": "WH", "url": "https://example.com", "is_active": True}
         else:
@@ -476,24 +476,24 @@ class TestDispatchManageWebhooksActions:
 class TestFormatterExceptionFallback:
     """19. Formatter exception falls back to json.dumps."""
 
-    def test_formatter_exception_fallback(self) -> None:
+    async def test_formatter_exception_fallback(self) -> None:
         def boom_formatter(data: object, args: object) -> str:
             raise ValueError("boom")
 
         with patch.dict(TOOL_FORMATTERS, {"glpi_search_ticket_requests": boom_formatter}):
             data = [_ticket(1)]
-            result = format_tool_response("glpi_search_ticket_requests", data, {})
+            result = await format_tool_response("glpi_search_ticket_requests", data, {})
             # Should fall back to JSON
             parsed = json.loads(result)
             assert isinstance(parsed, list)
 
-    def test_formatter_runtime_error_fallback(self) -> None:
+    async def test_formatter_runtime_error_fallback(self) -> None:
         def bad_formatter(data: object, args: object) -> str:
             raise RuntimeError("unexpected")
 
         with patch.dict(TOOL_FORMATTERS, {"glpi_search_ticket_requests": bad_formatter}):
             data = {"id": 1}
-            result = format_tool_response("glpi_search_ticket_requests", data, {})
+            result = await format_tool_response("glpi_search_ticket_requests", data, {})
             parsed = json.loads(result)
             assert parsed["id"] == 1
 
@@ -501,52 +501,52 @@ class TestFormatterExceptionFallback:
 class TestFallbackChain:
     """20. Full fallback chain validation."""
 
-    def test_none_non_search_returns_empty(self) -> None:
-        result = format_tool_response("glpi_manage_ticket_operations", None, {})
+    async def test_none_non_search_returns_empty(self) -> None:
+        result = await format_tool_response("glpi_manage_ticket_operations", None, {})
         assert result == ""
 
-    def test_none_search_returns_not_found(self) -> None:
-        result = format_tool_response("glpi_search_ticket_requests", None, {})
+    async def test_none_search_returns_not_found(self) -> None:
+        result = await format_tool_response("glpi_search_ticket_requests", None, {})
         assert result == "Nenhum resultado encontrado."
 
-    def test_unknown_tool_with_none(self) -> None:
-        result = format_tool_response("glpi_unknown", None, {})
+    async def test_unknown_tool_with_none(self) -> None:
+        result = await format_tool_response("glpi_unknown", None, {})
         assert result == ""
 
-    def test_string_always_passthrough(self) -> None:
+    async def test_string_always_passthrough(self) -> None:
         for tool in ["glpi_search_ticket_requests", "glpi_manage_ticket_operations", "glpi_unknown"]:
-            result = format_tool_response(tool, "passthrough", {})
+            result = await format_tool_response(tool, "passthrough", {})
             assert result == "passthrough"
 
 
 class TestBridgeToolsPassthrough:
     """21. Bridge tools handle string and non-string data."""
 
-    def test_list_resources_with_list(self) -> None:
+    async def test_list_resources_with_list(self) -> None:
         resources = [{"uri": "glpi://test", "name": "Test", "description": "Desc"}]
-        result = format_tool_response("glpi_list_available_resources", resources, {})
+        result = await format_tool_response("glpi_list_available_resources", resources, {})
         assert "resources disponiveis" in result
 
-    def test_list_resources_string_passthrough(self) -> None:
-        result = format_tool_response("glpi_list_available_resources", "# Already Markdown", {})
+    async def test_list_resources_string_passthrough(self) -> None:
+        result = await format_tool_response("glpi_list_available_resources", "# Already Markdown", {})
         assert result == "# Already Markdown"
 
-    def test_read_resource_string_passthrough(self) -> None:
-        result = format_tool_response("glpi_read_resource_by_uri", "content here", {})
+    async def test_read_resource_string_passthrough(self) -> None:
+        result = await format_tool_response("glpi_read_resource_by_uri", "content here", {})
         assert result == "content here"
 
-    def test_list_prompts_with_list(self) -> None:
+    async def test_list_prompts_with_list(self) -> None:
         prompts = [{"name": "p1", "description": "d", "category": "c", "arguments": []}]
-        result = format_tool_response("glpi_list_available_prompts", prompts, {})
+        result = await format_tool_response("glpi_list_available_prompts", prompts, {})
         assert "prompts disponiveis" in result
 
-    def test_get_prompt_string(self) -> None:
-        result = format_tool_response("glpi_get_prompt_template", "prompt text", {})
+    async def test_get_prompt_string(self) -> None:
+        result = await format_tool_response("glpi_get_prompt_template", "prompt text", {})
         assert result == "prompt text"
 
-    def test_get_prompt_dict(self) -> None:
+    async def test_get_prompt_dict(self) -> None:
         data = {"content": "test"}
-        result = format_tool_response("glpi_get_prompt_template", data, {})
+        result = await format_tool_response("glpi_get_prompt_template", data, {})
         # Non-string goes through the lambda: str(data)
         assert "content" in result
 
@@ -554,13 +554,13 @@ class TestBridgeToolsPassthrough:
 class TestDefaultArgsFallback:
     """Additional: args=None defaults to empty dict."""
 
-    def test_none_args_defaults(self) -> None:
+    async def test_none_args_defaults(self) -> None:
         data = [_ticket(1)]
         # Should not raise even with args=None
-        result = format_tool_response("glpi_search_ticket_requests", data, None)
+        result = await format_tool_response("glpi_search_ticket_requests", data, None)
         assert "| ID |" in result
 
-    def test_missing_args(self) -> None:
+    async def test_missing_args(self) -> None:
         data = [_ticket(1)]
-        result = format_tool_response("glpi_search_ticket_requests", data)
+        result = await format_tool_response("glpi_search_ticket_requests", data)
         assert "| ID |" in result

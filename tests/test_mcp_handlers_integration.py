@@ -1,18 +1,42 @@
 """
-Integration Tests for MCP Handlers - JSON-RPC 2.0 Protocol
-Testa a integração completa do MCP Handler com as 48 tools
-Conforme SPEC.md seção 4.2 e critérios de aceitação AC01-AC20
+Integration Tests for MCP Handlers - JSON-RPC 2.0 Protocol.
+
+Atualizado para a arquitetura consolidada (SPEC-GLPI-ENHANCE-001/F04):
+- 15 tools consolidadas baseadas em `action`/`resource` (não mais ~48 tools
+  per-action).
+- O envelope de `tools/call` agora retorna o array `content` do protocolo MCP
+  (texto Markdown), não mais `data`/`_execution_metadata`.
+
+Os mocks miram os mesmos singletons usados pelos handlers consolidados
+(ticket_service / webhook_tools / admin_tools / asset_tools).
 """
 
-import pytest
 import asyncio
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
 from src.handlers import mcp_handler
-from src.models.exceptions import GLPIError, ValidationError
+from src.models.exceptions import GLPIError
+
+
+def _result(response):
+    """Garante sucesso e devolve o bloco `result`."""
+    assert "error" not in response, f"erro inesperado: {response.get('error')}"
+    assert "result" in response
+    return response["result"]
+
+
+def _text(response):
+    """Extrai o texto Markdown do envelope content[] de tools/call."""
+    result = _result(response)
+    assert "content" in result, f"sem content[] em {result}"
+    assert result["content"][0]["type"] == "text"
+    return result["content"][0]["text"]
 
 
 class TestMCPHandlersIntegration:
-    """Testes de integração para MCP Handlers JSON-RPC 2.0"""
+    """Testes de integração para MCP Handlers JSON-RPC 2.0 (15 tools consolidadas)."""
 
     @pytest.fixture
     def sample_list_tools_request(self):
@@ -21,82 +45,70 @@ class TestMCPHandlersIntegration:
 
     @pytest.fixture
     def sample_call_tool_request(self):
-        """Request JSON-RPC 2.0 para tools/call"""
+        """Request JSON-RPC 2.0 para tools/call (tool de busca consolidada)"""
         return {
             "jsonrpc": "2.0",
             "method": "tools/call",
-            "params": {"name": "glpi_list_tickets", "arguments": {"limit": 10}},
+            "params": {
+                "name": "glpi_search_ticket_requests",
+                "arguments": {"limit": 10},
+            },
             "id": 2,
         }
 
     @pytest.fixture
     def invalid_request(self):
-        """Request JSON-RPC 2.0 inválido"""
+        """Request JSON-RPC 2.0 com método inexistente"""
         return {"jsonrpc": "2.0", "method": "invalid_method", "id": 3}
 
     @pytest.mark.asyncio
     async def test_tools_list_integration(self, sample_list_tools_request):
-        """Test AC01: tools/list deve retornar todas as 48 tools"""
+        """AC01: tools/list deve retornar as 15 tools consolidadas"""
         response = await mcp_handler.handle_request(sample_list_tools_request)
 
-        # Verificar estrutura JSON-RPC 2.0
         assert response["jsonrpc"] == "2.0"
         assert response["id"] == 1
-        assert "result" in response
-        assert "error" not in response
+        result = _result(response)
 
-        result = response["result"]
         assert "tools" in result
         assert "total_count" in result
         assert "categories" in result
 
-        # Verificar contagem de tools (>= plano original)
-        assert result["total_count"] >= 48
-        assert len(result["tools"]) >= 48
+        # Arquitetura consolidada: 15 tools (SPEC-GLPI-ENHANCE-001/F04)
+        assert result["total_count"] == 15
+        assert len(result["tools"]) == 15
 
-        # Verificar categorias
+        # Categorias consolidadas
         categories = result["categories"]
-        assert categories["tickets"] >= 12
-        assert categories["assets"] >= 12
-        assert categories["admin"] >= 10
-        assert categories["webhooks"] >= 6
+        assert categories["tickets"] >= 3
+        assert categories["assets"] >= 2
+        assert categories["admin"] >= 2
+        assert categories["webhooks"] >= 2
 
     @pytest.mark.asyncio
     async def test_tools_call_integration_success(self, sample_call_tool_request):
-        """Test AC02: tools/call deve executar tools com sucesso"""
+        """AC02: tools/call deve executar a tool e retornar content[] Markdown"""
         with patch(
-            "src.services.ticket_service.ticket_service.list_tickets"
+            "src.services.ticket_service.ticket_service.list_tickets",
+            new_callable=AsyncMock,
         ) as mock_list:
-            # Mock resposta do serviço
             mock_list.return_value = [
-                {"id": 1, "title": "Test Ticket", "status": "new"}
+                {"id": 1, "title": "Test Ticket", "status": 1}
             ]
 
             response = await mcp_handler.handle_request(sample_call_tool_request)
 
-            # Verificar estrutura JSON-RPC 2.0
             assert response["jsonrpc"] == "2.0"
             assert response["id"] == 2
-            assert "result" in response
-            assert "error" not in response
-
-            result = response["result"]
-            assert "data" in result
-            assert "_execution_metadata" in result
-
-            # Verificar metadados de execução
-            metadata = result["_execution_metadata"]
-            assert metadata["tool_name"] == "glpi_list_tickets"
-            assert metadata["category"] == "tickets"
-            assert "execution_time_seconds" in metadata
-            assert "timestamp" in metadata
+            text = _text(response)
+            assert isinstance(text, str) and text  # Markdown não vazio
+            mock_list.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_tools_call_integration_tool_not_found(self, invalid_request):
-        """Test AC03: tools/call deve retornar erro para tool inexistente"""
+        """AC03: método inexistente deve retornar erro -32601"""
         response = await mcp_handler.handle_request(invalid_request)
 
-        # Verificar estrutura de erro JSON-RPC 2.0
         assert response["jsonrpc"] == "2.0"
         assert response["id"] == 3
         assert "error" in response
@@ -110,12 +122,12 @@ class TestMCPHandlersIntegration:
 
     @pytest.mark.asyncio
     async def test_tools_call_integration_validation_error(self):
-        """Test AC04: tools/call deve validar argumentos"""
+        """AC04: tools/call deve validar que arguments é um objeto"""
         invalid_args_request = {
             "jsonrpc": "2.0",
             "method": "tools/call",
             "params": {
-                "name": "glpi_list_tickets",
+                "name": "glpi_search_ticket_requests",
                 "arguments": "invalid_string",  # Deve ser objeto
             },
             "id": 4,
@@ -123,7 +135,6 @@ class TestMCPHandlersIntegration:
 
         response = await mcp_handler.handle_request(invalid_args_request)
 
-        # Verificar erro de validação
         assert "error" in response
         error = response["error"]
         assert error["code"] == -32602  # Invalid params
@@ -134,7 +145,7 @@ class TestMCPHandlersIntegration:
 
     @pytest.mark.asyncio
     async def test_tools_call_integration_missing_tool_name(self):
-        """Test AC05: tools/call deve requerer nome da tool"""
+        """AC05: tools/call deve requerer nome da tool"""
         missing_name_request = {
             "jsonrpc": "2.0",
             "method": "tools/call",
@@ -144,7 +155,6 @@ class TestMCPHandlersIntegration:
 
         response = await mcp_handler.handle_request(missing_name_request)
 
-        # Verificar erro de parâmetro faltando
         assert "error" in response
         error = response["error"]
         assert error["code"] == -32602  # Invalid params
@@ -152,7 +162,7 @@ class TestMCPHandlersIntegration:
 
     @pytest.mark.asyncio
     async def test_jsonrpc_invalid_request_format(self):
-        """Test AC06: Handler deve lidar com requests JSON-RPC inválidos"""
+        """AC06: Handler deve lidar com requests JSON-RPC inválidos"""
         invalid_jsonrpc_request = {
             "method": "tools/list",
             "id": 6,
@@ -161,26 +171,25 @@ class TestMCPHandlersIntegration:
 
         response = await mcp_handler.handle_request(invalid_jsonrpc_request)
 
-        # Verificar erro de formato inválido
         assert "error" in response
         error = response["error"]
         assert error["code"] == -32600  # Invalid Request
 
     @pytest.mark.asyncio
     async def test_tools_by_category_filtering(self):
-        """Test AC07: Deve filtrar tools por categoria corretamente"""
+        """AC07: Deve filtrar tools por categoria corretamente"""
         ticket_tools = mcp_handler.get_tools_by_category("tickets")
         asset_tools = mcp_handler.get_tools_by_category("assets")
         admin_tools = mcp_handler.get_tools_by_category("admin")
         webhook_tools = mcp_handler.get_tools_by_category("webhooks")
 
-        # Verificar quantidades
-        assert len(ticket_tools) >= 12
-        assert len(asset_tools) >= 12
-        assert len(admin_tools) >= 10
-        assert len(webhook_tools) >= 6
+        # Quantidades na arquitetura consolidada
+        assert len(ticket_tools) >= 3
+        assert len(asset_tools) >= 2
+        assert len(admin_tools) >= 2
+        assert len(webhook_tools) >= 2
 
-        # Verificar que todas as tools têm categoria correta
+        # Cada tool deve ter a categoria correta
         for tool in ticket_tools:
             assert tool["category"] == "tickets"
         for tool in asset_tools:
@@ -192,35 +201,31 @@ class TestMCPHandlersIntegration:
 
     @pytest.mark.asyncio
     async def test_tool_info_retrieval(self):
-        """Test AC08: Deve recuperar informações específicas de tool"""
-        list_tickets_info = mcp_handler.get_tool_info("glpi_list_tickets")
+        """AC08: Deve recuperar informações específicas de tool"""
+        info = mcp_handler.get_tool_info("glpi_search_ticket_requests")
 
-        # Verificar estrutura da info
-        assert list_tickets_info is not None
-        assert list_tickets_info["name"] == "glpi_list_tickets"
-        assert list_tickets_info["category"] == "tickets"
-        assert "description" in list_tickets_info
-        assert "input_schema" in list_tickets_info
-        assert "handler" in list_tickets_info
+        assert info is not None
+        assert info["name"] == "glpi_search_ticket_requests"
+        assert info["category"] == "tickets"
+        assert "description" in info
+        assert "input_schema" in info
+        assert "handler" in info
 
-        # Verificar tool inexistente
-        nonexistent_info = mcp_handler.get_tool_info("nonexistent_tool")
-        assert nonexistent_info is None
+        # Tool inexistente
+        assert mcp_handler.get_tool_info("nonexistent_tool") is None
 
     @pytest.mark.asyncio
     async def test_handler_stats_completeness(self):
-        """Test AC09: Stats do handler devem ser completas"""
+        """AC09: Stats do handler devem ser completas"""
         stats = mcp_handler.get_handler_stats()
 
-        # Verificar estrutura das stats
         assert "total_tools" in stats
         assert "categories" in stats
         assert "available_methods" in stats
         assert "protocol" in stats
         assert "last_updated" in stats
 
-        # Verificar valores
-        assert stats["total_tools"] >= 48
+        assert stats["total_tools"] == 15
         assert len(stats["categories"]) >= 4
         assert "tools/list" in stats["available_methods"]
         assert "tools/call" in stats["available_methods"]
@@ -228,21 +233,25 @@ class TestMCPHandlersIntegration:
 
     @pytest.mark.asyncio
     async def test_error_handling_glpi_service_error(self):
-        """Test AC10: Handler deve lidar com erros do serviço GLPI"""
+        """AC10: Handler deve mapear erros do serviço GLPI para JSON-RPC"""
         glpi_error_request = {
             "jsonrpc": "2.0",
             "method": "tools/call",
-            "params": {"name": "glpi_get_ticket", "arguments": {"ticket_id": 99999}},
+            "params": {
+                "name": "glpi_manage_ticket_operations",
+                "arguments": {"action": "get", "ticket_id": 99999},
+            },
             "id": 7,
         }
 
-        with patch("src.services.ticket_service.ticket_service.get_ticket") as mock_get:
-            # Simular erro do serviço GLPI
+        with patch(
+            "src.services.ticket_service.ticket_service.get_ticket",
+            new_callable=AsyncMock,
+        ) as mock_get:
             mock_get.side_effect = GLPIError(404, "Ticket not found")
 
             response = await mcp_handler.handle_request(glpi_error_request)
 
-            # Verificar tratamento de erro JSON-RPC compliance
             assert "error" in response
             error = response["error"]
             assert error["code"] == -32004  # Not found mapeado conforme SPEC
@@ -251,79 +260,77 @@ class TestMCPHandlersIntegration:
 
     @pytest.mark.asyncio
     async def test_error_handling_validation_error(self):
-        """Test AC11: Handler deve lidar com erros de validação"""
+        """AC11: Handler deve lidar com erros de validação (-32602)"""
         validation_error_request = {
             "jsonrpc": "2.0",
             "method": "tools/call",
             "params": {
-                "name": "glpi_create_ticket",
+                "name": "glpi_manage_ticket_operations",
                 "arguments": {
-                    "title": "",  # Título vazio deve falhar validação
+                    "action": "create",
+                    "title": "",  # Título vazio deve falhar validação no handler
                     "description": "Test",
                 },
             },
             "id": 8,
         }
 
-        with patch(
-            "src.services.ticket_service.ticket_service.create_ticket"
-        ) as mock_create:
-            # Simular erro de validação
-            mock_create.side_effect = ValidationError("Title is required", "title")
+        response = await mcp_handler.handle_request(validation_error_request)
 
-            response = await mcp_handler.handle_request(validation_error_request)
-
-            # Verificar tratamento de erro
-            assert "error" in response
-            error = response["error"]
-            assert error["code"] == -32602  # Invalid params
-            assert (
-                "validation" in error["message"].lower()
-                or "required" in error["message"].lower()
-            )
+        assert "error" in response
+        error = response["error"]
+        assert error["code"] == -32602  # Invalid params
+        assert (
+            "validation" in error["message"].lower()
+            or "required" in error["message"].lower()
+            or "title" in error["message"].lower()
+        )
 
     @pytest.mark.asyncio
     async def test_concurrent_requests_handling(self):
-        """Test AC12: Handler deve lidar com requisições concorrentes"""
+        """AC12: Handler deve lidar com requisições concorrentes"""
         requests = [
             {"jsonrpc": "2.0", "method": "tools/list", "id": i} for i in range(10)
         ]
 
-        # Executar requisições concorrentemente
         tasks = [mcp_handler.handle_request(req) for req in requests]
         responses = await asyncio.gather(*tasks)
 
-        # Verificar que todas as respostas são válidas
         for i, response in enumerate(responses):
             assert response["jsonrpc"] == "2.0"
             assert response["id"] == i
-            assert "result" in response
-            assert response["result"]["total_count"] >= 48
+            result = _result(response)
+            assert result["total_count"] == 15
 
     @pytest.mark.asyncio
     async def test_response_truncation_large_data(self):
-        """Test AC13: Respostas grandes devem ser truncadas (RNF01)"""
+        """AC13: Respostas grandes devem ser tratadas sem erro (RNF01)"""
         large_data_request = {
             "jsonrpc": "2.0",
             "method": "tools/call",
-            "params": {"name": "glpi_list_tickets", "arguments": {"limit": 1000}},
+            "params": {
+                "name": "glpi_search_ticket_requests",
+                "arguments": {"limit": 50},  # Hard cap do schema é 50
+            },
             "id": 9,
         }
 
         with patch(
-            "src.services.ticket_service.ticket_service.list_tickets"
+            "src.services.ticket_service.ticket_service.list_tickets",
+            new_callable=AsyncMock,
         ) as mock_list:
-            # Simular resposta grande
-            mock_list.return_value = [{"id": 1, "name": "Large Ticket"}]
+            mock_list.return_value = [
+                {"id": i, "name": f"Ticket {i}"} for i in range(50)
+            ]
 
             response = await mcp_handler.handle_request(large_data_request)
 
-            # Verificar truncamento
-            assert "result" in response
+            # Resposta válida com content[] (truncamento ocorre internamente)
+            assert _text(response)
 
     @pytest.mark.asyncio
     async def test_input_sanitization_security(self):
-        """Test AC14: Inputs devem ser sanitizados (RNF02)"""
+        """AC14: Inputs devem ser sanitizados/validados (RNF02)"""
         xss_request = {
             "jsonrpc": "2.0",
             "method": "tools/call",
@@ -335,64 +342,63 @@ class TestMCPHandlersIntegration:
         }
 
         with patch(
-            "src.services.ticket_service.ticket_service.search_tickets"
+            "src.services.ticket_service.ticket_service.search_tickets",
+            new_callable=AsyncMock,
         ) as mock_search:
-            # Verificar que input sanitizado é passado para o serviço
             mock_search.return_value = []
 
             response = await mcp_handler.handle_request(xss_request)
 
-            # Verificar comportamento de segurança correto (defense-in-depth)
-            # Input malicioso é sanitizado e então corretamente rejeitado por ser muito curto
+            # Defense-in-depth: input malicioso é sanitizado e rejeitado por
+            # ficar curto demais após a remoção das tags.
             assert "error" in response
             error = response["error"]
             assert error["code"] == -32602  # Invalid params
             assert "at least 2 characters" in error["message"]
-            # Nota: Serviço não é chamado devido à validação correta (defense-in-depth)
 
     @pytest.mark.asyncio
     async def test_similarity_algorithm_integration(self):
-        """Test AC15: Algoritmo de similaridade deve funcionar (RNF03)"""
+        """AC15: find_similar via manage_ticket_operations (RNF03)"""
         similarity_request = {
             "jsonrpc": "2.0",
             "method": "tools/call",
             "params": {
-                "name": "glpi_find_similar_tickets",
-                "arguments": {"ticket_id": 1, "threshold": 0.5},
+                "name": "glpi_manage_ticket_operations",
+                "arguments": {
+                    "action": "find_similar",
+                    "ticket_id": 1,
+                    "threshold": 0.5,
+                },
             },
             "id": 11,
         }
 
         with patch(
-            "src.services.ticket_service.ticket_service.find_similar_tickets"
+            "src.services.ticket_service.ticket_service.find_similar_tickets",
+            new_callable=AsyncMock,
         ) as mock_similarity:
-            # Mock resposta de similaridade
             mock_similarity.return_value = [
                 {"id": 2, "similarity": 0.8, "title": "Similar ticket"}
             ]
 
             response = await mcp_handler.handle_request(similarity_request)
 
-            # Verificar processamento de similaridade
-            assert "result" in response
-            result = response["result"]
-            assert "data" in result
-
-            # Verificar que parâmetros de similaridade foram usados
-            mock_similarity.assert_called_once()
-            call_args = mock_similarity.call_args[1]
-            assert call_args["ticket_id"] == 1
-            assert call_args["threshold"] == 0.5
+            assert _text(response)
+            mock_similarity.assert_awaited_once()
+            call_kwargs = mock_similarity.call_args.kwargs
+            assert call_kwargs["ticket_id"] == 1
+            assert call_kwargs["threshold"] == 0.5
 
     @pytest.mark.asyncio
     async def test_webhook_lifecycle_integration(self):
-        """Test AC16: Lifecycle de webhooks deve funcionar"""
+        """AC16: criação de webhook via manage_webhook_integrations"""
         create_webhook_request = {
             "jsonrpc": "2.0",
             "method": "tools/call",
             "params": {
-                "name": "glpi_create_webhook",
+                "name": "glpi_manage_webhook_integrations",
                 "arguments": {
+                    "action": "create",
                     "name": "Test Webhook",
                     "url": "https://example.com/webhook",
                     "event_type": "ticket.created",
@@ -401,31 +407,47 @@ class TestMCPHandlersIntegration:
             "id": 12,
         }
 
-        response = await mcp_handler.handle_request(create_webhook_request)
+        with patch(
+            "src.tools.webhooks.webhook_tools.create_webhook",
+            new_callable=AsyncMock,
+        ) as mock_create:
+            mock_create.return_value = {
+                "id": "abc123",
+                "name": "Test Webhook",
+                "url": "https://example.com/webhook",
+                "event_type": "ticket.created",
+            }
 
-        # Verificar criação de webhook
-        assert "result" in response
-        result = response["result"]
-        assert "data" in result
-        assert result["data"]["name"] == "Test Webhook"
-        assert result["data"]["url"] == "https://example.com/webhook"
-        assert result["data"]["event_type"] == "ticket.created"
+            response = await mcp_handler.handle_request(create_webhook_request)
+
+            assert _text(response)
+            mock_create.assert_awaited_once()
+            ck = mock_create.call_args.kwargs
+            assert ck["name"] == "Test Webhook"
+            assert ck["url"] == "https://example.com/webhook"
+            assert ck["event_type"] == "ticket.created"
 
     @pytest.mark.asyncio
     async def test_admin_user_management_integration(self):
-        """Test AC17: Gerenciamento de usuários deve funcionar"""
+        """AC17: criação de usuário via manage_admin_resources"""
         create_user_request = {
             "jsonrpc": "2.0",
             "method": "tools/call",
             "params": {
-                "name": "glpi_create_user",
-                "arguments": {"name": "Test User", "email": "test@example.com"},
+                "name": "glpi_manage_admin_resources",
+                "arguments": {
+                    "resource": "users",
+                    "action": "create",
+                    "name": "Test User",
+                    "email": "test@example.com",
+                },
             },
             "id": 13,
         }
 
         with patch(
-            "src.services.admin_service.admin_service.create_user"
+            "src.tools.admin.admin_tools.create_user",
+            new_callable=AsyncMock,
         ) as mock_create_user:
             mock_create_user.return_value = {
                 "id": 123,
@@ -435,33 +457,33 @@ class TestMCPHandlersIntegration:
 
             response = await mcp_handler.handle_request(create_user_request)
 
-            # Verificar criação de usuário
-            assert "result" in response
-            result = response["result"]
-            assert "data" in result
-            assert result["data"]["email"] == "test@example.com"
+            assert _text(response)
+            mock_create_user.assert_awaited_once()
+            assert mock_create_user.call_args.kwargs["email"] == "test@example.com"
 
     @pytest.mark.asyncio
     async def test_asset_reservation_integration(self):
-        """Test AC18: Reservas de assets devem funcionar"""
+        """AC18: criação de reserva via manage_asset_operations"""
         create_reservation_request = {
             "jsonrpc": "2.0",
             "method": "tools/call",
             "params": {
-                "name": "glpi_create_reservation",
+                "name": "glpi_manage_asset_operations",
                 "arguments": {
+                    "action": "create_reservation",
                     "asset_type": "Computer",
                     "asset_id": 456,
                     "user_id": 123,
-                    "start_date": "2024-01-01",
-                    "end_date": "2024-01-02",
+                    "date_start": "2026-01-01 08:00:00",
+                    "date_end": "2026-01-02 17:00:00",
                 },
             },
             "id": 14,
         }
 
         with patch(
-            "src.services.asset_service.asset_service.create_reservation"
+            "src.tools.assets.asset_tools.create_reservation",
+            new_callable=AsyncMock,
         ) as mock_reservation:
             mock_reservation.return_value = {
                 "id": 789,
@@ -472,55 +494,55 @@ class TestMCPHandlersIntegration:
 
             response = await mcp_handler.handle_request(create_reservation_request)
 
-            # Verificar criação de reserva
-            assert "result" in response
-            result = response["result"]
-            assert "data" in result
-            assert result["data"]["asset_id"] == 456
-            assert result["data"]["status"] == "confirmed"
+            assert _text(response)
+            mock_reservation.assert_awaited_once()
+            assert mock_reservation.call_args.kwargs["asset_id"] == 456
 
     @pytest.mark.asyncio
     async def test_ticket_followup_integration(self):
-        """Test AC19: Acompanhamentos de tickets devem funcionar"""
+        """AC19: acompanhamento de ticket via manage_ticket_operations"""
         followup_request = {
             "jsonrpc": "2.0",
             "method": "tools/call",
             "params": {
-                "name": "glpi_add_ticket_followup",
-                "arguments": {"ticket_id": 1, "content": "Followup content"},
+                "name": "glpi_manage_ticket_operations",
+                "arguments": {
+                    "action": "add_followup",
+                    "ticket_id": 1,
+                    "content": "Followup content",
+                },
             },
             "id": 15,
         }
 
         with patch(
-            "src.services.ticket_service.ticket_service.add_ticket_followup"
+            "src.services.ticket_service.ticket_service.add_ticket_followup",
+            new_callable=AsyncMock,
         ) as mock_followup:
             mock_followup.return_value = {
                 "id": 999,
                 "ticket_id": 1,
                 "content": "Followup content",
-                "date": "2024-01-01",
+                "date": "2026-01-01",
             }
 
             response = await mcp_handler.handle_request(followup_request)
 
-            # Verificar adição de acompanhamento
-            assert "result" in response
-            result = response["result"]
-            assert "data" in result
-            assert result["data"]["ticket_id"] == 1
-            assert result["data"]["content"] == "Followup content"
+            assert _text(response)
+            mock_followup.assert_awaited_once()
+            assert mock_followup.call_args.kwargs["ticket_id"] == 1
 
     @pytest.mark.asyncio
     async def test_complete_workflow_integration(self):
-        """Test AC20: Workflow completo deve funcionar end-to-end"""
+        """AC20: workflow create -> list -> close end-to-end (tools consolidadas)"""
         # 1. Criar ticket
         create_request = {
             "jsonrpc": "2.0",
             "method": "tools/call",
             "params": {
-                "name": "glpi_create_ticket",
+                "name": "glpi_manage_ticket_operations",
                 "arguments": {
+                    "action": "create",
                     "title": "Integration Test Ticket",
                     "description": "Testing complete workflow",
                 },
@@ -529,54 +551,60 @@ class TestMCPHandlersIntegration:
         }
 
         with patch(
-            "src.services.ticket_service.ticket_service.create_ticket"
+            "src.services.ticket_service.ticket_service.create_ticket",
+            new_callable=AsyncMock,
         ) as mock_create:
             mock_create.return_value = {"id": 1001, "title": "Integration Test Ticket"}
 
             create_response = await mcp_handler.handle_request(create_request)
-            assert "result" in create_response
+            assert _text(create_response)
 
-            # 2. Listar tickets (deve incluir o criado)
+            # 2. Listar tickets
             list_request = {
                 "jsonrpc": "2.0",
                 "method": "tools/call",
-                "params": {"name": "glpi_list_tickets", "arguments": {"limit": 10}},
+                "params": {
+                    "name": "glpi_search_ticket_requests",
+                    "arguments": {"limit": 10},
+                },
                 "id": 17,
             }
 
             with patch(
-                "src.services.ticket_service.ticket_service.list_tickets"
+                "src.services.ticket_service.ticket_service.list_tickets",
+                new_callable=AsyncMock,
             ) as mock_list:
                 mock_list.return_value = [
-                    {"id": 1001, "title": "Integration Test Ticket", "status": "new"}
+                    {"id": 1001, "title": "Integration Test Ticket", "status": 1}
                 ]
 
                 list_response = await mcp_handler.handle_request(list_request)
-                assert "result" in list_response
-                assert len(list_response["result"]["data"]) == 1
+                assert _text(list_response)
 
                 # 3. Fechar ticket
                 close_request = {
                     "jsonrpc": "2.0",
                     "method": "tools/call",
                     "params": {
-                        "name": "glpi_close_ticket",
+                        "name": "glpi_manage_ticket_operations",
                         "arguments": {
+                            "action": "close",
                             "ticket_id": 1001,
-                            "resolution": "Test completed",
+                            "solution": "Test completed",
                         },
                     },
                     "id": 18,
                 }
 
                 with patch(
-                    "src.services.ticket_service.ticket_service.close_ticket"
+                    "src.services.ticket_service.ticket_service.close_ticket",
+                    new_callable=AsyncMock,
                 ) as mock_close:
-                    mock_close.return_value = {"id": 1001, "status": "closed"}
+                    mock_close.return_value = {"id": 1001, "status": 6}
 
                     close_response = await mcp_handler.handle_request(close_request)
-                    assert "result" in close_response
-                    assert close_response["result"]["data"]["status"] == "closed"
+                    assert _text(close_response)
+                    mock_close.assert_awaited_once()
 
 
 if __name__ == "__main__":

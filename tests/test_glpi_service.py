@@ -111,17 +111,17 @@ class TestTickets:
             "id": 1,
             "name": "Updated",
             "title": "Updated Title",
-            "status": "assigned",
+            "status": 2,  # GLPI 11: status é código int (2=Em atendimento/assigned)
             "priority": 4
         }
 
         result = await glpi_service.update_ticket(
             ticket_id=1,
             title="Updated Title",
-            status="assigned"
+            status=2
         )
         assert result.title == "Updated Title"
-        assert result.status == "assigned"
+        assert result.status == 2
 
     @pytest.mark.asyncio
     async def test_delete_ticket_success(self, glpi_service):
