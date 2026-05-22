@@ -13,6 +13,8 @@ used at query time; ``embedding_model`` is stored per row so Phase 2 can guard i
 
 from __future__ import annotations
 
+import json
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -25,7 +27,10 @@ EmbedStrategy = Literal["full", "form_description"]
 
 # Resolve .env next to this package so config loads regardless of the CWD the
 # pipeline is invoked from (e.g. `python -m knowledge_base.ingest_tickets`).
-_ENV_FILE = str(Path(__file__).with_name(".env"))
+# Community/standalone fallback reads the SINGLE root .env (.base-code/.env),
+# shared with the MCP — never a per-module .env. Our multi-instance deploy uses
+# the central per-instance JSON (GLPI_MCP_CONFIG) instead; see get_settings().
+_ENV_FILE = str(Path(__file__).resolve().parents[1] / ".env")
 
 # Both supported models emit 2560-dim vectors (a local vLLM embedding model, or
 # OpenAI text-embedding-3-large with dimensions=2560). Keeping the default
@@ -121,16 +126,70 @@ class KbSettings(BaseSettings):
 
 
 class Settings:
-    """Aggregated settings; instantiate once per process via ``get_settings``."""
+    """Aggregated settings. Built from the central per-instance JSON
+    (GLPI_MCP_CONFIG -> knowledge_base.{embedding,ingestion}) when present, else
+    from environment variables (community / standalone fallback)."""
 
-    def __init__(self) -> None:
-        self.pg = PgSettings()
-        self.kb = KbSettings()
-        self.vllm = VllmSettings()
-        self.openai = OpenAISettings()
-        self.provider: Provider = EmbeddingSettings().provider
+    def __init__(
+        self,
+        *,
+        pg: PgSettings | None = None,
+        vllm: VllmSettings | None = None,
+        openai: OpenAISettings | None = None,
+        kb: KbSettings | None = None,
+        provider: Provider | None = None,
+    ) -> None:
+        self.pg = pg or PgSettings()
+        self.kb = kb or KbSettings()
+        self.vllm = vllm or VllmSettings()
+        self.openai = openai or OpenAISettings()
+        self.provider: Provider = provider or EmbeddingSettings().provider
+
+    @classmethod
+    def from_central(cls, data: dict) -> Settings:
+        """Build from the MCP's central config: knowledge_base.embedding (shared
+        with search) + knowledge_base.ingestion (ETL-specific)."""
+        kb = data.get("knowledge_base", {}) or {}
+        emb = kb.get("embedding", {}) or {}
+        ing = kb.get("ingestion", {}) or {}
+        provider: Provider = emb.get("provider", "vllm")
+        vllm = VllmSettings(
+            base_url=emb.get("base_url", ""),
+            api_key=SecretStr(emb.get("api_key", "")),
+            model=emb.get("model", "/model"),
+            dimensions=int(emb.get("dimensions", 2560)),
+        )
+        openai = OpenAISettings(
+            api_key=SecretStr(emb.get("api_key", "") if provider == "openai" else ""),
+            model=emb.get("model", "text-embedding-3-large"),
+            dimensions=int(emb.get("dimensions", 2560)),
+        )
+        pgd = ing.get("pg", {}) or {}
+        pg = PgSettings(
+            host=pgd.get("host", "localhost"),
+            port=int(pgd.get("port", 5432)),
+            db=pgd.get("db", "glpi_kb"),
+            user=pgd.get("user", "glpi_kb"),
+            password=SecretStr(pgd.get("password", "")),
+        )
+        kbset = KbSettings(
+            max_age_months=int(ing.get("max_age_months", 18)),
+            ticket_statuses=str(ing.get("ticket_statuses", "5,6")),
+            embed_strategy=ing.get("embed_strategy", "full"),
+            source_label=ing.get("source_label", "glpi"),
+            ssh_host=ing.get("ssh_host", ""),
+            remote_db_config=ing.get("remote_db_config", "/etc/glpi/config_db.php"),
+        )
+        return cls(pg=pg, vllm=vllm, openai=openai, kb=kbset, provider=provider)
 
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
+    """Central JSON (GLPI_MCP_CONFIG) with an `ingestion` section wins; otherwise
+    the environment fallback (for community/standalone use)."""
+    cfg_path = os.environ.get("GLPI_MCP_CONFIG")
+    if cfg_path and Path(cfg_path).exists():
+        data = json.loads(Path(cfg_path).read_text(encoding="utf-8"))
+        if (data.get("knowledge_base") or {}).get("ingestion"):
+            return Settings.from_central(data)
     return Settings()

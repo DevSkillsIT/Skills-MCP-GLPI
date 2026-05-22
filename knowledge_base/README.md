@@ -35,9 +35,20 @@ vector_store.py      hash-gated upsert into pgvector + recency purge + sync_stat
 | `schema.sql` | `tickets` table (`halfvec(2560)`, FTS, HNSW + GIN) + `sync_state`. |
 | `ingest_tickets.py` | Orchestrator CLI: extract → normalize → gate → embed → upsert. |
 
-## Configuration (`.env`)
+## Configuration (centralized — no per-module .env)
+
+Config comes from the MCP's central config, ONE place:
+
+- **Multi-instance (recommended):** the `knowledge_base.ingestion` section of the
+  per-instance JSON (`GLPI_MCP_CONFIG`), sharing `knowledge_base.embedding` with
+  search. Example shape: `knowledge_base.ingestion = {pg:{host,port,db,user,
+  password}, source_label, ssh_host, remote_db_config, ticket_statuses,
+  max_age_months, embed_strategy}`.
+- **Community / standalone fallback:** the SINGLE root `.env` (`.base-code/.env`,
+  shared with the MCP) using the env vars below — never a per-module .env.
 
 ```dotenv
+# --- root .env fallback (community) ---
 # pgvector target
 PG_HOST=localhost
 PG_PORT=5432

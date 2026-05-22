@@ -44,5 +44,18 @@
       "lang": "pt-BR",
       "description": "Forum da comunidade. enabled=false: desligada sem remover do arquivo."
     }
-  ]
+  ],
+  "ingestion": {
+    "_comment": "Optional — only for the Phase-1 ETL that BUILDS a GLPI tickets KB. Reuses embedding above. Omit on instances that only consume external sources.",
+    "pg": {
+      "host": "localhost", "port": 5432, "db": "glpi_kb",
+      "user": "glpi_kb", "password": "CHANGE_ME"
+    },
+    "source_label": "glpi",
+    "ssh_host": "your-glpi-ssh-alias",
+    "remote_db_config": "/etc/glpi/config_db.php",
+    "ticket_statuses": "5,6",
+    "max_age_months": 18,
+    "embed_strategy": "full"
+  }
 }

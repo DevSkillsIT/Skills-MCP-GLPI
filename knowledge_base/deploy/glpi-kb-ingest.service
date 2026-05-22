@@ -7,7 +7,9 @@ Wants=network-online.target
 Type=oneshot
 # Adjust to your deployment:
 WorkingDirectory=/opt/Skills-MCP-GLPI
+# Central per-instance config (knowledge_base.ingestion section). Without it,
+# the pipeline falls back to the single root .env.
+Environment=GLPI_MCP_CONFIG=/path/to/instance/glpi-config.json
 ExecStart=/opt/Skills-MCP-GLPI/.venv/bin/python -m knowledge_base.ingest_tickets
-# The pipeline reads knowledge_base/.env for all configuration.
 Nice=10
 TimeoutStartSec=1800
