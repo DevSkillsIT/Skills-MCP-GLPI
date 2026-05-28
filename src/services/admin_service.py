@@ -136,6 +136,35 @@ class AdminService:
             logger.error(f"Failed to list users: {e}")
             raise GLPIError(500, f"Failed to list users: {str(e)}")
     
+    async def _set_user_email(self, user_id: int, email: str) -> None:
+        """Grava o email do usuário na tabela glpi_useremails (itemtype UserEmail).
+
+        @MX:REASON: o campo email do payload User é ignorado pelo GLPI; emails
+        vivem em UserEmail. Atualiza o email default existente ou cria um novo.
+        """
+        email = email.strip()
+        try:
+            existing = await self.client.get_subitems("User", user_id, "UserEmail")
+        except Exception:  # noqa: BLE001
+            existing = []
+
+        default = next(
+            (e for e in (existing or []) if str(e.get("is_default")) in ("1", "True")),
+            None,
+        )
+        target = default or (existing[0] if existing else None)
+
+        if target and target.get("id"):
+            await self.client.put(
+                f"/apirest.php/UserEmail/{target['id']}",
+                {"email": email, "is_default": 1},
+            )
+        else:
+            await self.client.post(
+                "/apirest.php/UserEmail",
+                {"users_id": user_id, "email": email, "is_default": 1},
+            )
+
     async def get_user(self, user_id: int) -> Dict[str, Any]:
         """
         Obtém detalhes completos de um usuário.
@@ -183,7 +212,24 @@ class AdminService:
                 user["entities"] = entities
             except Exception:
                 user["entities"] = []
-            
+
+            # @MX:NOTE: GLPI guarda emails na tabela glpi_useremails (itemtype
+            # UserEmail), NAO no objeto User. O campo "email" do User vem vazio.
+            # @MX:REASON: get_user reportava Email N/A mesmo apos create/update
+            # com email -> success masking. Lemos o email real do subitem.
+            try:
+                emails = await self.client.get_subitems("User", user_id, "UserEmail")
+                user["emails"] = emails or []
+                default_email = next(
+                    (e.get("email") for e in emails if str(e.get("is_default")) in ("1", "True")),
+                    None,
+                )
+                resolved = default_email or (emails[0].get("email") if emails else None)
+                if resolved:
+                    user["email"] = resolved
+            except Exception:
+                user.setdefault("emails", [])
+
             return user
             
         except NotFoundError:
@@ -276,10 +322,9 @@ class AdminService:
         
         if realname:
             payload["realname"] = realname.strip()
-        
-        if email:
-            payload["email"] = email.strip()
-        
+
+        # @MX:NOTE: email NAO entra no payload do User (GLPI ignora); gravado
+        # via _set_user_email apos a criacao (tabela glpi_useremails).
         if phone:
             payload["phone"] = phone.strip()
         
@@ -324,7 +369,14 @@ class AdminService:
                     await self.client.post("/apirest.php/Group_User", group_payload)
                 except Exception as e:
                     logger.warning(f"Failed to add user {result['id']} to group {group_id}: {e}")
-            
+
+            # Gravar email na tabela glpi_useremails (nao persiste via payload User)
+            if email:
+                try:
+                    await self._set_user_email(result["id"], email)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"Failed to set email for user {result['id']}: {e}")
+
             # Retornar usuário completo
             created_user = await self.get_user(result["id"])
             
@@ -351,21 +403,33 @@ class AdminService:
         
         # Remover campos que não devem ser atualizados diretamente
         protected_fields = ["id", "date_creation", "date_mod"]
-        update_payload = {k: v for k, v in kwargs.items() if k not in protected_fields}
-        
-        if not update_payload:
+        # email é tratado à parte (tabela glpi_useremails), não vai no PUT do User
+        email = kwargs.get("email")
+        if email and "@" not in str(email):
+            raise ValidationError("Invalid email format", "email")
+        update_payload = {
+            k: v for k, v in kwargs.items()
+            if k not in protected_fields and k != "email"
+        }
+
+        if not update_payload and not email:
             raise ValidationError("No valid fields to update", "payload")
-        
+
         try:
-            logger.info(f"Updating user {user_id} with fields: {list(update_payload.keys())}")
-            await self.client.put(f"/apirest.php/User/{user_id}", update_payload)
-            
+            if update_payload:
+                logger.info(f"Updating user {user_id} with fields: {list(update_payload.keys())}")
+                await self.client.put(f"/apirest.php/User/{user_id}", update_payload)
+
+            # Email persistido via glpi_useremails (não persiste via PUT do User)
+            if email:
+                await self._set_user_email(user_id, str(email))
+
             # Retornar usuário atualizado
             updated_user = await self.get_user(user_id)
-            
+
             logger.info(f"User {user_id} updated successfully")
             return updated_user
-            
+
         except Exception as e:
             logger.error(f"Failed to update user {user_id}: {e}")
             raise GLPIError(500, f"Failed to update user: {str(e)}")

@@ -2,10 +2,40 @@
 Modelos Pydantic para validação de dados GLPI.
 """
 
+import re
+
 from pydantic import BaseModel, Field, field_validator, ConfigDict
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
+
+
+def _coerce_glpi_id(v):
+    """Extrai o id inteiro de um campo GLPI que pode vir expandido.
+
+    GLPI com expand_dropdowns=true retorna foreign keys como texto
+    ('RAMADA (#0)', 'marcele.faria (#378)') em vez do id cru. Aceita
+    tambem int, string numerica e o dict de dropdown ({'id': N}).
+    Retorna None quando nao ha id parseavel.
+    """
+    if v is None or v == "":
+        return None
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int):
+        return v
+    if isinstance(v, dict):
+        return _coerce_glpi_id(v.get("id"))
+    if isinstance(v, str):
+        # 'Nome (#123)' -> 123
+        m = re.search(r"#(\d+)", v)
+        if m:
+            return int(m.group(1))
+        # string puramente numerica
+        if v.strip().lstrip("-").isdigit():
+            return int(v.strip())
+        return None
+    return None
 
 
 class MCPRequest(BaseModel):
@@ -96,6 +126,17 @@ class Ticket(GLPIEntity):
             return int(v)
         except (TypeError, ValueError):
             return None
+
+    @field_validator("entities_id", "users_id_recipient", "assigned_to", mode="before")
+    @classmethod
+    def coerce_fk_id(cls, v):
+        """Aceita FKs expandidas ('RAMADA (#0)') alem de id cru.
+
+        @MX:REASON: get_ticket usa expand_dropdowns; sem isto os prompts
+        glpi_ticket_summary e glpi_incident_investigation crashavam com
+        int_parsing em 'RAMADA (#0)' / 'marcele.faria (#378)'.
+        """
+        return _coerce_glpi_id(v)
 
 
 class Asset(GLPIEntity):

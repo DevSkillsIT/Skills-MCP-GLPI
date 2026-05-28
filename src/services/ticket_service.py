@@ -282,8 +282,20 @@ class TicketService:
             "use_notification": 1
         }
         
-        await glpi_client.post("/apirest.php/Ticket_User", data=ticket_user_data)
-        
+        try:
+            await glpi_client.post("/apirest.php/Ticket_User", data=ticket_user_data)
+        except GLPIError as e:
+            # GLPI rejeita vinculo Ticket_User duplicado com ERROR_GLPI_ADD e detalhe
+            # vazio. Traduz para mensagem acionavel em vez de repassar o codigo cru.
+            if "ERROR_GLPI_ADD" in str(e):
+                raise GLPIError(
+                    409,
+                    f"Nao foi possivel atribuir o tecnico {assignee_id} ao ticket {ticket_id}: "
+                    f"o tecnico ja esta atribuido a este chamado ou o ID de usuario e invalido. "
+                    f"Use glpi_search_admin_resources(resource='users') para obter IDs de tecnicos validos."
+                ) from e
+            raise
+
         # Retornar ticket atualizado
         return await self.get_ticket(ticket_id)
     

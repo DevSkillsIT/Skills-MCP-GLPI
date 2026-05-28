@@ -397,9 +397,19 @@ class GLPIService:
         logger.info("Listing entities")
         result = await self.client.get("/apirest.php/Entity", params=params)
 
+        # @MX:REASON: GET /apirest.php/Entity retorna uma LISTA direta; o codigo
+        # so tratava dict-com-data -> list_entities sempre vazia (entity_name
+        # nunca resolvia, ex. asset_roi/cost falhavam ou caiam para global).
+        if isinstance(result, list):
+            items = result
+        elif isinstance(result, dict):
+            items = result.get("data", [])
+        else:
+            items = []
+
         entities = []
-        if isinstance(result, dict) and "data" in result:
-            for item in result.get("data", []):
+        for item in items:
+            if isinstance(item, dict) and "id" in item:
                 entities.append(Entity(**item))
         return entities
 

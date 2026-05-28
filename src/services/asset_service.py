@@ -538,7 +538,12 @@ class AssetService:
                 asset["history"] = logs
             except Exception:
                 asset["history"] = []
-            
+
+            # @MX:NOTE: traduz FKs cruas (states_id=0, locations_id=0...) para nomes.
+            # @MX:REASON: o get exibia codigos crus; search ja mostrava nomes ->
+            # inconsistencia confusa para LLM. Resolve via dropdown_cache.
+            await self._enrich_asset_names(asset)
+
             return asset
             
         except NotFoundError:
@@ -546,7 +551,36 @@ class AssetService:
         except Exception as e:
             logger.error(f"Failed to get {asset_type} {asset_id}: {e}")
             raise GLPIError(500, f"Failed to get asset: {str(e)}")
-    
+
+    async def _enrich_asset_names(self, asset: Dict[str, Any]) -> None:
+        """Resolve FKs do ativo (states/locations/entities/...) para nomes.
+
+        Popula chaves *_name consumidas por format_asset_detail. Tolerante a
+        falhas: nunca quebra o get por causa da tradução.
+        """
+        if not isinstance(asset, dict):
+            return
+        from src.services.dropdown_cache import dropdown_cache
+
+        mapping = {
+            "states_id": ("State", "states_name"),
+            "locations_id": ("Location", "locations_name"),
+            "entities_id": ("Entity", "entities_name"),
+            "manufacturers_id": ("Manufacturer", "manufacturers_name"),
+            "users_id": ("User", "users_name"),
+            "groups_id": ("Group", "groups_name"),
+        }
+        for id_key, (itemtype, name_key) in mapping.items():
+            raw = asset.get(id_key)
+            if raw in (None, "", 0, "0"):
+                continue
+            try:
+                name = await dropdown_cache.get_name(itemtype, raw, fallback="")
+                if name:
+                    asset[name_key] = name
+            except Exception:  # noqa: BLE001
+                continue
+
     async def create_asset(
         self,
         asset_type: str,
@@ -1221,14 +1255,32 @@ class AssetService:
         except ValueError:
             raise ValidationError("Invalid date format. Use YYYY-MM-DD HH:MM:SS", "date_format")
         
-        # Verificar conflitos de reserva
-        existing_reservations = await self.get_asset_reservations(
-            asset_type, asset_id, date_start, date_end
-        )
-        
-        if existing_reservations:
-            raise ValidationError("Asset already reserved for this period", "reservation_conflict")
-        
+        # Verificar conflitos de reserva.
+        # @MX:REASON: o filtro de data/criteria do GET /Reservation nao e
+        # aplicado de forma confiavel pela API -> a checagem antiga marcava
+        # 'already reserved' por qualquer linha retornada (falso positivo num
+        # ativo sem reservas). Filtramos sobreposicao real no cliente.
+        existing_reservations = await self.get_asset_reservations(asset_type, asset_id)
+
+        def _overlaps(res: Dict[str, Any]) -> bool:
+            # Confirma que e do mesmo item e que ha sobreposicao de janela
+            try:
+                if str(res.get("items_id")) != str(asset_id):
+                    return False
+                if str(res.get("itemtype") or asset_type) != asset_type:
+                    return False
+                r_begin = datetime.strptime(res.get("begin", ""), "%Y-%m-%d %H:%M:%S")
+                r_end = datetime.strptime(res.get("end", ""), "%Y-%m-%d %H:%M:%S")
+            except (ValueError, TypeError):
+                return False
+            return r_begin < end_dt and start_dt < r_end
+
+        if any(_overlaps(r) for r in existing_reservations if isinstance(r, dict)):
+            raise ValidationError(
+                "Ativo ja possui reserva que se sobrepoe a esse periodo",
+                "reservation_conflict",
+            )
+
         # Construir payload
         payload = {
             "users_id": user_id,
@@ -1237,26 +1289,49 @@ class AssetService:
             "begin": date_start,
             "end": date_end
         }
-        
+
         if comment:
             payload["comment"] = comment.strip()
-        
+
         try:
             logger.info(f"Creating reservation for {asset_type} {asset_id}")
             result = await self.client.post("/apirest.php/Reservation", payload)
-            
+
             if "id" not in result:
                 raise GLPIError(500, "Failed to create reservation - no ID returned")
-            
+
             # Obter reserva completa
             reservation_id = result["id"]
             reservation = await self.client.get_item("Reservation", reservation_id)
-            
+
             logger.info(f"Reservation created successfully: ID {reservation_id}")
             return reservation
-            
+
+        except ValidationError:
+            raise
         except Exception as e:
+            # @MX:NOTE: GLPI exige que o item seja um ReservationItem (habilitado
+            # para reserva) antes de aceitar POST /Reservation. Damos mensagem clara.
+            msg = str(e)
             logger.error(f"Failed to create reservation: {e}")
+            low = msg.lower()
+            # GLPI rejeita reserva de item nao-reservavel com mensagens variadas
+            # ("ERROR_GLPI_ADD ... ja esta reservado" / ReservationItem / not found).
+            # Sem reserva sobreposta real (ja checada acima), a causa provavel e
+            # o item nao estar habilitado para reserva.
+            if (
+                "reservationitem" in low
+                or "not found" in low
+                or "error_glpi_add" in low
+                or "reservado" in low
+            ):
+                raise GLPIError(
+                    400,
+                    f"Nao foi possivel reservar {asset_type} {asset_id}. Nao ha reserva "
+                    "sobreposta nesta janela, entao a causa provavel e o ativo NAO estar "
+                    "habilitado para reserva no GLPI (ReservationItem). Habilite a reserva "
+                    "do item no GLPI (aba Reservas do ativo) antes de tentar reservar.",
+                )
             raise GLPIError(500, f"Failed to create reservation: {str(e)}")
     
     async def get_asset_stats(
@@ -1309,13 +1384,28 @@ class AssetService:
                 }
             }
             
+            # @MX:NOTE: a Search API devolve o estado (campo 31) como ID cru,
+            # diferente de location/manufacturer que ja vem como nome. Resolvemos
+            # via dropdown_cache para o by_status ficar legivel ao LLM.
+            from src.services.dropdown_cache import dropdown_cache
+
             for asset in assets:
                 # Por tipo
                 asset_type_name = asset.get("asset_type", "unknown")
                 stats["by_type"][asset_type_name] = stats["by_type"].get(asset_type_name, 0) + 1
-                
+
                 # Por status
-                status = asset.get("status", "unknown")
+                # @MX:NOTE: list_assets normaliza o estado para a chave 'states_id'
+                # (campo 31 da Search API); ler 'status' aqui dava sempre 'unknown'.
+                raw_state = asset.get("states_id") or asset.get("status")
+                if raw_state in (None, "", 0, "0"):
+                    status = "sem estado"
+                else:
+                    try:
+                        state_name = await dropdown_cache.get_name("State", raw_state, fallback="")
+                    except Exception:  # noqa: BLE001
+                        state_name = ""
+                    status = f"{state_name} (#{raw_state})" if state_name else str(raw_state)
                 stats["by_status"][status] = stats["by_status"].get(status, 0) + 1
                 
                 # Por localização

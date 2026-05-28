@@ -49,11 +49,18 @@ def format_ticket_detail(data: dict) -> str:
     """Format ticket details as field-value Markdown table."""
     if not data:
         return "Ticket nao encontrado."
+    # @MX:NOTE: delete de ticket no GLPI e soft-delete (is_deleted=1 -> lixeira).
+    # Sinalizamos para o LLM nao tratar um ticket excluido como ativo.
+    deleted = str(data.get("is_deleted", 0)) in ("1", "True")
+    trash_banner = "\n> ⚠️ Este ticket está NA LIXEIRA do GLPI (excluído / is_deleted=1).\n" if deleted else ""
+    trash_row = "| Na lixeira | Sim (is_deleted=1) |\n" if deleted else ""
     return (
-        f"# Ticket #{esc(data.get('id', 'N/A'))}: {esc(data.get('name', 'Sem titulo'))}\n\n"
+        f"# Ticket #{esc(data.get('id', 'N/A'))}: {esc(data.get('name', 'Sem titulo'))}\n"
+        f"{trash_banner}\n"
         f"| Campo | Valor |\n|---|---|\n"
         f"| ID | {esc(data.get('id'))} |\n"
         f"| Titulo | {esc(data.get('name'))} |\n"
+        f"{trash_row}"
         f"| Status | {fmt_status(data.get('status'))} |\n"
         f"| Prioridade | {fmt_priority(data.get('priority'))} |\n"
         f"| Tipo | {fmt_type(data.get('type'))} |\n"
@@ -84,6 +91,44 @@ def format_ticket_followups(data, args: dict) -> str:
     return f"**{len(items)} acompanhamentos**\n\n| ID | Data | Conteudo | Visibilidade | Autor |\n|---|---|---|---|---|\n{table}"
 
 
+# GLPI Ticket Log: mapa dos id_search_option mais comuns -> rotulo legivel.
+# Sem isto a coluna "Campo" mostra numeros crus (ex: 12, 64) ininteligiveis ao LLM.
+_TICKET_LOG_FIELDS = {
+    "0": "Item vinculado",
+    "1": "Titulo",
+    "3": "Prioridade",
+    "4": "Solicitante",
+    "5": "Tecnico atribuido",
+    "7": "Categoria",
+    "8": "Grupo tecnico",
+    "10": "Urgencia",
+    "11": "Impacto",
+    "12": "Status",
+    "13": "Itens associados",
+    "15": "Data de abertura",
+    "17": "Data de solucao",
+    "19": "Ultima atualizacao",
+    "21": "Descricao",
+    "64": "Ultima edicao por",
+    "150": "Tempo p/ inicio de atendimento",
+}
+
+
+def _resolve_log_field(h: dict) -> str:
+    """Resolve o campo alterado para um rotulo legivel.
+
+    Prefere o texto 'field' (quando o GLPI o expoe), senao mapeia o
+    id_search_option, e por fim cai para 'Campo {codigo}'.
+    """
+    field_text = str(h.get("field", "") or "").strip()
+    if field_text:
+        return field_text
+    code = str(h.get("id_search_option", "") or "").strip()
+    if not code:
+        return "—"
+    return _TICKET_LOG_FIELDS.get(code, f"Campo {code}")
+
+
 def format_ticket_history(data, args: dict) -> str:
     """Format ticket change history."""
     items = data if isinstance(data, list) else data.get("data", data.get("items", []))
@@ -91,12 +136,14 @@ def format_ticket_history(data, args: dict) -> str:
         return "Nenhum historico encontrado para este ticket."
     rows = []
     for h in items[:50]:
+        # GLPI Log expoe o autor como 'user_name' (string), nao 'users_id'.
+        author = str(h.get("user_name", "") or "").strip() or "N/A"
         rows.append(
             f"| {fmt_date(h.get('date_mod'))} "
-            f"| {truncate_field(str(h.get('id_search_option', '')), 50)} "
+            f"| {truncate_field(_resolve_log_field(h), 40)} "
             f"| {truncate_field(str(h.get('old_value', '')), 100)} "
             f"| {truncate_field(str(h.get('new_value', '')), 100)} "
-            f"| {esc(h.get('users_id', 'N/A'))} |"
+            f"| {esc(author)} |"
         )
     table = "\n".join(rows)
     note = f"\n\n*Mostrando 50 de {len(items)} entradas*" if len(items) > 50 else ""
@@ -163,24 +210,45 @@ def format_assets_list(data, args: dict) -> str:
     return f"{header}\n\n| ID | Nome | Serial | Patrimonio | Status | Localizacao |\n|---|---|---|---|---|---|\n{table}"
 
 
+def _asset_field(data: dict, id_key: str, name_key: str) -> str:
+    """Prefere o nome resolvido (*_name); senao mostra o id; 0/vazio -> N/A.
+
+    @MX:NOTE: o get de ativo exibia codigos crus (Status: 0, Localizacao: 0).
+    asset_service.get_asset enriquece com *_name via dropdown_cache; aqui
+    consumimos esse nome quando disponivel.
+    """
+    name = data.get(name_key)
+    if name:
+        return esc(name)
+    raw = data.get(id_key)
+    if raw in (None, "", 0, "0"):
+        return "N/A"
+    return esc(raw)
+
+
 def format_asset_detail(data: dict) -> str:
     """Format asset details as field-value Markdown table."""
     if not data:
         return "Ativo nao encontrado."
+    deleted = str(data.get("is_deleted", 0)) in ("1", "True")
+    trash_banner = "\n> ⚠️ Este ativo está NA LIXEIRA do GLPI (excluído / is_deleted=1).\n" if deleted else ""
+    trash_row = "| Na lixeira | Sim (is_deleted=1) |\n" if deleted else ""
     return (
-        f"# Ativo: {esc(data.get('name', 'Sem nome'))}\n\n"
+        f"# Ativo: {esc(data.get('name', 'Sem nome'))}\n"
+        f"{trash_banner}\n"
         f"| Campo | Valor |\n|---|---|\n"
         f"| ID | {esc(data.get('id'))} |\n"
         f"| Nome | {esc(data.get('name'))} |\n"
+        f"{trash_row}"
         f"| Serial | {esc(data.get('serial', 'N/A'))} |\n"
         f"| Patrimonio | {esc(data.get('otherserial', 'N/A'))} |\n"
-        f"| Status | {esc(data.get('states_id', 'N/A'))} |\n"
-        f"| Localizacao | {esc(data.get('locations_id', 'N/A'))} |\n"
-        f"| Entidade | {esc(data.get('entities_id', 'N/A'))} |\n"
-        f"| Fabricante | {esc(data.get('manufacturers_id', 'N/A'))} |\n"
-        f"| Modelo | {esc(data.get('models_id', 'N/A'))} |\n"
-        f"| Usuario | {esc(data.get('users_id', 'N/A'))} |\n"
-        f"| Grupo | {esc(data.get('groups_id', 'N/A'))} |\n"
+        f"| Status | {_asset_field(data, 'states_id', 'states_name')} |\n"
+        f"| Localizacao | {_asset_field(data, 'locations_id', 'locations_name')} |\n"
+        f"| Entidade | {_asset_field(data, 'entities_id', 'entities_name')} |\n"
+        f"| Fabricante | {_asset_field(data, 'manufacturers_id', 'manufacturers_name')} |\n"
+        f"| Modelo | {_asset_field(data, 'models_id', 'models_name')} |\n"
+        f"| Usuario | {_asset_field(data, 'users_id', 'users_name')} |\n"
+        f"| Grupo | {_asset_field(data, 'groups_id', 'groups_name')} |\n"
         f"| Comentario | {truncate_field(data.get('comment', ''), 2000)} |"
     )
 
@@ -203,8 +271,39 @@ def format_asset_stats(data) -> str:
 
 
 def format_reservations_list(data, args: dict) -> str:
-    """Format reservations list."""
-    items = data if isinstance(data, list) else data.get("data", data.get("items", []))
+    """Format reservations OR reservable items (scope-aware)."""
+    scope = (args or {}).get("scope", "reservations")
+    if isinstance(data, list):
+        items = data
+    elif isinstance(data, dict):
+        # @MX:NOTE: scope=reservable retorna a chave 'reservable_items' (antes
+        # ignorada -> sempre vazio); scope=reservations usa data/items.
+        items = (
+            data.get("reservable_items")
+            or data.get("data")
+            or data.get("items")
+            or []
+        )
+    else:
+        items = []
+
+    if scope == "reservable":
+        if not items:
+            return "Nenhum item reservavel encontrado."
+        rows = [
+            f"| {esc(r.get('id'))} "
+            f"| {esc(r.get('itemtype', 'N/A'))} "
+            f"| {esc(r.get('items_id', 'N/A'))} "
+            f"| {esc(r.get('name') or r.get('item_name', 'N/A'))} "
+            f"| {esc(r.get('is_active', 'N/A'))} |"
+            for r in items
+        ]
+        table = "\n".join(rows)
+        return (
+            f"**{len(items)} itens reservaveis**\n\n"
+            f"| ID | Tipo | Item ID | Nome | Ativo |\n|---|---|---|---|---|\n{table}"
+        )
+
     if not items:
         return "Nenhuma reserva encontrada."
     rows = []
@@ -614,6 +713,12 @@ def format_operation_success(data, operation: str) -> str:
             if not err_text:
                 err_text = str(data.get("error") or data.get("message") or "Erro desconhecido")
             return f"Operacao '{operation}' FALHOU: {err_text}"
+
+        # Operacao reconhecida porem NAO SUPORTADA pelo backend (ex.: GLPI 11
+        # nao expoe retry/trigger de webhook). Nem sucesso, nem falha: aviso.
+        if data.get("supported") is False or data.get("status") == "not_supported":
+            reason = data.get("message") or data.get("warning") or "Operacao nao suportada pelo GLPI"
+            return f"Operacao '{operation}' NAO SUPORTADA: {reason}"
 
         # Explicit success=False
         if data.get("success") is False:

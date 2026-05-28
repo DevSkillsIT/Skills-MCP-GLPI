@@ -436,9 +436,10 @@ class WebhookTools:
         logger.warning("WebhookTools.trigger_webhook called — no native GLPI endpoint")
         return {
             "event_type": event_type,
+            "supported": False,
             "triggered_count": 0,
             "results": [],
-            "warning": (
+            "message": (
                 "GLPI 11 nao expoe endpoint para disparo manual de webhook via REST. "
                 "Os webhooks sao disparados automaticamente pelos eventos nativos do GLPI. "
                 "Use test_webhook para validar conectividade do endpoint destino."
@@ -485,6 +486,7 @@ class WebhookTools:
         await self.get_webhook(webhook_id)  # confirma existencia / NotFoundError limpo
         return {
             "webhook_id": webhook_id,
+            "supported": False,
             "retried_count": 0,
             "success_count": 0,
             "message": "GLPI 11 nao expoe retry de webhook via REST API.",

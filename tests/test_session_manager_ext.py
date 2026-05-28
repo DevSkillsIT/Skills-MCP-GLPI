@@ -36,6 +36,46 @@ async def test_get_uses_cache_and_rate_limit():
     assert mock_client.get.call_count == 1
 
 
+@pytest.mark.asyncio
+async def test_write_invalidates_read_cache():
+    """Regressao #7: apos um POST bem-sucedido o cache de GET deve ser
+    invalidado, para que a proxima leitura reflita a escrita (ex: followup
+    recem-criado) em vez de devolver dados pre-escrita."""
+    manager = SessionManager()
+
+    get_resp = MagicMock()
+    get_resp.status_code = 200
+    get_resp.raise_for_status.return_value = None
+    # 1a leitura devolve estado antigo; 2a (pos-escrita) devolve novo estado.
+    get_resp.json.side_effect = [{"v": "old"}, {"v": "new"}]
+
+    post_resp = MagicMock()
+    post_resp.status_code = 201
+    post_resp.raise_for_status.return_value = None
+    post_resp.json.return_value = {"id": 999}
+
+    mock_client = AsyncMock()
+    mock_client.get.return_value = get_resp
+    mock_client.post.return_value = post_resp
+
+    manager.set_current_user_token("test-token")
+    manager._get_session_for_user = AsyncMock(return_value=mock_client)
+
+    # leitura inicial popula o cache
+    first = await manager.get("/Ticket/1/TicketFollowup", params={}, use_cache=True, user_id="u1")
+    assert first == {"v": "old"}
+    assert mock_client.get.call_count == 1
+
+    # escrita deve invalidar o cache
+    await manager.post("/TicketFollowup", data={"content": "x"}, user_id="u1")
+    assert len(manager._session_cache) == 0
+
+    # leitura seguinte NAO pode vir do cache: refaz o GET e ve o novo estado
+    second = await manager.get("/Ticket/1/TicketFollowup", params={}, use_cache=True, user_id="u1")
+    assert second == {"v": "new"}
+    assert mock_client.get.call_count == 2
+
+
 def test_rate_limit_blocks_when_exceeded():
     """Deve lançar RateLimitError ao exceder limite por chave."""
     manager = SessionManager()

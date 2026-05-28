@@ -84,21 +84,21 @@ PROMPTS_CATALOG = [
     },
     {
         "name": "glpi_asset_roi",
-        "description": "Calcula ROI de ativos por cliente (custo vs utilização)",
+        "description": "Inventário de ativos por cliente (contagem real por tipo). ROI/custo monetário só aparece se o GLPI tiver valor de compra/depreciação cadastrados; caso contrário é reportado como não disponível.",
         "category": "gestao",
         "audience": "Gestor de TI",
         "arguments": [
             {
                 "name": "entity_name",
-                "description": "Nome do cliente (obrigatório para ROI específico)",
+                "description": "Nome do cliente (opcional; sem ele usa todas as entidades)",
                 "type": "string",
-                "required": True
+                "required": False
             }
         ]
     },
     {
         "name": "glpi_technician_productivity",
-        "description": "Mede produtividade de técnicos (tickets resolvidos, tempo médio)",
+        "description": "Ranking real de técnicos por tickets resolvidos/fechados no período. Tempo médio e satisfação por técnico não são expostos pela REST API do GLPI 11 e aparecem como não disponíveis.",
         "category": "gestao",
         "audience": "Gestor de TI",
         "arguments": [
@@ -113,7 +113,7 @@ PROMPTS_CATALOG = [
     },
     {
         "name": "glpi_cost_per_ticket",
-        "description": "Calcula custo médio por ticket (tempo técnico vs resultado)",
+        "description": "Volume real de tickets no período. Custo monetário por ticket exige valor-hora do técnico e tempo apontado no GLPI; sem isso é reportado como não disponível (nenhum valor é estimado).",
         "category": "gestao",
         "audience": "Gestor de TI",
         "arguments": [
@@ -155,7 +155,7 @@ PROMPTS_CATALOG = [
     },
     {
         "name": "glpi_client_satisfaction",
-        "description": "Relatório de indicadores de satisfação do cliente",
+        "description": "Lê a pesquisa de satisfação real do GLPI (TicketSatisfaction). Se o módulo não estiver configurado ou sem respostas, reporta como não disponível em vez de inventar NPS/CSAT.",
         "category": "gestao",
         "audience": "Gestor de TI",
         "arguments": [
@@ -288,7 +288,7 @@ PROMPTS_CATALOG = [
     },
     {
         "name": "glpi_knowledge_base_search",
-        "description": "Busca em base de conhecimento com sugestões de artigos",
+        "description": "Busca REAL na base de conhecimento unificada (pgvector + RRF: chamados resolvidos, artigos de ajuda e comunidade). Para filtrar por fonte/tenant use a tool glpi_search_knowledge_unified.",
         "category": "suporte",
         "audience": "Analista de Suporte",
         "arguments": [
@@ -478,14 +478,42 @@ class PromptHandler:
             }
         }
 
-    async def _prompt_ticket_trends(self, args: Dict) -> Dict:
-        """Análise de tendências por categoria — resolve IDs via dropdown_cache."""
-        entity_name = args.get("entity_name")
-        period_days = args.get("period_days", 30)
+    async def _resolve_entity_id(self, entity_name):
+        """Resolve entity_name -> entity_id de forma tolerante.
 
-        # Buscar tickets do periodo via search com criterio de data
+        Retorna None quando entity_name é vazio (escopo global) ou quando não
+        há correspondência (não levanta exceção). Aceita id 0 (entidade raiz).
+        """
+        if not entity_name:
+            return None
+        try:
+            entities = await self.service.list_entities()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"list_entities failed: {exc}")
+            return None
+        match = next(
+            (e for e in entities if entity_name.lower() in (getattr(e, "name", "") or "").lower()),
+            None,
+        )
+        return getattr(match, "id", None) if match else None
+
+    async def _aggregate_ticket_categories(self, window_days: int, sample: int = 100):
+        """Conta tickets por categoria (itilcategories_id) numa janela de dias.
+
+        Retorna (dict {nome_categoria: contagem}, total_tickets_no_periodo).
+        Reutilizado por glpi_ticket_trends e glpi_recurring_problems.
+
+        @MX:NOTE: search options nao expoem itilcategories_id direto; fazemos
+        GET /Ticket/{id} por ticket (paralelo, limitado) para extrair a categoria.
+        """
         from src.services.glpi_client import glpi_client as _client
-        date_from = (datetime.now() - timedelta(days=period_days)).strftime("%Y-%m-%d 00:00:00")
+        import asyncio as _asyncio
+
+        try:
+            _days = int(window_days)
+        except (TypeError, ValueError):
+            _days = 30
+        date_from = (datetime.now() - timedelta(days=_days)).strftime("%Y-%m-%d 00:00:00")
         params: Dict[str, Any] = {
             "range": "0-499",
             "criteria[0][field]": 15,
@@ -494,18 +522,14 @@ class PromptHandler:
         }
         try:
             search_result = await _client.get("/apirest.php/search/Ticket", params=params, use_cache=False)
-        except Exception as exc:
-            logger.warning(f"ticket_trends search failed: {exc}")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"category aggregation search failed: {exc}")
             search_result = {}
 
         items: List[Any] = []
         if isinstance(search_result, dict):
             items = search_result.get("data") or []
 
-        # @MX:NOTE: search options field IDs nao expoem itilcategories_id direto.
-        # @MX:REASON: Fazemos GET /Ticket/{id} para extrair categoria de cada
-        # ticket (paralelo, limitado, com fallback gracioso).
-        import asyncio as _asyncio
         sem = _asyncio.Semaphore(8)
 
         async def _fetch_category(it: Any) -> int:
@@ -524,26 +548,33 @@ class PromptHandler:
                 return 0
             return 0
 
-        # Limita expansao a 100 tickets para nao explodir
-        sample = items[:100]
-        cat_ids = await _asyncio.gather(*[_fetch_category(it) for it in sample])
-        categories: Dict[int, int] = {}
+        cat_ids = await _asyncio.gather(*[_fetch_category(it) for it in items[:sample]])
+        counts: Dict[int, int] = {}
         for cat_int in cat_ids:
-            categories[cat_int] = categories.get(cat_int, 0) + 1
+            counts[cat_int] = counts.get(cat_int, 0) + 1
 
-        # Resolver IDs -> nomes via cache
         cat_names = await dropdown_cache.get_many_names(
-            "ITILCategory", list(categories.keys())
-        ) if categories else {}
+            "ITILCategory", list(counts.keys())
+        ) if counts else {}
 
-        # Tipos resolvidos
-        top_categories = sorted(
-            [(cat_names.get(cid) or f"Sem Categoria (#{cid})", count) for cid, count in categories.items()],
-            key=lambda x: x[1],
-            reverse=True,
-        )[:5]
+        named: Dict[str, int] = {}
+        for cid, count in counts.items():
+            label = cat_names.get(cid) or f"Sem Categoria (#{cid})"
+            named[label] = named.get(label, 0) + count
+        return named, len(items)
 
-        total = len(items)
+    async def _prompt_ticket_trends(self, args: Dict) -> Dict:
+        """Análise de tendências por categoria — dados REAIS via agregação."""
+        entity_name = args.get("entity_name")
+        period_days = args.get("period_days", 30)
+        try:
+            _days = int(period_days)
+        except (TypeError, ValueError):
+            _days = 30
+
+        named, total = await self._aggregate_ticket_categories(_days, sample=100)
+        top_categories = sorted(named.items(), key=lambda x: x[1], reverse=True)[:5]
+
         compact = f"""📊 Tendências de Tickets - {period_days} dias
 {'Cliente: ' + entity_name if entity_name else 'Global'}
 Total no período: {total}
@@ -580,219 +611,372 @@ Total no período: {total}
         }
 
     async def _prompt_asset_roi(self, args: Dict) -> Dict:
-        """ROI de ativos por cliente."""
-        entity_name = args["entity_name"]
+        """Inventário de ativos por cliente — contagem REAL; ROI monetário só com custo.
 
-        # Buscar entidade
-        entities = await self.service.list_entities()
-        entity = next((e for e in entities if entity_name.lower() in e.name.lower()), None)
+        @MX:REASON: antes levantava 'Entity not found' (resolução frágil) e
+        exibia custos fictícios. O GLPI 11 não traz valor de compra/depreciação
+        por padrão; reportamos o inventário real e explicamos o que falta.
+        """
+        entity_name = args.get("entity_name")
+        entity_id = await self._resolve_entity_id(entity_name)
 
-        if not entity:
-            raise NotFoundError("Entity", entity_name)
+        asset_stats = await self.service.get_asset_stats(entity_id=entity_id)
+        by_type = asset_stats.get("by_type", {}) if isinstance(asset_stats, dict) else {}
+        total_assets = asset_stats.get("total_assets", sum(by_type.values()) if by_type else 0)
 
-        # Buscar estatísticas de ativos
-        asset_stats = await self.service.get_asset_stats(entity_id=entity.id)
+        scope_label = entity_name or "Todas as entidades"
+        if entity_name and entity_id is None:
+            scope_label = f"{entity_name} (entidade não resolvida — exibindo escopo global)"
 
-        compact = f"""💰 ROI de Ativos - {entity_name}
+        type_lines_compact = "\n".join(
+            f"• {t}: {c}" for t, c in sorted(by_type.items(), key=lambda x: x[1], reverse=True)
+        ) or "(sem ativos no escopo)"
 
-💻 Computadores: {asset_stats.get('computers', 0)}
-🖥️ Monitores: {asset_stats.get('monitors', 0)}
-📱 Dispositivos: {asset_stats.get('devices', 0)}
+        compact = f"""💻 Inventário de Ativos - {scope_label}
 
-📊 Utilização Média: {asset_stats.get('avg_utilization', 'N/A')}%
-💵 Custo Total Estimado: R$ {asset_stats.get('total_cost', 'N/A')}
+Total de ativos: {total_assets}
+{type_lines_compact}
+
+💵 ROI/custo monetário: não disponível
+   (GLPI sem valor de compra/depreciação cadastrado)
 """
 
-        detailed = f"""# Relatório de ROI de Ativos
+        detailed = f"""# Inventário de Ativos
 
-**Cliente:** {entity_name}
+**Cliente:** {scope_label}
 **Gerado em:** {datetime.now().strftime('%d/%m/%Y %H:%M')}
 
-## 📊 Inventário de Ativos
+## 📊 Inventário (dados reais)
 
-| Tipo | Quantidade | Custo Médio | Custo Total |
-|------|------------|-------------|-------------|
-| Computadores | {asset_stats.get('computers', 0)} | R$ {asset_stats.get('avg_computer_cost', '0')} | R$ {asset_stats.get('total_computer_cost', '0')} |
-| Monitores | {asset_stats.get('monitors', 0)} | R$ {asset_stats.get('avg_monitor_cost', '0')} | R$ {asset_stats.get('total_monitor_cost', '0')} |
-| Dispositivos | {asset_stats.get('devices', 0)} | R$ {asset_stats.get('avg_device_cost', '0')} | R$ {asset_stats.get('total_device_cost', '0')} |
+| Tipo | Quantidade |
+|------|------------|
+"""
+        if by_type:
+            for t, c in sorted(by_type.items(), key=lambda x: x[1], reverse=True):
+                detailed += f"| {t} | {c} |\n"
+        else:
+            detailed += "| (sem ativos) | 0 |\n"
+        detailed += f"| **Total** | **{total_assets}** |\n"
 
-## 💡 Análise de ROI
+        detailed += """
+## 💡 ROI / Custo
 
-- **Utilização Média:** {asset_stats.get('avg_utilization', 'N/A')}%
-- **Ativos Subutilizados:** {asset_stats.get('underutilized', 0)}
-- **Recomendação:** {self._generate_roi_recommendation(asset_stats)}
+**Não disponível nesta instância do GLPI.** O cálculo de ROI exige valor de
+compra, data de aquisição e depreciação dos ativos (campos de infocom/budget
+do GLPI), que não estão preenchidos nesta base. Nenhum custo é estimado aqui
+para não gerar valores fictícios.
 
 ---
-*Relatório gerado pelo Skills MCP GLPI*
+*Relatório gerado a partir do inventário real do GLPI.*
 """
 
         return {
             "prompt_name": "glpi_asset_roi",
             "compact": compact,
             "detailed": detailed,
-            "metadata": {"entity_name": entity_name}
+            "metadata": {"entity_name": entity_name, "total_assets": total_assets}
         }
 
     async def _prompt_technician_productivity(self, args: Dict) -> Dict:
         """Produtividade de técnicos."""
         period_days = args.get("period_days", 30)
+        try:
+            _days = int(period_days)
+        except (TypeError, ValueError):
+            _days = 30
 
-        # Buscar usuários técnicos e suas estatísticas
-        users = await self.service.list_users()
-        technicians = [u for u in users if getattr(u, 'is_technician', False)]
+        # Agregacao REAL: tickets resolvidos/fechados por tecnico atribuido.
+        # @MX:REASON: antes devolvia 'Tecnico A - 45 tickets' hardcoded.
+        # Usa GLPI search com forcedisplay (field 5=tecnico atribuido,
+        # field 12=status) evitando GET por ticket.
+        from src.services.glpi_client import glpi_client as _client
+        date_from = (datetime.now() - timedelta(days=_days)).strftime("%Y-%m-%d 00:00:00")
+        params: Dict[str, Any] = {
+            "range": "0-999",
+            "criteria[0][field]": 15,
+            "criteria[0][searchtype]": "morethan",
+            "criteria[0][value]": date_from,
+            "forcedisplay[0]": 2,
+            "forcedisplay[1]": 5,
+            "forcedisplay[2]": 12,
+        }
+        try:
+            search_result = await _client.get("/apirest.php/search/Ticket", params=params, use_cache=False)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"technician_productivity search failed: {exc}")
+            search_result = {}
+
+        items = search_result.get("data") or [] if isinstance(search_result, dict) else []
+        resolved_by_tech: Dict[str, int] = {}
+        resolved_total = 0
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            status = it.get("12") or it.get("status")
+            try:
+                st_int = int(status) if status is not None else 0
+            except (TypeError, ValueError):
+                st_int = 0
+            if st_int not in (5, 6):  # apenas solucionado/fechado
+                continue
+            resolved_total += 1
+            tech = it.get("5")
+            # field 5 pode vir string, lista ou vazio
+            if isinstance(tech, list):
+                names = [str(t) for t in tech if t]
+            elif tech:
+                names = [str(tech)]
+            else:
+                names = ["(sem técnico atribuído)"]
+            for n in names:
+                resolved_by_tech[n] = resolved_by_tech.get(n, 0) + 1
+
+        # field 5 retorna o id do tecnico nesta instancia -> resolve para nome.
+        resolved_named: Dict[str, int] = {}
+        for key, count in resolved_by_tech.items():
+            label = key
+            if key.isdigit():
+                try:
+                    label = await dropdown_cache.get_name("User", int(key), fallback=f"User #{key}")
+                except Exception:  # noqa: BLE001
+                    label = f"User #{key}"
+            resolved_named[label] = resolved_named.get(label, 0) + count
+        resolved_by_tech = resolved_named
+
+        ranking = sorted(resolved_by_tech.items(), key=lambda x: x[1], reverse=True)[:10]
 
         compact = f"""👷 Produtividade de Técnicos - {period_days} dias
 
-Total de Técnicos: {len(technicians)}
+Tickets resolvidos no período: {resolved_total}
+Técnicos com resoluções: {len([k for k in resolved_by_tech if 'sem técnico' not in k])}
 
-🏆 Top 3 Produtivos:
-1. Técnico A - 45 tickets
-2. Técnico B - 38 tickets
-3. Técnico C - 32 tickets
-
-⏱️ Tempo Médio de Resolução: 4.2 horas
+🏆 Top produtivos:
 """
+        if not ranking:
+            compact += "(sem tickets resolvidos no período)\n"
+        for i, (tech, count) in enumerate(ranking[:3], 1):
+            compact += f"{i}. {tech} - {count} tickets\n"
 
         detailed = f"""# Relatório de Produtividade de Técnicos
 
-**Período:** {period_days} dias
+**Período:** Últimos {_days} dias
+**Total resolvido/fechado:** {resolved_total}
 
-## 📊 Ranking de Produtividade
+## 📊 Ranking de Produtividade (tickets resolvidos)
 
-| Posição | Técnico | Tickets Resolvidos | Tempo Médio | Satisfação |
-|---------|---------|-------------------|-------------|------------|
-| 1 | Técnico A | 45 | 3.5h | 4.8/5 |
-| 2 | Técnico B | 38 | 4.1h | 4.6/5 |
-| 3 | Técnico C | 32 | 4.8h | 4.5/5 |
+| Posição | Técnico | Tickets Resolvidos |
+|---------|---------|--------------------|
+"""
+        if ranking:
+            for i, (tech, count) in enumerate(ranking, 1):
+                detailed += f"| {i} | {tech} | {count} |\n"
+        else:
+            detailed += "| — | (sem dados no período) | — |\n"
 
-## 📈 Métricas Consolidadas
-
-- **Média de Tickets por Técnico:** {45/len(technicians) if len(technicians) > 0 else 0:.1f}
-- **Tempo Médio de Resolução:** 4.2 horas
-- **Taxa de Satisfação Média:** 4.6/5
+        detailed += """
+> Tempo médio de resolução e índice de satisfação por técnico não são
+> expostos pela REST API do GLPI 11 nesta instância — não são estimados
+> aqui para evitar números fictícios.
 
 ---
-*Relatório gerado pelo Skills MCP GLPI*
+*Relatório gerado a partir de dados reais do GLPI.*
 """
 
         return {
             "prompt_name": "glpi_technician_productivity",
             "compact": compact,
             "detailed": detailed,
-            "metadata": {"period_days": period_days}
+            "metadata": {"period_days": period_days, "resolved_total": resolved_total}
         }
 
     async def _prompt_cost_per_ticket(self, args: Dict) -> Dict:
-        """Custo médio por ticket."""
+        """Custo por ticket — volume REAL; custo monetário só com configuração.
+
+        @MX:REASON: antes devolvia R$ 85,00 / R$ 12.750,00 fixos. O GLPI 11
+        não rastreia custo-hora de técnico nem tempo apontado por padrão, logo
+        não há base para custo monetário; reportamos o volume real e explicamos
+        o que falta configurar, sem inventar valores.
+        """
         entity_name = args.get("entity_name")
         period_days = args.get("period_days", 30)
+        try:
+            _days = int(period_days)
+        except (TypeError, ValueError):
+            _days = 30
+
+        entity_id = await self._resolve_entity_id(entity_name)
+        date_from = (datetime.now() - timedelta(days=_days)).strftime("%Y-%m-%d")
+        stats = await self.service.get_ticket_stats(entity_id=entity_id, date_from=date_from)
+        total_tickets = stats.get("total_tickets", 0) if isinstance(stats, dict) else 0
 
         compact = f"""💰 Custo por Ticket - {period_days} dias
 {'Cliente: ' + entity_name if entity_name else 'Global'}
 
-📊 Custo Médio: R$ 85,00
-⏱️ Tempo Médio: 3.2 horas
-👷 Custo/Hora Técnico: R$ 26,50
-
-Total Período: R$ 12.750,00
+🎫 Tickets no período: {total_tickets}
+💵 Custo monetário: não disponível
+   (requer valor-hora do técnico + tempo apontado no GLPI)
 """
 
         detailed = f"""# Relatório de Custo por Ticket
 
-**Período:** {period_days} dias
+**Período:** Últimos {_days} dias
 **Cliente:** {entity_name or 'Todos'}
 
-## 💰 Análise de Custos
+## 🎫 Volume (dado real)
 
 | Métrica | Valor |
 |---------|-------|
-| Custo Médio por Ticket | R$ 85,00 |
-| Tempo Médio de Atendimento | 3.2 horas |
-| Custo/Hora Técnico | R$ 26,50 |
-| Total de Tickets | 150 |
-| **Custo Total do Período** | **R$ 12.750,00** |
+| Total de Tickets no período | {total_tickets} |
 
-## 📊 Distribuição de Custos
+## 💰 Custo monetário
 
-- **Incidentes:** 60% (R$ 7.650,00)
-- **Requisições de Serviço:** 30% (R$ 3.825,00)
-- **Problemas:** 10% (R$ 1.275,00)
+**Não disponível nesta instância do GLPI.** O cálculo de custo por ticket
+exige dados que o GLPI 11 não expõe por padrão via REST:
+
+- **Custo/hora do técnico** (cadastro de custo por perfil/usuário)
+- **Tempo apontado** por ticket (actiontime / tasks com duração)
+
+Configure esses dados no GLPI para habilitar o cálculo. Nenhum valor é
+estimado aqui para não produzir números fictícios.
 
 ---
-*Relatório gerado pelo Skills MCP GLPI*
+*Relatório gerado pelo Skills MCP GLPI.*
 """
 
         return {
             "prompt_name": "glpi_cost_per_ticket",
             "compact": compact,
             "detailed": detailed,
-            "metadata": {"period_days": period_days, "entity_name": entity_name}
+            "metadata": {"period_days": period_days, "entity_name": entity_name, "total_tickets": total_tickets}
         }
 
     async def _prompt_recurring_problems(self, args: Dict) -> Dict:
-        """Identificação de problemas recorrentes."""
-        entity_name = args.get("entity_name")
-        min_occurrences = args.get("min_occurrences", 3)
+        """Problemas recorrentes — agregacao REAL de tickets por categoria.
 
-        compact = f"""🔁 Problemas Recorrentes
+        @MX:REASON: antes devolvia 'Falha de VPN (8x)' etc. hardcoded. Agora
+        conta tickets por itilcategories_id no periodo (default 180 dias) e
+        filtra categorias com >= min_occurrences.
+        """
+        entity_name = args.get("entity_name")
+        try:
+            min_occurrences = int(args.get("min_occurrences", 3))
+        except (TypeError, ValueError):
+            min_occurrences = 3
+
+        # Agrega categorias dos tickets recentes (mesma tecnica de ticket_trends)
+        window_days = 180
+        categories, total = await self._aggregate_ticket_categories(window_days, sample=200)
+
+        recurring = sorted(
+            [(name, count) for name, count in categories.items() if count >= min_occurrences],
+            key=lambda x: x[1],
+            reverse=True,
+        )[:10]
+
+        compact = f"""🔁 Problemas Recorrentes (últimos {window_days} dias)
+{'Cliente: ' + entity_name if entity_name else 'Global'}
 Min. {min_occurrences} ocorrências
 
-⚠️ Top 5 Problemas:
-1. Falha de VPN (8x)
-2. Impressora offline (6x)
-3. Senha expirada (5x)
-4. Lentidão sistema (4x)
-5. Email não sincroniza (3x)
-
-💡 Ação: Criar KB e plano preventivo
+⚠️ Top categorias recorrentes:
 """
+        if not recurring:
+            compact += f"(nenhuma categoria atingiu {min_occurrences} ocorrências no período)\n"
+        for i, (name, count) in enumerate(recurring[:5], 1):
+            compact += f"{i}. {name} ({count}x)\n"
 
         detailed = f"""# Análise de Problemas Recorrentes
 
+**Período analisado:** Últimos {window_days} dias
+**Total de tickets amostrados:** {total}
 **Threshold:** Mínimo {min_occurrences} ocorrências
+**Cliente:** {entity_name or 'Global'}
 
-## 🔍 Problemas Identificados
+## 🔍 Categorias Recorrentes
 
-| Problema | Ocorrências | Impacto | Ação Recomendada |
-|----------|-------------|---------|------------------|
-| Falha de VPN | 8 | Alto | Revisar configuração de rede |
-| Impressora offline | 6 | Médio | Atualizar drivers |
-| Senha expirada | 5 | Baixo | Automatizar notificações |
-| Lentidão sistema | 4 | Alto | Análise de performance |
-| Email não sincroniza | 3 | Médio | Verificar config Exchange |
+| Categoria | Ocorrências |
+|-----------|-------------|
+"""
+        if recurring:
+            for name, count in recurring:
+                detailed += f"| {name} | {count} |\n"
+        else:
+            detailed += f"| (nenhuma categoria com >= {min_occurrences} ocorrências) | — |\n"
 
+        detailed += """
 ## 💡 Recomendações
 
-1. **Criar artigos na Base de Conhecimento** para os 3 problemas principais
-2. **Implementar monitoramento proativo** para VPN e performance
-3. **Automatizar processo** de notificação de senha
-4. **Treinamento de usuários** sobre problemas comuns
+1. Para as categorias mais frequentes, avalie criar artigos na Base de Conhecimento.
+2. Considere monitoramento proativo dos itens com maior volume.
 
 ---
-*Relatório gerado pelo Skills MCP GLPI*
+*Relatório gerado a partir de dados reais do GLPI (categorias dos tickets).*
 """
 
         return {
             "prompt_name": "glpi_recurring_problems",
             "compact": compact,
             "detailed": detailed,
-            "metadata": {"min_occurrences": min_occurrences}
+            "metadata": {"min_occurrences": min_occurrences, "window_days": window_days, "total": total}
         }
 
     async def _prompt_client_satisfaction(self, args: Dict) -> Dict:
-        """Indicadores de satisfação do cliente."""
+        """Satisfação do cliente — lê a pesquisa real do GLPI (TicketSatisfaction).
+
+        @MX:REASON: antes devolvia NPS 72 / CSAT 4.3 fixos. Agora consulta a
+        pesquisa de satisfação real do GLPI; se não houver respostas (módulo
+        não configurado), informa honestamente em vez de inventar índices.
+        """
         entity_name = args.get("entity_name")
         period_days = args.get("period_days", 30)
+
+        from src.services.glpi_client import glpi_client as _client
+        satisfactions: List[Any] = []
+        try:
+            resp = await _client.get(
+                "/apirest.php/TicketSatisfaction",
+                params={"range": "0-199"},
+                use_cache=False,
+            )
+            if isinstance(resp, list):
+                satisfactions = resp
+            elif isinstance(resp, dict):
+                satisfactions = resp.get("data") or []
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"client_satisfaction fetch failed: {exc}")
+
+        rated = []
+        for s in satisfactions:
+            if isinstance(s, dict) and s.get("satisfaction") not in (None, ""):
+                try:
+                    rated.append(float(s["satisfaction"]))
+                except (TypeError, ValueError):
+                    continue
+
+        if rated:
+            avg = sum(rated) / len(rated)
+            csat_block = (
+                f"⭐ Satisfação média: {avg:.2f}/5 (base: {len(rated)} respostas)"
+            )
+            detail_metric = (
+                f"| Satisfação média | {avg:.2f}/5 | {len(rated)} respostas |"
+            )
+            note = ""
+        else:
+            csat_block = (
+                "⭐ Satisfação: não disponível\n"
+                "   (pesquisa de satisfação do GLPI sem respostas / não configurada)"
+            )
+            detail_metric = "| Satisfação média | não disponível | 0 respostas |"
+            note = (
+                "\n> A pesquisa de satisfação (TicketSatisfaction) não retornou "
+                "respostas nesta instância. Habilite/configure a pesquisa no GLPI "
+                "para obter CSAT/NPS reais. Nenhum índice é estimado aqui.\n"
+            )
 
         compact = f"""😊 Satisfação do Cliente - {period_days} dias
 {'Cliente: ' + entity_name if entity_name else 'Global'}
 
-⭐ NPS: 72 (Promotores)
-📊 CSAT: 4.3/5
-⏱️ SLA Cumprido: 94%
-
-👍 Pontos Positivos: Rapidez
-👎 Melhorar: Comunicação
+{csat_block}
 """
 
         detailed = f"""# Relatório de Satisfação do Cliente
@@ -800,34 +984,14 @@ Min. {min_occurrences} ocorrências
 **Período:** {period_days} dias
 **Cliente:** {entity_name or 'Todos os clientes'}
 
-## 📊 Indicadores Principais
+## 📊 Indicadores (dados reais)
 
-| Métrica | Valor | Meta | Status |
-|---------|-------|------|--------|
-| NPS (Net Promoter Score) | 72 | >70 | ✅ Atingido |
-| CSAT (Customer Satisfaction) | 4.3/5 | >4.0 | ✅ Atingido |
-| SLA Compliance | 94% | >90% | ✅ Atingido |
-| First Call Resolution | 68% | >70% | ⚠️ Abaixo |
-
-## 💬 Feedback dos Clientes
-
-**Pontos Positivos:**
-- Rapidez no atendimento
-- Conhecimento técnico da equipe
-- Disponibilidade 24/7
-
-**Pontos de Melhoria:**
-- Comunicação proativa
-- Tempo de resolução de problemas complexos
-- Interface do portal de atendimento
-
-## 📈 Tendência
-
-- **Evolução vs período anterior:** +5%
-- **Tendência:** Crescente ↗️
-
+| Métrica | Valor | Base |
+|---------|-------|------|
+{detail_metric}
+{note}
 ---
-*Relatório gerado pelo Skills MCP GLPI*
+*Relatório gerado a partir da pesquisa de satisfação do GLPI.*
 """
 
         return {
@@ -916,20 +1080,43 @@ Min. {min_occurrences} ocorrências
         if not users:
             raise NotFoundError("User", username)
         user = users[0]
-        user_id = getattr(user, "id", None)
-        user_name = getattr(user, "name", username)
-        user_email = getattr(user, "email", None) or "N/A"
 
-        # Buscar tickets reais do usuario via search com criterio field=4 (requester user)
-        # GLPI 11 search field 4 = users_id_requester
-        from src.services.ticket_service import ticket_service as _ts
+        # @MX:REASON: search_users retorna DICTS; getattr(dict,'id') era sempre
+        # None -> criterio de requester nunca aplicado -> retornava TODOS os
+        # 9030 tickets. Extrai de dict OU objeto.
+        def _field(obj, key, default=None):
+            if isinstance(obj, dict):
+                return obj.get(key, default)
+            return getattr(obj, key, default)
+
+        user_id = _field(user, "id")
+        user_name = _field(user, "name", username) or username
+        user_email = _field(user, "email") or "N/A"
+
         from src.services.glpi_client import glpi_client as _client
 
-        params: Dict[str, Any] = {"range": "0-49"}
-        if user_id:
-            params["criteria[0][field]"] = 4
-            params["criteria[0][searchtype]"] = "equals"
-            params["criteria[0][value]"] = user_id
+        # Sem user_id resolvido NAO fazemos busca sem filtro (evita listar tudo).
+        if not user_id:
+            empty = (
+                f"# Histórico de Tickets - {username}\n\n"
+                f"Não foi possível resolver o ID do usuário '{username}' no GLPI.\n"
+            )
+            return {
+                "prompt_name": "glpi_user_ticket_history",
+                "compact": f"👤 Usuário '{username}' sem ID resolvível no GLPI.\n",
+                "detailed": empty,
+                "metadata": {"username": username},
+            }
+
+        # GLPI search field 4 = Requester (users_id_requester)
+        params: Dict[str, Any] = {
+            "range": "0-49",
+            "sort": 2,
+            "order": "DESC",
+            "criteria[0][field]": 4,
+            "criteria[0][searchtype]": "equals",
+            "criteria[0][value]": user_id,
+        }
 
         try:
             search_result = await _client.get("/apirest.php/search/Ticket", params=params, use_cache=False)
@@ -1637,18 +1824,24 @@ Usuário: {user_name}
         }
 
     async def _prompt_knowledge_base_search(self, args: Dict) -> Dict:
-        """Busca em base de conhecimento."""
+        """Busca REAL na base de conhecimento unificada (pgvector + RRF).
+
+        @MX:REASON: este prompt antes devolvia 3 artigos hardcoded
+        ('Como resetar senha do Windows' etc.) que NAO existem no GLPI.
+        Agora delega para o mesmo backend de glpi_search_knowledge_unified.
+        """
         search_query = args["search_query"]
+
+        from src.services.kb_search.handler import search_knowledge_unified
+
+        results_md = await search_knowledge_unified(
+            query=search_query, source="all", limit=10
+        )
 
         compact = f"""📚 Busca em Base de Conhecimento
 Termo: "{search_query}"
 
-📄 Artigos Encontrados:
-1. Como resetar senha do Windows
-2. Configurar VPN no smartphone
-3. Resolver erro de impressora offline
-
-💡 Dica: Use palavras-chave específicas
+{results_md}
 """
 
         detailed = f"""# Base de Conhecimento - Resultados da Busca
@@ -1658,70 +1851,12 @@ Termo: "{search_query}"
 
 ---
 
-## 📄 Artigos Relacionados
-
-### 1. Como Resetar Senha do Windows
-
-**Categoria:** Contas de Usuário
-**Visualizações:** 245
-**Útil:** 92%
-
-**Resumo:**
-Passo a passo para resetar senha de usuário no Windows 10/11 usando conta de administrador...
-
-[Ver artigo completo](#)
+{results_md}
 
 ---
 
-### 2. Configurar VPN no Smartphone
-
-**Categoria:** Acesso Remoto
-**Visualizações:** 189
-**Útil:** 88%
-
-**Resumo:**
-Tutorial para configurar cliente VPN em dispositivos iOS e Android para acesso seguro...
-
-[Ver artigo completo](#)
-
----
-
-### 3. Resolver Erro de Impressora Offline
-
-**Categoria:** Impressoras
-**Visualizações:** 312
-**Útil:** 85%
-
-**Resumo:**
-Solução para problema comum de impressoras que ficam offline no Windows...
-
-[Ver artigo completo](#)
-
----
-
-## 🔍 Não Encontrou o que Procurava?
-
-### Sugestões:
-- Tente termos de busca mais específicos
-- Verifique a ortografia
-- Use sinônimos ou termos relacionados
-
-### Criar Novo Artigo
-Se o problema não está documentado, considere criar um novo artigo na Base de Conhecimento.
-
----
-
-## 📊 Artigos Mais Populares
-
-1. Conectar à rede Wi-Fi corporativa (856 visualizações)
-2. Acessar email corporativo no celular (723 visualizações)
-3. Instalar impressora de rede (645 visualizações)
-4. Configurar assinatura de email (534 visualizações)
-5. Solicitar acesso a sistema (498 visualizações)
-
----
-
-*Busca realizada pelo Skills MCP GLPI*
+*Busca real (pgvector + RRF) via Skills MCP GLPI. Use a tool
+`glpi_search_knowledge_unified` para filtrar por fonte ou tenant.*
 """
 
         return {

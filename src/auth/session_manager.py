@@ -395,8 +395,12 @@ class SessionManager:
                 else:
                     await self._init_session()
                 response = await client.post(endpoint, json=payload)
-            
+
             response.raise_for_status()
+            # @MX:NOTE: invalida o cache de leitura apos qualquer escrita bem-sucedida.
+            # @MX:REASON: GET tem TTL longo; sem isto, get_followups/get_history/listas
+            # retornam dados pre-escrita e o LLM duplica acoes (ex: followups repetidos).
+            self.clear_cache()
             return response.json()
             
         except httpx.TimeoutException:
@@ -454,9 +458,11 @@ class SessionManager:
                 else:
                     await self._init_session()
                 response = await client.put(endpoint, json=payload)
-            
+
             response.raise_for_status()
-            
+            # @MX:NOTE: invalida cache de leitura apos escrita (ver post()).
+            self.clear_cache()
+
             # GLPI API pode retornar 200 OK com body vazio para updates
             text = response.text.strip()
             if not text:
@@ -513,8 +519,10 @@ class SessionManager:
                 else:
                     await self._init_session()
                 response = await client.delete(endpoint)
-            
+
             response.raise_for_status()
+            # @MX:NOTE: invalida cache de leitura apos escrita (ver post()).
+            self.clear_cache()
             return response.json()
             
         except httpx.TimeoutException:
