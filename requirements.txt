@@ -4,6 +4,7 @@ httpx==0.28.1
 pydantic==2.10.5
 pydantic-settings==2.5.0
 python-dotenv==1.0.1
+python-dateutil==2.9.0.post0
 prometheus-client==0.21.0
 pytest==8.3.5
 pytest-asyncio==0.24.0

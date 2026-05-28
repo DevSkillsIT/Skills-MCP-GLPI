@@ -10,10 +10,12 @@ import re
 import html
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
-from datetime import datetime
+from datetime import datetime, timedelta, date
+
+from dateutil import parser as _date_parser
 
 from src.config import settings
-from src.models.exceptions import GLPIError
+from src.models.exceptions import GLPIError, ValidationError
 
 
 class LoggerService:
@@ -523,36 +525,98 @@ class PaginationHelper:
         return offset, limit
 
 
+_DATE_KEYWORDS = {
+    "hoje": 0, "today": 0, "now": 0, "agora": 0,
+    "ontem": -1, "yesterday": -1,
+    "amanha": 1, "amanhã": 1, "tomorrow": 1,
+    "anteontem": -2,
+}
+
+
+def normalize_date(value: Optional[Union[str, datetime, date]]) -> Optional[str]:
+    """
+    Normaliza data em multiplos formatos para ISO 8601 (YYYY-MM-DD).
+
+    Aceita:
+        - YYYY-MM-DD (ISO, ja normalizado)
+        - DD/MM/YYYY (BR)
+        - DD-MM-YYYY
+        - MM/DD/YYYY (US, ambiguo — preferimos BR via dayfirst)
+        - YYYY-MM-DDTHH:MM:SS (ISO com hora — hora descartada)
+        - YYYY-MM-DD HH:MM:SS
+        - Strings naturais: 'hoje', 'today', 'ontem', 'yesterday', 'amanha', 'tomorrow', 'anteontem'
+        - None ou string vazia -> retorna None
+        - datetime/date Python -> formata direto
+
+    Returns:
+        String YYYY-MM-DD ou None.
+
+    Raises:
+        ValidationError se a string nao puder ser interpretada.
+    """
+    if value is None:
+        return None
+    if isinstance(value, (datetime, date)):
+        return value.strftime("%Y-%m-%d")
+    if not isinstance(value, str):
+        value = str(value)
+    s = value.strip()
+    if not s:
+        return None
+
+    # Keywords (case-insensitive)
+    key = s.lower()
+    if key in _DATE_KEYWORDS:
+        target = datetime.now().date() + timedelta(days=_DATE_KEYWORDS[key])
+        return target.strftime("%Y-%m-%d")
+
+    # Fast path: already ISO
+    if len(s) >= 10 and s[4] == "-" and s[7] == "-":
+        try:
+            return datetime.strptime(s[:10], "%Y-%m-%d").strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+
+    # Fallback: dateutil with dayfirst=True (BR convention)
+    try:
+        dt = _date_parser.parse(s, dayfirst=True, fuzzy=False)
+        return dt.strftime("%Y-%m-%d")
+    except (ValueError, _date_parser.ParserError, OverflowError):
+        raise ValidationError(
+            f"Data '{value}' invalida. Formatos aceitos: YYYY-MM-DD, DD/MM/YYYY, "
+            "DD-MM-YYYY, ISO com hora, ou palavras 'hoje', 'ontem', 'amanha'.",
+            "date_format",
+        )
+
+
 class DateTimeHelper:
     """
     Helper para manipulação de datas e horas.
     """
-    
+
     @staticmethod
-    def parse_date_range(date_from: str, date_to: str) -> tuple[str, str]:
+    def parse_date_range(
+        date_from: Optional[str], date_to: Optional[str]
+    ) -> tuple[Optional[str], Optional[str]]:
         """
-        Valida e formata range de datas.
-        
+        Valida e formata range de datas. Aceita multiplos formatos
+        (YYYY-MM-DD, DD/MM/YYYY, 'hoje', 'ontem', etc) — normaliza via normalize_date.
+
         Args:
-            date_from: Data inicial (YYYY-MM-DD)
-            date_to: Data final (YYYY-MM-DD)
-        
+            date_from: Data inicial (qualquer formato suportado por normalize_date)
+            date_to: Data final (idem)
+
         Returns:
-            Tuple (date_from_validado, date_to_validado)
+            Tuple (date_from_normalizado, date_to_normalizado) no formato
+            "YYYY-MM-DD HH:MM:SS" — from com 00:00:00, to com 23:59:59.
         """
-        try:
-            if date_from:
-                from_dt = datetime.strptime(date_from, "%Y-%m-%d")
-                date_from = from_dt.strftime("%Y-%m-%d 00:00:00")
-            
-            if date_to:
-                to_dt = datetime.strptime(date_to, "%Y-%m-%d")
-                date_to = to_dt.strftime("%Y-%m-%d 23:59:59")
-            
-            return date_from, date_to
-            
-        except ValueError:
-            raise ValidationError("Invalid date format. Use YYYY-MM-DD", "date_format")
+        normalized_from = normalize_date(date_from)
+        normalized_to = normalize_date(date_to)
+
+        out_from = f"{normalized_from} 00:00:00" if normalized_from else date_from
+        out_to = f"{normalized_to} 23:59:59" if normalized_to else date_to
+
+        return out_from, out_to
     
     @staticmethod
     def format_glpi_datetime(dt: datetime) -> str:
