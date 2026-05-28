@@ -58,20 +58,24 @@ class MCPHandler:
         CONSOLIDATED_TOOLS = [
             # === TICKETS (3 tools) ===
             {
-                "name": "glpi_search_ticket_requests",  # 30 chars
+                "name": "glpi_search_helpdesk_tickets",  # 28 chars
                 "description": (
-                    "Chamados, tickets, incidentes, requisicoes e solicitacoes no GLPI — listagem e busca textual com filtros "
-                    "por status, prioridade, entidade e periodo. Use quando precisar consultar demandas abertas, pendentes ou "
-                    "fechadas de um cliente no GLPI. Retorna tabela Markdown paginada. Consulta somente leitura."
-                ),  # 330 chars
+                    "Chamados, tickets, incidentes, requisicoes e solicitacoes de helpdesk no GLPI — listagem e busca textual "
+                    "com filtros por status, prioridade e periodo de criacao. Use para perguntas como 'chamados de hoje', "
+                    "'tickets abertos', 'incidentes em aberto'. IMPORTANTE: o token MCP ja fixa o cliente/tenant no GLPI, "
+                    "NAO preencha entity_id nem entity_name (so use para filtrar sub-entidade especifica). Sem parametros, "
+                    "retorna os 10 chamados mais recentes. Retorna tabela Markdown paginada. Consulta somente leitura."
+                ),
                 "input_schema": {
                     "type": "object",
                     "properties": {
-                        "status": {"type": "string", "description": "Status do chamado no GLPI. Valores: new (novo), assigned (atribuido), planned (planejado), pending (pendente), solved (solucionado), closed (fechado)", "enum": ["new", "assigned", "planned", "pending", "solved", "closed"]},
+                        "status": {"type": "string", "description": "Status do chamado no GLPI. Valores: new (novo), assigned (atribuido), planned (planejado), pending (pendente), solved (solucionado), closed (fechado). Para 'chamados abertos' use new OU omita para pegar todos os estados.", "enum": ["new", "assigned", "planned", "pending", "solved", "closed"]},
                         "priority": {"type": "integer", "description": "Prioridade do chamado. Valores: 1 (muito baixa), 2 (baixa), 3 (media), 4 (alta), 5 (muito alta), 6 (maior)", "minimum": 1, "maximum": 6},
-                        "entity_id": {"type": "integer", "description": "ID da entidade/cliente no GLPI"},
-                        "entity_name": {"type": "string", "description": "Nome da entidade/cliente (ex: 'Acme', 'Example Client')"},
-                        "query": {"type": "string", "description": "Texto para busca em titulo e conteudo (minimo 2 caracteres)"},
+                        "query": {"type": "string", "description": "Texto para busca em titulo e conteudo (minimo 2 caracteres). Omita para listagem sem busca textual."},
+                        "date_after": {"type": "string", "description": "Data de criacao a partir de. Aceita YYYY-MM-DD, DD/MM/YYYY, ISO com hora, ou palavras 'hoje'/'today'/'ontem'/'yesterday'/'amanha'/'tomorrow'. Para 'chamados de hoje' use 'hoje' (ou a data atual) em date_after E date_before."},
+                        "date_before": {"type": "string", "description": "Data de criacao ate. Aceita YYYY-MM-DD, DD/MM/YYYY, ISO com hora, ou palavras 'hoje'/'today'/'ontem'/'yesterday'/'amanha'/'tomorrow'. Para 'chamados de hoje' use 'hoje' em date_after E date_before."},
+                        "entity_id": {"type": "integer", "description": "OPCIONAL — Token ja fixa tenant. So preencha para filtrar UMA sub-entidade especifica dentro do cliente. ID numerico da entidade no GLPI."},
+                        "entity_name": {"type": "string", "description": "OPCIONAL — Token ja fixa tenant. So preencha para filtrar UMA sub-entidade pelo nome (ex: nome de uma filial). Nao use o nome do cliente principal."},
                         "limit": {"type": "integer", "description": "Quantidade maxima de resultados (padrao: 10, maximo: 50)", "minimum": 1, "maximum": 50, "default": 10},
                         "offset": {"type": "integer", "description": "Deslocamento para paginacao (padrao: 0)", "minimum": 0, "default": 0},
                     },
@@ -83,11 +87,12 @@ class MCPHandler:
             {
                 "name": "glpi_manage_ticket_operations",  # 33 chars
                 "description": (
-                    "Chamados, tickets, incidentes e requisicoes no GLPI — operacoes completas de criacao, consulta, atualizacao, "
-                    "atribuicao, resolucao, fechamento e acompanhamentos. Use action para especificar operacao no GLPI: "
-                    "get, create, update, delete, assign, close, resolve, add_followup, get_followups, get_history, get_stats, find_similar. "
-                    "Retorna Markdown."
-                ),  # 382 chars
+                    "Chamados, tickets, incidentes e requisicoes no GLPI — operacoes sobre UM chamado especifico: criacao, "
+                    "consulta detalhada, atualizacao, atribuicao, resolucao, fechamento, comentarios e estatisticas. Use action "
+                    "no GLPI: get, get_by_number, create, update, delete, assign, close, resolve, add_followup, get_followups, "
+                    "get_history, get_stats, find_similar. Para LISTAR chamados use glpi_search_helpdesk_tickets. Token ja fixa "
+                    "tenant — nao passe entity em get/update/delete. Retorna Markdown."
+                ),
                 "input_schema": {
                     "type": "object",
                     "properties": {
@@ -98,15 +103,15 @@ class MCPHandler:
                         "content": {"type": "string", "description": "Conteudo do acompanhamento (obrigatorio para add_followup)"},
                         "status": {"type": "string", "description": "Novo status. Valores: new (novo), assigned (atribuido), planned (planejado), pending (pendente), solved (solucionado), closed (fechado)", "enum": ["new", "assigned", "planned", "pending", "solved", "closed"]},
                         "priority": {"type": "integer", "description": "Prioridade. Valores: 1 (muito baixa) a 5 (muito alta), 6 (maior)", "minimum": 1, "maximum": 6},
-                        "entity_id": {"type": "integer", "description": "ID da entidade/cliente no GLPI"},
-                        "entity_name": {"type": "string", "description": "Nome da entidade/cliente no GLPI"},
+                        "entity_id": {"type": "integer", "description": "OPCIONAL — Token ja fixa tenant. So preencha em create/get_stats para sub-entidade especifica. ID numerico no GLPI."},
+                        "entity_name": {"type": "string", "description": "OPCIONAL — Token ja fixa tenant. So preencha em create/get_stats para sub-entidade especifica (resolvido automaticamente)."},
                         "user_id": {"type": "integer", "description": "ID do tecnico para atribuicao (obrigatorio para assign)"},
                         "solution": {"type": "string", "description": "Texto da solucao tecnica (obrigatorio para resolve e close)"},
                         "ticket_number": {"type": "string", "description": "Numero do chamado como string (para get_by_number)"},
                         "threshold": {"type": "number", "description": "Limite de similaridade 0.0-1.0 para find_similar. Padrao: 0.3", "minimum": 0, "maximum": 1, "default": 0.3},
                         "max_results": {"type": "integer", "description": "Numero maximo de tickets similares retornados para find_similar. Padrao: 10", "minimum": 1, "maximum": 50, "default": 10},
-                        "date_from": {"type": "string", "description": "Data inicial (YYYY-MM-DD) para get_stats"},
-                        "date_to": {"type": "string", "description": "Data final (YYYY-MM-DD) para get_stats"},
+                        "date_from": {"type": "string", "description": "Data inicial para get_stats. Aceita YYYY-MM-DD, DD/MM/YYYY ou palavras 'hoje'/'ontem'/'amanha'."},
+                        "date_to": {"type": "string", "description": "Data final para get_stats. Aceita YYYY-MM-DD, DD/MM/YYYY ou palavras 'hoje'/'ontem'/'amanha'."},
                         "is_private": {"type": "boolean", "description": "Se true, followup visivel apenas para tecnicos. Padrao: false", "default": False},
                     },
                     "required": ["action"],
@@ -118,17 +123,19 @@ class MCPHandler:
             {
                 "name": "glpi_manage_ticket_ai_analysis",  # 34 chars
                 "description": (
-                    "Analise inteligente de chamados e incidentes no GLPI — processamento por IA com categorizacao, priorizacao "
-                    "e sugestoes de solucao automaticas. Use quando precisar de recomendacoes baseadas no historico do GLPI. "
-                    "Acoes: trigger (disparar), get_result (consultar resultado), publish (publicar resposta). Retorna Markdown."
-                ),  # 340 chars
+                    "Analise por IA de chamados, tickets e incidentes do GLPI — orquestra job assincrono que categoriza, "
+                    "prioriza e sugere solucao baseada no historico. Fluxo em 3 passos: 1) action=trigger com ticket_id "
+                    "dispara o job e retorna job_id; 2) action=get_result com job_id consulta o resultado quando pronto; "
+                    "3) action=publish com job_id e response publica a resposta no chamado do GLPI. Sempre comece em trigger. "
+                    "Retorna Markdown."
+                ),
                 "input_schema": {
                     "type": "object",
                     "properties": {
-                        "action": {"type": "string", "description": "Operacao de IA no GLPI. Valores: trigger (disparar analise), get_result (consultar resultado), publish (publicar resposta no ticket)", "enum": ["trigger", "get_result", "publish"]},
-                        "ticket_id": {"type": "integer", "description": "ID do chamado no GLPI (obrigatorio para trigger)"},
-                        "job_id": {"type": "string", "description": "ID do job retornado por trigger (obrigatorio para get_result e publish)"},
-                        "response": {"type": "object", "description": "Payload da resposta IA a publicar (obrigatorio para publish)"},
+                        "action": {"type": "string", "description": "Etapa do fluxo de analise IA no GLPI. Valores: trigger (passo 1: dispara o job a partir do ticket_id), get_result (passo 2: consulta resultado usando job_id), publish (passo 3: publica resposta IA usando job_id e response)", "enum": ["trigger", "get_result", "publish"]},
+                        "ticket_id": {"type": "integer", "description": "ID do chamado a analisar no GLPI (obrigatorio para trigger)"},
+                        "job_id": {"type": "string", "description": "ID do job retornado pelo passo trigger (obrigatorio para get_result e publish)"},
+                        "response": {"type": "object", "description": "Payload da resposta IA a publicar no chamado (obrigatorio para publish; normalmente vem do get_result)"},
                     },
                     "required": ["action"],
                 },
@@ -142,16 +149,18 @@ class MCPHandler:
                 "description": (
                     "Ativos, equipamentos, patrimonio e inventario de TI no GLPI — busca por computadores, monitores, impressoras, "
                     "software, dispositivos de rede, reservas e estatisticas. Use scope para filtrar tipo de busca no GLPI. "
-                    "Aceita filtro por entidade e tipo de ativo. Retorna tabela Markdown paginada. Consulta somente leitura."
-                ),  # 342 chars
+                    "IMPORTANTE: o token MCP ja fixa o cliente/tenant — NAO preencha entity_id nem entity_name (so use para "
+                    "filtrar sub-entidade especifica). Sem parametros, retorna inventario completo do cliente. Retorna tabela "
+                    "Markdown paginada. Consulta somente leitura."
+                ),
                 "input_schema": {
                     "type": "object",
                     "properties": {
                         "scope": {"type": "string", "description": "Escopo da busca no GLPI. Valores: all (todos os ativos), computers (computadores), monitors (monitores), software (programas), devices (dispositivos de rede/telefone), reservations (reservas ativas), reservable (itens reservaveis), stats (estatisticas)", "enum": ["all", "computers", "monitors", "software", "devices", "reservations", "reservable", "stats"], "default": "all"},
                         "asset_type": {"type": "string", "description": "Tipo de ativo no GLPI. Valores: Computer, Monitor, Printer, NetworkEquipment, Phone, Peripheral", "enum": ["Computer", "Monitor", "Printer", "NetworkEquipment", "Phone", "Peripheral"]},
                         "query": {"type": "string", "description": "Texto para busca por nome, serial ou usuario vinculado"},
-                        "entity_id": {"type": "integer", "description": "ID da entidade/cliente no GLPI"},
-                        "entity_name": {"type": "string", "description": "Nome da entidade/cliente no GLPI"},
+                        "entity_id": {"type": "integer", "description": "OPCIONAL — Token ja fixa tenant. So preencha para filtrar UMA sub-entidade especifica. ID numerico no GLPI."},
+                        "entity_name": {"type": "string", "description": "OPCIONAL — Token ja fixa tenant. So preencha para filtrar UMA sub-entidade pelo nome."},
                         "limit": {"type": "integer", "description": "Quantidade maxima de resultados (padrao: 10, maximo: 50)", "minimum": 1, "maximum": 50, "default": 10},
                         "offset": {"type": "integer", "description": "Deslocamento para paginacao (padrao: 0)", "minimum": 0, "default": 0},
                     },
@@ -163,18 +172,24 @@ class MCPHandler:
             {
                 "name": "glpi_manage_asset_operations",  # 32 chars
                 "description": (
-                    "Ativos, equipamentos e patrimonio no GLPI — operacoes de cadastro, consulta detalhada, atualizacao, "
-                    "exclusao e gerenciamento de reservas. Use action para especificar operacao no GLPI: get, get_details, "
-                    "create, update, delete, get_reservations, create_reservation, update_reservation. Retorna Markdown."
-                ),  # 342 chars
+                    "Ativos, equipamentos e patrimonio no GLPI — operacoes sobre UM ativo especifico: cadastro, consulta "
+                    "detalhada, atualizacao, exclusao e gerenciamento de reservas. Use action no GLPI: get, get_details, "
+                    "create, update, delete, get_reservations, create_reservation, update_reservation. Para LISTAR ativos "
+                    "use glpi_search_asset_inventory. Token ja fixa tenant — nao passe entity em operacoes basicas. Retorna Markdown."
+                ),
                 "input_schema": {
                     "type": "object",
                     "properties": {
                         "action": {"type": "string", "description": "Operacao sobre ativo no GLPI. Valores: get (detalhes basicos), get_details (detalhes com hardware), create (cadastrar), update (atualizar), delete (excluir), get_reservations (ver reservas), create_reservation (reservar), update_reservation (alterar reserva)", "enum": ["get", "get_details", "create", "update", "delete", "get_reservations", "create_reservation", "update_reservation"]},
                         "asset_type": {"type": "string", "description": "Tipo de ativo no GLPI. Valores: Computer, Monitor, Printer, NetworkEquipment, Phone, Peripheral", "enum": ["Computer", "Monitor", "Printer", "NetworkEquipment", "Phone", "Peripheral"]},
-                        "asset_id": {"type": "integer", "description": "ID do ativo no GLPI (obrigatorio para get, update, delete, get_reservations)"},
+                        "asset_id": {"type": "integer", "description": "ID do ativo no GLPI (obrigatorio para get, get_details, update, delete, get_reservations, create_reservation)"},
                         "name": {"type": "string", "description": "Nome do ativo (obrigatorio para create)"},
                         "serial_number": {"type": "string", "description": "Numero de serie do equipamento"},
+                        "user_id": {"type": "integer", "description": "ID do usuario para a reserva (obrigatorio para create_reservation)"},
+                        "date_start": {"type": "string", "description": "Inicio da reserva 'YYYY-MM-DD HH:MM:SS' (obrigatorio para create_reservation)"},
+                        "date_end": {"type": "string", "description": "Fim da reserva 'YYYY-MM-DD HH:MM:SS' (obrigatorio para create_reservation)"},
+                        "reservation_id": {"type": "integer", "description": "ID da reserva existente (obrigatorio para update_reservation)"},
+                        "comment": {"type": "string", "description": "Comentario opcional da reserva"},
                     },
                     "required": ["action"],
                 },
@@ -188,15 +203,16 @@ class MCPHandler:
                 "description": (
                     "Usuarios, colaboradores, tecnicos, grupos, entidades e localizacoes no GLPI — busca unificada de recursos "
                     "administrativos com filtros por nome, email e entidade. Use resource para selecionar: users, groups, "
-                    "entities, locations. Aceita query para busca textual no GLPI. Retorna tabela Markdown. Consulta somente leitura."
-                ),  # 354 chars
+                    "entities, locations. IMPORTANTE: o token MCP ja fixa o cliente/tenant — NAO preencha entity_id nem "
+                    "entity_name (so use para filtrar sub-entidade especifica). Retorna tabela Markdown. Consulta somente leitura."
+                ),
                 "input_schema": {
                     "type": "object",
                     "properties": {
                         "resource": {"type": "string", "description": "Tipo de recurso administrativo no GLPI. Valores: users (usuarios/tecnicos), groups (grupos/equipes), entities (entidades/clientes), locations (localizacoes/escritorios)", "enum": ["users", "groups", "entities", "locations"], "default": "users"},
                         "query": {"type": "string", "description": "Texto para busca por nome, sobrenome, email ou login (aplica-se a users)"},
-                        "entity_id": {"type": "integer", "description": "ID da entidade/cliente para filtrar no GLPI"},
-                        "entity_name": {"type": "string", "description": "Nome da entidade/cliente para filtrar no GLPI"},
+                        "entity_id": {"type": "integer", "description": "OPCIONAL — Token ja fixa tenant. So preencha para filtrar usuarios/recursos de UMA sub-entidade especifica."},
+                        "entity_name": {"type": "string", "description": "OPCIONAL — Token ja fixa tenant. So preencha para filtrar pelo nome de UMA sub-entidade."},
                         "limit": {"type": "integer", "description": "Quantidade maxima de resultados (padrao: 10, maximo: 50)", "minimum": 1, "maximum": 50, "default": 10},
                         "offset": {"type": "integer", "description": "Deslocamento para paginacao (padrao: 0)", "minimum": 0, "default": 0},
                     },
@@ -208,10 +224,11 @@ class MCPHandler:
             {
                 "name": "glpi_manage_admin_resources",  # 31 chars
                 "description": (
-                    "Usuarios, colaboradores, grupos, entidades e localizacoes no GLPI — operacoes de cadastro, consulta "
-                    "detalhada, atualizacao e exclusao de recursos administrativos. Use resource + action no GLPI: "
-                    "get (detalhe), create (cadastrar), update (atualizar), delete (excluir). Retorna Markdown."
-                ),  # 324 chars
+                    "Usuarios, colaboradores, grupos, entidades e localizacoes no GLPI — operacoes sobre UM recurso "
+                    "administrativo especifico: cadastro, consulta detalhada, atualizacao e exclusao. Use resource + action "
+                    "no GLPI: get (detalhe), create (cadastrar), update (atualizar), delete (excluir). Para LISTAR use "
+                    "glpi_search_admin_resources. Token ja fixa tenant — nao passe entity em operacoes basicas. Retorna Markdown."
+                ),
                 "input_schema": {
                     "type": "object",
                     "properties": {
@@ -316,15 +333,16 @@ class MCPHandler:
             {
                 "name": "glpi_get_prompt_template",  # 27 chars - acceptable per Rule 3
                 "description": (
-                    "Prompt, relatorio e analise gerencial do GLPI — executa modelo especifico com argumentos customizados "
-                    "para gerar dashboards de SLA, tendencias de chamados, produtividade de tecnicos e ROI de ativos. "
-                    "Use quando precisar de analise detalhada no GLPI. Retorna resultado em Markdown formatado."
-                ),  # 328 chars
+                    "Relatorios gerenciais, dashboards e analises pre-fabricadas do GLPI — EXECUTA um relatorio nomeado e "
+                    "retorna os DADOS reais ja processados em Markdown (SLA, tendencias de chamados, produtividade de tecnicos, "
+                    "ROI de ativos). NAO retorna template em branco — retorna o relatorio pronto. Para descobrir nomes disponiveis "
+                    "chame glpi_list_available_prompts antes. Token ja fixa tenant — relatorio sai do escopo do cliente."
+                ),
                 "input_schema": {
                     "type": "object",
                     "properties": {
-                        "name": {"type": "string", "description": "Nome do prompt a executar no GLPI (use glpi_list_available_prompts para ver opcoes disponiveis)"},
-                        "arguments": {"type": "object", "description": "Argumentos do prompt no formato chave-valor (use glpi_list_available_prompts para ver detalhes de cada prompt)"},
+                        "name": {"type": "string", "description": "Nome do relatorio/prompt a executar no GLPI (ex: 'sla_dashboard', 'ticket_trends'). Use glpi_list_available_prompts para ver os 15 disponiveis."},
+                        "arguments": {"type": "object", "description": "Argumentos do relatorio no formato chave-valor (ex: {'periodo': '30d'}). Cada relatorio aceita argumentos especificos — consulte glpi_list_available_prompts para detalhes."},
                     },
                     "required": ["name"],
                 },
@@ -1627,33 +1645,86 @@ class MCPHandler:
                     "serverInfo": {"name": "mcp-glpi", "version": "2.0.0"},
                     "capabilities": {"tools": {}, "prompts": {}, "resources": {}},
                     "instructions": (
-                        "Servidor MCP GLPI - Gerenciamento de chamados, ativos, usuarios e webhooks\n\n"
+                        "Servidor MCP GLPI - Gerenciamento de chamados, ativos, usuarios e webhooks (15 tools)\n\n"
                         "=== CATEGORIAS DE TOOLS ===\n\n"
                         "TICKETS (3 tools):\n"
-                        "- glpi_search_ticket_requests: Buscar chamados, incidentes e requisicoes por status, entidade, prioridade.\n"
-                        "- glpi_manage_ticket_operations: CRUD completo (action: get/create/update/delete/assign/close/resolve/add_followup/get_followups/get_history/get_stats/find_similar).\n"
-                        "- glpi_manage_ticket_ai_analysis: Analise IA (action: trigger/get_result/publish).\n\n"
+                        "- glpi_search_helpdesk_tickets: Listar/buscar chamados por status, prioridade, query textual e periodo (date_after/date_before). Sem filtros = 10 mais recentes.\n"
+                        "- glpi_manage_ticket_operations: Operacoes sobre UM chamado (action: get/get_by_number/create/update/delete/assign/close/resolve/add_followup/get_followups/get_history/get_stats/find_similar).\n"
+                        "- glpi_manage_ticket_ai_analysis: Analise IA em 3 passos sequenciais (trigger -> get_result -> publish).\n\n"
                         "ATIVOS (2 tools):\n"
                         "- glpi_search_asset_inventory: Buscar equipamentos, patrimonio (scope: all/computers/monitors/software/devices/reservations/stats).\n"
-                        "- glpi_manage_asset_operations: CRUD + reservas (action: get/get_details/create/update/delete/get_reservations/create_reservation).\n\n"
+                        "- glpi_manage_asset_operations: Operacoes sobre UM ativo (action: get/get_details/create/update/delete/get_reservations/create_reservation/update_reservation).\n\n"
                         "ADMIN (2 tools):\n"
                         "- glpi_search_admin_resources: Buscar usuarios, grupos, entidades, localizacoes (resource: users/groups/entities/locations).\n"
-                        "- glpi_manage_admin_resources: CRUD admin (resource + action: get/create/update/delete).\n\n"
+                        "- glpi_manage_admin_resources: Operacoes sobre UM recurso (resource + action: get/create/update/delete).\n\n"
                         "WEBHOOKS (2 tools):\n"
                         "- glpi_search_webhook_integrations: Listar webhooks, stats, entregas (scope: list/stats/deliveries).\n"
                         "- glpi_manage_webhook_integrations: CRUD + controle (action: get/create/update/delete/test/trigger/enable/disable/retry).\n\n"
-                        "BRIDGE (5 tools):\n"
-                        "- glpi_list_available_resources / glpi_read_resource_by_uri: Resources MCP (entidades, status, categorias, prioridades).\n"
-                        "- glpi_list_available_prompts / glpi_get_prompt_template: 15 prompts de analise gerencial e operacional.\n"
-                        "- glpi_search_knowledge_articles: Base de conhecimento e solucoes.\n\n"
+                        "BRIDGE (4 tools):\n"
+                        "- glpi_list_available_resources: Catalogo de URIs estaticas (entidades, status, categorias, prioridades).\n"
+                        "- glpi_read_resource_by_uri: Le uma URI especifica (glpi://entities, glpi://ticket-status, glpi://ticket-categories, glpi://priorities).\n"
+                        "- glpi_list_available_prompts: Catalogo dos 15 relatorios pre-fabricados (SLA, tendencias, produtividade, ROI).\n"
+                        "- glpi_get_prompt_template: EXECUTA um relatorio nomeado e retorna DADOS reais. NAO retorna template em branco.\n\n"
+                        "KNOWLEDGE (2 tools):\n"
+                        "- glpi_search_knowledge_unified: PREFERIDA — busca semantica (pgvector + RRF) em chamados resolvidos + help oficial + comunidade. Use para duvidas, mensagens de erro, sintomas, how-to.\n"
+                        "- glpi_search_knowledge_articles: Apenas artigos KB nativos via REST do GLPI. Use SOMENTE quando precisar especificamente da base nativa (raro). Default = unified.\n\n"
                         "=== FORMATO ===\n"
-                        "- search_*: limit (padrao 10, max 50), offset, filtros especificos.\n"
-                        "- manage_*: action (obrigatorio), IDs inteiros (ticket_id, asset_id, etc.).\n"
+                        "- search_*: limit (padrao 10, max 50), offset, filtros especificos. Sem filtros = lista os mais recentes.\n"
+                        "- manage_*: action (obrigatorio), IDs inteiros (ticket_id, asset_id, etc).\n"
+                        "- Datas: aceita ISO YYYY-MM-DD, BR DD/MM/YYYY, ISO com hora, e palavras 'hoje'/'today'/'ontem'/'yesterday'/'amanha'/'tomorrow'. Normalizado automaticamente — use o formato mais natural.\n"
                         "- Todas as respostas em Markdown (tabelas e detalhes).\n\n"
+                        "=== TENANT / ENTITY ===\n"
+                        "- O token MCP ja fixa o cliente/tenant. NAO preencha entity_id nem entity_name "
+                        "nas chamadas comuns — passe vazio que o GLPI retorna tudo do escopo do token.\n"
+                        "- So passe entity_id/entity_name se o usuario pedir explicitamente para filtrar "
+                        "uma sub-entidade ou filial especifica dentro do cliente.\n"
+                        "- Para 'chamados de hoje', 'tickets abertos', 'ativos do cliente': chame search_* "
+                        "SEM entity_id e SEM entity_name.\n\n"
+                        "=== EXEMPLOS DE CHAMADA (use o formato de data mais natural — sera normalizado) ===\n"
+                        "- Chamados criados hoje (forma simples com keyword):\n"
+                        "    glpi_search_helpdesk_tickets(date_after='hoje', date_before='hoje')\n"
+                        "- Chamados criados ontem (formato BR):\n"
+                        "    glpi_search_helpdesk_tickets(date_after='ontem', date_before='ontem')\n"
+                        "- Chamados em aberto (qualquer data):\n"
+                        "    glpi_search_helpdesk_tickets(status='new')\n"
+                        "- Chamados abertos de janeiro (formato BR DD/MM/YYYY):\n"
+                        "    glpi_search_helpdesk_tickets(status='new', date_after='01/01/2026', date_before='31/01/2026', limit=50)\n"
+                        "- Buscar 'impressora nao imprime' no titulo/descricao:\n"
+                        "    glpi_search_helpdesk_tickets(query='impressora nao imprime')\n"
+                        "- Detalhe completo do ticket 1234:\n"
+                        "    glpi_manage_ticket_operations(action='get', ticket_id=1234)\n"
+                        "- Abrir chamado novo:\n"
+                        "    glpi_manage_ticket_operations(action='create', title='Titulo curto', description='Detalhes completos')\n"
+                        "- Buscar solucao para erro de banco:\n"
+                        "    glpi_search_knowledge_unified(query='ORA-00942 table does not exist')\n"
+                        "- Rodar relatorio de SLA dos ultimos 30 dias:\n"
+                        "    glpi_get_prompt_template(name='sla_dashboard', arguments={'period_days': 30})\n"
+                        "- Analise IA de um ticket (fluxo obrigatorio em 3 passos):\n"
+                        "    1) glpi_manage_ticket_ai_analysis(action='trigger', ticket_id=1234)  # retorna job_id\n"
+                        "    2) glpi_manage_ticket_ai_analysis(action='get_result', job_id=<job>)  # retorna response\n"
+                        "    3) glpi_manage_ticket_ai_analysis(action='publish', job_id=<job>, response=<resp>)  # publica\n\n"
+                        "=== WORKFLOWS COMUNS ===\n"
+                        "- 'Quantos chamados abertos hoje?': search_helpdesk_tickets com date_after=hoje + date_before=hoje. Conte os retornados (campo 'total' do paginador).\n"
+                        "- 'Encontrar solucao para erro X': PRIMEIRO tente search_knowledge_unified(query=erro). NAO use search_knowledge_articles direto.\n"
+                        "- 'Atribuir ticket Y ao tecnico Z': search_admin_resources(resource='users', query='nome Z') para pegar user_id; depois manage_ticket_operations(action='assign', ticket_id=Y, user_id=<id>).\n"
+                        "- 'Listar ativos do cliente': search_asset_inventory() sem entity (token ja fixa cliente).\n"
+                        "- 'Tickets parecidos com o 1234': manage_ticket_operations(action='find_similar', ticket_id=1234).\n\n"
                         "=== DICAS ===\n"
-                        "- Comece com search_ para descobrir recursos, depois manage_ para detalhes.\n"
+                        "- Comece com search_ para descobrir recursos, depois manage_ para detalhes/acao.\n"
                         "- Use resources (glpi://entities, glpi://ticket-status) para dados estaticos.\n"
-                        "- Para relatorios, use glpi_get_prompt_template com um dos 15 prompts disponiveis."
+                        "- Quando em duvida sobre filtros, chame search_ SEM parametros primeiro para ver o que existe.\n\n"
+                        "=== COMO USAR OS PROMPTS (glpi_get_prompt_template) ===\n"
+                        "- Fluxo: 1) glpi_list_available_prompts para ver os 15 modelos e seus argumentos; "
+                        "2) glpi_get_prompt_template(name=..., arguments={...}).\n"
+                        "- period_days e min_occurrences sao INTEIROS em dias/ocorrencias (ex: 30, 90).\n"
+                        "- entity_name aqui e opcional. Para deployments single-tenant (Ramada, Skills), OMITA — relatorio sai automaticamente do escopo do token.\n"
+                        "- Prompts que dependem de ticket_id/username/search_term exigem esse argumento.\n"
+                        "- IMPORTANTE: os prompts retornam DADOS REAIS do GLPI. Quando uma metrica nao existe "
+                        "nesta instancia (custo monetario, NPS/CSAT, ROI financeiro, tempo medio por tecnico), "
+                        "o prompt informa 'nao disponivel' em vez de inventar numeros. NUNCA apresente esses "
+                        "campos como se fossem reais; repasse o aviso de indisponibilidade ao usuario.\n"
+                        "- Prompts de checklist (onboarding, hardware_request, change_management) sao modelos "
+                        "de processo (texto-guia), nao consultas de dados."
                     ),
                 }
             elif method == "tools/list":

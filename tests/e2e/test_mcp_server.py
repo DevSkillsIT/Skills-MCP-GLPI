@@ -86,7 +86,7 @@ def _glpi_authed() -> bool:
         with httpx.Client(timeout=10) as client:
             r = client.post(MCP_URL, headers=_HEADERS, json={
                 "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                "params": {"name": "glpi_search_ticket_requests", "arguments": {"limit": 1}},
+                "params": {"name": "glpi_search_helpdesk_tickets", "arguments": {"limit": 1}},
             })
             d = r.json()
             if "error" in d:
@@ -143,7 +143,7 @@ async def test_tools_list_count():
     assert len(tools) >= 14
     tool_names = [t["name"] for t in tools]
     # Check core tools
-    assert "glpi_search_ticket_requests" in tool_names
+    assert "glpi_search_helpdesk_tickets" in tool_names
     assert "glpi_manage_ticket_operations" in tool_names
     assert "glpi_search_asset_inventory" in tool_names
     assert "glpi_manage_asset_operations" in tool_names
@@ -183,7 +183,7 @@ async def test_resources_list():
 async def test_search_tickets_returns_markdown():
     """search_tickets returns Markdown, not JSON."""
     res = await mcp_call("tools/call", {
-        "name": "glpi_search_ticket_requests",
+        "name": "glpi_search_helpdesk_tickets",
         "arguments": {"limit": 5},
     })
     text = res.get("result", {}).get("content", [{}])[0].get("text", "")
@@ -214,7 +214,7 @@ async def test_search_assets_returns_markdown():
 async def test_default_limit_is_10():
     """search_tickets without limit returns max 10 results."""
     res = await mcp_call("tools/call", {
-        "name": "glpi_search_ticket_requests",
+        "name": "glpi_search_helpdesk_tickets",
         "arguments": {},
     })
     text = res.get("result", {}).get("content", [{}])[0].get("text", "")
@@ -245,7 +245,7 @@ async def test_read_resource_ticket_status():
 async def test_response_size_under_400kb():
     """search_tickets with max limit stays under 400KB."""
     res = await mcp_call("tools/call", {
-        "name": "glpi_search_ticket_requests",
+        "name": "glpi_search_helpdesk_tickets",
         "arguments": {"limit": 50},
     })
     text = res.get("result", {}).get("content", [{}])[0].get("text", "")
@@ -281,7 +281,7 @@ async def test_all_readonly_tools_reachable():
 async def test_get_ticket_by_id_roundtrip():
     """search tickets -> take an id -> manage_ticket_operations(action=get)."""
     res = await mcp_call("tools/call", {
-        "name": "glpi_search_ticket_requests", "arguments": {"limit": 3},
+        "name": "glpi_search_helpdesk_tickets", "arguments": {"limit": 3},
     })
     text = _text(res)
     if "Nenhum" in text or "|" not in text:

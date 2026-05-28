@@ -197,7 +197,7 @@ curl http://localhost:8824/health
 
 | Tool | Description |
 |------|-------------|
-| `glpi_search_ticket_requests` | Search tickets/incidents/requests by status, priority, entity, category |
+| `glpi_search_helpdesk_tickets` | Search tickets/incidents/requests by status, priority, entity, category |
 | `glpi_manage_ticket_operations` | CRUD: get/create/update/delete/assign/close/resolve/add_followup/get_followups/get_history/get_stats |
 | `glpi_manage_ticket_ai_analysis` | AI analysis: trigger/get_result/publish |
 
@@ -345,7 +345,7 @@ glpi_delete_ticket, glpi_assign_ticket, glpi_close_ticket, ...
 
 **After (v2.0):**
 ```
-14 tools: glpi_search_ticket_requests, glpi_manage_ticket_operations,
+14 tools: glpi_search_helpdesk_tickets, glpi_manage_ticket_operations,
 glpi_manage_ticket_ai_analysis, glpi_search_asset_inventory,
 glpi_manage_asset_operations, glpi_search_admin_resources, ...
 ```

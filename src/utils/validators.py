@@ -32,7 +32,7 @@ def validate_positive_int(value, field_name: str = "id", allow_zero: bool = Fals
             "error": (
                 f"{field_name} invalido: '{value}'. "
                 f"Esperado inteiro {bound_hint}. "
-                f"Use a tool de busca correspondente (glpi_search_ticket_requests, "
+                f"Use a tool de busca correspondente (glpi_search_helpdesk_tickets, "
                 f"glpi_search_admin_resources, glpi_search_asset_inventory) para obter IDs validos."
             ),
         }

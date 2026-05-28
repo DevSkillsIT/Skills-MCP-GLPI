@@ -8,7 +8,7 @@
 
 | # | Tool | Domínio | Tipo |
 |---|------|---------|------|
-| 1 | `glpi_search_ticket_requests` | Tickets | Leitura |
+| 1 | `glpi_search_helpdesk_tickets` | Tickets | Leitura |
 | 2 | `glpi_manage_ticket_operations` | Tickets | Escrita |
 | 3 | `glpi_manage_ticket_ai_analysis` | Tickets | Escrita |
 | 4 | `glpi_search_asset_inventory` | Ativos | Leitura |
@@ -27,7 +27,7 @@
 
 ## 1. TICKETS
 
-### 1.1 `glpi_search_ticket_requests`
+### 1.1 `glpi_search_helpdesk_tickets`
 
 Busca e listagem de chamados, tickets e incidentes no GLPI.
 
@@ -46,13 +46,13 @@ Busca e listagem de chamados, tickets e incidentes no GLPI.
 **Exemplo:**
 ```
 "Listar chamados abertos da entidade Skills IT"
-→ Tool: glpi_search_ticket_requests
+→ Tool: glpi_search_helpdesk_tickets
 → Params: { "status": "new", "entity_name": "Skills IT", "limit": 20 }
 ```
 
 ```
 "Buscar chamados sobre impressora"
-→ Tool: glpi_search_ticket_requests
+→ Tool: glpi_search_helpdesk_tickets
 → Params: { "query": "impressora" }
 ```
 

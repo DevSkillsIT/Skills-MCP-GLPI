@@ -14,7 +14,7 @@
 ```
 Usuário: "Quais chamados novos temos hoje?"
 
-Tool: glpi_search_ticket_requests
+Tool: glpi_search_helpdesk_tickets
 Params: { "status": "new", "limit": 20 }
 ```
 
@@ -22,7 +22,7 @@ Params: { "status": "new", "limit": 20 }
 ```
 Usuário: "Algum chamado urgente?"
 
-Tool: glpi_search_ticket_requests
+Tool: glpi_search_helpdesk_tickets
 Params: { "status": "new", "priority": 5, "limit": 10 }
 ```
 
@@ -246,7 +246,7 @@ Params: {
 
 ### Passo 2 — Buscar incidentes relacionados
 ```
-Tool: glpi_search_ticket_requests
+Tool: glpi_search_helpdesk_tickets
 Params: { "query": "FileServer01", "limit": 20 }
 ```
 
@@ -735,7 +735,7 @@ Use esta matriz para testar 100 % da superfície do MCP após mudanças:
 
 | Tool | Action / Scope | Cenário |
 |------|----------------|---------|
-| `glpi_search_ticket_requests` | — (status/priority/query/entity) | 1, 6 |
+| `glpi_search_helpdesk_tickets` | — (status/priority/query/entity) | 1, 6 |
 | `glpi_manage_ticket_operations` | `get` | 1 |
 | `glpi_manage_ticket_operations` | `get_by_number` | 11 |
 | `glpi_manage_ticket_operations` | `create` | 2, 5, 7 |

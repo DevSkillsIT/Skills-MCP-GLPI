@@ -50,7 +50,7 @@ class TestMCPHandlersIntegration:
             "jsonrpc": "2.0",
             "method": "tools/call",
             "params": {
-                "name": "glpi_search_ticket_requests",
+                "name": "glpi_search_helpdesk_tickets",
                 "arguments": {"limit": 10},
             },
             "id": 2,
@@ -127,7 +127,7 @@ class TestMCPHandlersIntegration:
             "jsonrpc": "2.0",
             "method": "tools/call",
             "params": {
-                "name": "glpi_search_ticket_requests",
+                "name": "glpi_search_helpdesk_tickets",
                 "arguments": "invalid_string",  # Deve ser objeto
             },
             "id": 4,
@@ -202,10 +202,10 @@ class TestMCPHandlersIntegration:
     @pytest.mark.asyncio
     async def test_tool_info_retrieval(self):
         """AC08: Deve recuperar informações específicas de tool"""
-        info = mcp_handler.get_tool_info("glpi_search_ticket_requests")
+        info = mcp_handler.get_tool_info("glpi_search_helpdesk_tickets")
 
         assert info is not None
-        assert info["name"] == "glpi_search_ticket_requests"
+        assert info["name"] == "glpi_search_helpdesk_tickets"
         assert info["category"] == "tickets"
         assert "description" in info
         assert "input_schema" in info
@@ -309,7 +309,7 @@ class TestMCPHandlersIntegration:
             "jsonrpc": "2.0",
             "method": "tools/call",
             "params": {
-                "name": "glpi_search_ticket_requests",
+                "name": "glpi_search_helpdesk_tickets",
                 "arguments": {"limit": 50},  # Hard cap do schema é 50
             },
             "id": 9,
@@ -335,7 +335,7 @@ class TestMCPHandlersIntegration:
             "jsonrpc": "2.0",
             "method": "tools/call",
             "params": {
-                "name": "glpi_search_ticket_requests",
+                "name": "glpi_search_helpdesk_tickets",
                 "arguments": {"query": "<script>alert('xss')</script>"},
             },
             "id": 10,
@@ -564,7 +564,7 @@ class TestMCPHandlersIntegration:
                 "jsonrpc": "2.0",
                 "method": "tools/call",
                 "params": {
-                    "name": "glpi_search_ticket_requests",
+                    "name": "glpi_search_helpdesk_tickets",
                     "arguments": {"limit": 10},
                 },
                 "id": 17,

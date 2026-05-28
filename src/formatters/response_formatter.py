@@ -204,7 +204,7 @@ def _dispatch_manage_webhooks(data: Any, args: dict) -> str:
 
 TOOL_FORMATTERS: dict[str, Any] = {
     # === TICKETS (3 tools) — DIRETRIZES-OBRIGATORIAS names ===
-    "glpi_search_ticket_requests": lambda data, args: format_tickets_list(data, args),
+    "glpi_search_helpdesk_tickets": lambda data, args: format_tickets_list(data, args),
     "glpi_manage_ticket_operations": _dispatch_manage_tickets,
     "glpi_manage_ticket_ai_analysis": _dispatch_manage_ai,
     # === ASSETS (2 tools) ===

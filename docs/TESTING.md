@@ -79,7 +79,7 @@ curl -s -X POST $GLPI_MCP_URL/mcp \
     "id": 1,
     "method": "tools/call",
     "params": {
-      "name": "glpi_search_ticket_requests",
+      "name": "glpi_search_helpdesk_tickets",
       "arguments": {"status": "new", "limit": 5}
     }
   }' | jq .

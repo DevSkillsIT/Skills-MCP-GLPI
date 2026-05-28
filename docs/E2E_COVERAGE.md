@@ -15,7 +15,7 @@ Traceability for what the automated suites validate vs. what needs credentials.
 Discovered dynamically via `tools/list`, `prompts/list`, `resources/list`.
 
 **Read-only / GET tools (10) — all smoke-tested** (`test_all_readonly_tools_reachable`):
-`glpi_search_ticket_requests`, `glpi_search_asset_inventory`, `glpi_search_admin_resources`,
+`glpi_search_helpdesk_tickets`, `glpi_search_asset_inventory`, `glpi_search_admin_resources`,
 `glpi_search_webhook_integrations`, `glpi_list_available_resources`, `glpi_read_resource_by_uri`,
 `glpi_list_available_prompts`, `glpi_get_prompt_template`, `glpi_search_knowledge_articles`,
 `glpi_search_knowledge_unified`.

@@ -21,7 +21,7 @@ from src.formatters.response_formatter import TOOL_FORMATTERS
 #   readOnlyHint, destructiveHint, idempotentHint, openWorldHint
 EXPECTED_ANNOTATIONS = {
     # search_* tools: read-only, non-destructive
-    "glpi_search_ticket_requests": {
+    "glpi_search_helpdesk_tickets": {
         "readOnlyHint": True,
         "destructiveHint": False,
         "idempotentHint": True,
@@ -119,7 +119,7 @@ ANNOTATION_PROPERTIES = [
 ]
 
 SEARCH_AND_LIST_TOOLS = [
-    "glpi_search_ticket_requests",
+    "glpi_search_helpdesk_tickets",
     "glpi_search_asset_inventory",
     "glpi_search_admin_resources",
     "glpi_search_webhook_integrations",
