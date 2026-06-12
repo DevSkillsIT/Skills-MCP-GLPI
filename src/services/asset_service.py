@@ -208,13 +208,16 @@ class AssetService:
                     forcedisplay=forcedisplay_ids,
                     range_limit=limit,
                     range_offset=offset,
-                    is_recursive=entity_id is not None  # Buscar em sub-entidades quando filtrar por entity
+                    is_recursive=entity_id is not None,  # Buscar em sub-entidades quando filtrar por entity
+                    expand_dropdowns=True,  # status/local/fabricante/usuario como NOME
                 )
             else:
                 # Sem filtros, usar endpoint simples (mais rápido)
                 logger.info(f"Listing {item_type} assets without filters")
                 params = {
-                    "range": f"{offset}-{offset + limit - 1}"
+                    "range": f"{offset}-{offset + limit - 1}",
+                    # expand_dropdowns: status/localizacao/etc. voltam como NOME.
+                    "expand_dropdowns": 1,
                 }
                 endpoint = f"/apirest.php/{item_type}"
                 result = await self.client.get(endpoint, params, use_cache)

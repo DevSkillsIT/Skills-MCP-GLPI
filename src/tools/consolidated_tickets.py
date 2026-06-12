@@ -367,14 +367,19 @@ async def manage_tickets(
         # --- Dispatch per action ---
 
         if action == "get":
-            ticket = await ticket_service.get_ticket(ticket_id)
+            # Detalhe MAXIMO: atores resolvidos, categoria/SLA/origem por nome,
+            # contagem de anexos (1-2 chamadas extras, conforme escolhido).
+            ticket = await ticket_service.get_ticket_detail(ticket_id)
             return response_truncator.truncate_json_response(ticket)
 
         if action == "get_by_number":
             if not ticket_number or not ticket_number.strip():
                 raise ValidationError("ticket_number is required", "ticket_number")
             ticket = await ticket_service.get_ticket_by_number(ticket_number)
-            return ticket or {}
+            # Reenriquecer pelo id encontrado para o mesmo detalhe completo.
+            if ticket and ticket.get("id"):
+                ticket = await ticket_service.get_ticket_detail(int(ticket["id"]))
+            return response_truncator.truncate_json_response(ticket or {})
 
         if action == "create":
             if not title:

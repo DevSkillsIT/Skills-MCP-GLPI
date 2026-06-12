@@ -737,9 +737,12 @@ para não gerar valores fictícios.
             label = key
             if key.isdigit():
                 try:
-                    label = await dropdown_cache.get_name("User", int(key), fallback=f"User #{key}")
+                    name = await dropdown_cache.get_name("User", int(key), fallback=f"User #{key}")
                 except Exception:  # noqa: BLE001
-                    label = f"User #{key}"
+                    name = f"User #{key}"
+                # Anexa #id para manter a chave UNICA: dois tecnicos com o mesmo
+                # nome de exibicao nao podem ter as contagens mescladas.
+                label = f"{name} (#{key})"
             resolved_named[label] = resolved_named.get(label, 0) + count
         resolved_by_tech = resolved_named
 

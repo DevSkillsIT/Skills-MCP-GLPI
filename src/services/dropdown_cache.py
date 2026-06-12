@@ -136,12 +136,19 @@ class DropdownCache:
         if not isinstance(item, dict):
             return None
 
-        name = (
-            item.get("name")
-            or item.get("completename")
-            or item.get("realname")
-            or item.get("firstname")
-        )
+        if itemtype == "User":
+            # Prefere nome humano "Realname Firstname"; cai para login (name).
+            rn = str(item.get("realname") or "").strip()
+            fn = str(item.get("firstname") or "").strip()
+            friendly = f"{rn} {fn}".strip()
+            name = friendly or item.get("name")
+        else:
+            name = (
+                item.get("name")
+                or item.get("completename")
+                or item.get("realname")
+                or item.get("firstname")
+            )
         if name:
             type_cache[item_id] = str(name)
             return str(name)

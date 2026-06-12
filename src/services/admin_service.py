@@ -8,6 +8,7 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 from src.services.glpi_client import glpi_client
+from src.services.dropdown_cache import dropdown_cache
 from src.logger import logger
 from src.models.exceptions import (
     NotFoundError,
@@ -94,6 +95,8 @@ class AdminService:
         
         params = {
             "range": f"{offset}-{offset + limit - 1}",
+            # expand_dropdowns: entities_id/profiles_id voltam como NOME, nao ID.
+            "expand_dropdowns": 1,
             "forcedisplay": [
                 "id", "name", "realname", "firstname", "email", "phone",
                 "phone2", "mobile", "registration_number", "comment",
@@ -229,6 +232,20 @@ class AdminService:
                     user["email"] = resolved
             except Exception:
                 user.setdefault("emails", [])
+
+            # Resolve IDs -> nomes humanos (best-effort, cacheado) para o detalhe.
+            try:
+                ent = user.get("entities_id")
+                if ent not in (None, "", 0, "0"):
+                    user["entities_name"] = await dropdown_cache.get_name("Entity", ent, fallback=str(ent))
+                sup = user.get("users_id_supervisor")
+                if sup not in (None, "", 0, "0"):
+                    user["supervisor_name"] = await dropdown_cache.get_name("User", sup, fallback=str(sup))
+                loc = user.get("locations_id")
+                if loc not in (None, "", 0, "0"):
+                    user["locations_name"] = await dropdown_cache.get_name("Location", loc, fallback=str(loc))
+            except Exception as e:  # noqa: BLE001 — enriquecimento best-effort
+                logger.debug(f"get_user name enrichment failed for {user_id}: {e}")
 
             return user
             

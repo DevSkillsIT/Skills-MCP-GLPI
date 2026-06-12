@@ -253,7 +253,10 @@ class GLPIClient:
         forcedisplay: Optional[List[Any]] = None,
         range_limit: Optional[int] = None,
         range_offset: int = 0,
-        is_recursive: bool = False
+        is_recursive: bool = False,
+        sort: Optional[int] = None,
+        order: Optional[str] = None,
+        expand_dropdowns: bool = False,
     ) -> Any:
         """
         Busca avançada GLPI com filtros múltiplos.
@@ -310,6 +313,17 @@ class GLPIClient:
         # Paginação
         if range_limit:
             params["range"] = f"{range_offset}-{range_offset + range_limit - 1}"
+
+        # Ordenação (ex: sort=19 date_mod, order=DESC) — usado pela listagem
+        # para trazer os tickets mais recentes primeiro.
+        if sort is not None:
+            params["sort"] = sort
+        if order is not None:
+            params["order"] = order
+
+        # Resolve FKs (solicitante/tecnico/categoria) para NOME em vez de ID.
+        if expand_dropdowns:
+            params["expand_dropdowns"] = 1
 
         # Busca recursiva em sub-entidades (filhos)
         if is_recursive:

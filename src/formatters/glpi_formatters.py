@@ -11,9 +11,12 @@ from typing import Optional
 from src.formatters.markdown_helpers import (
     esc,
     fmt_date,
+    fmt_impact,
     fmt_priority,
+    fmt_sla,
     fmt_status,
     fmt_type,
+    fmt_urgency,
     page_info,
     remove_heavy_fields,
     strip_html,
@@ -21,11 +24,43 @@ from src.formatters.markdown_helpers import (
 )
 
 
+def _actor(value, max_len: int = 24) -> str:
+    """Render a GLPI actor/dropdown display value (solicitante, tecnico,
+    categoria, grupo). Empty/zero -> em-dash. Junta multiplos atores (a Search
+    API devolve listas quando ha varios) numa unica linha separada por virgula.
+    """
+    if value is None or value in ("", "0", 0):
+        return "—"
+    if isinstance(value, (list, tuple)):
+        parts = [str(v).strip() for v in value if v not in (None, "", 0, "0")]
+        text = ", ".join(parts)
+    else:
+        text = str(value).replace("\r", "").replace("\n", ", ")
+    text = text.strip(", ").strip()
+    if not text or text == "0":
+        return "—"
+    cleaned = truncate_field(text, max_len)
+    return cleaned or "—"
+
+
+def _sla_flag(value) -> str:
+    """Coluna SLA da listagem: campo 82 da Search API e a flag 'atrasado'
+    (1 = TTR estourado). Mostra ATRASADO ou travessao."""
+    if str(value).strip() in ("1", "True", "true"):
+        return "ATRASADO"
+    return "—"
+
+
 # === TICKETS ===
 
 
 def format_tickets_list(data, args: dict) -> str:
-    """Format ticket list as Markdown table."""
+    """Format ticket list as a RICH Markdown table.
+
+    Expoe numa unica varredura os campos que importam para decisao:
+    solicitante, tecnico atribuido, categoria, urgencia e prazo de SLA (com
+    flag ATRASADO) — sem precisar abrir ticket a ticket.
+    """
     items = data if isinstance(data, list) else data.get("data", data.get("items", []))
     if not items:
         return "Nenhum ticket encontrado."
@@ -35,25 +70,84 @@ def format_tickets_list(data, args: dict) -> str:
     for t in items:
         rows.append(
             f"| {esc(t.get('id', 'N/A'))} "
-            f"| {truncate_field(t.get('name', ''), 80)} "
+            f"| {truncate_field(t.get('name', ''), 45)} "
             f"| {fmt_status(t.get('status'))} "
             f"| {fmt_priority(t.get('priority'))} "
-            f"| {fmt_type(t.get('type'))} "
-            f"| {fmt_date(t.get('date'))} |"
+            f"| {fmt_urgency(t.get('urgency'))} "
+            f"| {_actor(t.get('requester'), 22)} "
+            f"| {_actor(t.get('tech_assign'), 22)} "
+            f"| {_actor(t.get('category'), 24)} "
+            f"| {fmt_date(t.get('date'))} "
+            f"| {_sla_flag(t.get('sla_late'))} |"
         )
     table = "\n".join(rows)
-    return f"{header}\n\n| ID | Titulo | Status | Prioridade | Tipo | Abertura |\n|---|---|---|---|---|---|\n{table}"
+    return (
+        f"{header}\n\n"
+        f"| ID | Titulo | Status | Prio | Urg | Solicitante | Tecnico | Categoria | Aberto | SLA |\n"
+        f"|---|---|---|---|---|---|---|---|---|---|\n{table}"
+    )
+
+
+# GLPI global_validation codes -> rotulo legivel (status de aprovacao do ticket).
+_VALIDATION = {
+    1: "Nao requer",
+    2: "Aguardando",
+    3: "Recusada",
+    4: "Aceita",
+}
+
+
+def _dropdown(data: dict, key: str, default: str = "N/A") -> str:
+    """Render a field that came resolved via expand_dropdowns (ja e um NOME) ou,
+    na falta, o valor cru. Trata vazios/zero como N/A."""
+    v = data.get(key)
+    if v in (None, "", "0", 0):
+        return default
+    return esc(v)
+
+
+def _validation(code) -> str:
+    if code in (None, "", "0", 0):
+        return "Nao requer"
+    try:
+        return _VALIDATION.get(int(code), f"Codigo {code}")
+    except (ValueError, TypeError):
+        return str(code)
+
+
+def _attachments(count, breakdown: Optional[dict] = None) -> str:
+    if count is None:
+        return "N/D (nao consultado)"
+    if count == 0:
+        return "Nenhum"
+    base = f"{count} anexo(s)"
+    if breakdown and breakdown.get("followups"):
+        base += (
+            f" (chamado: {breakdown.get('ticket', 0)}, "
+            f"followups: {breakdown.get('followups', 0)})"
+        )
+    return base
 
 
 def format_ticket_detail(data: dict) -> str:
-    """Format ticket details as field-value Markdown table."""
+    """Format ticket details with the MAXIMUM available context.
+
+    Inclui atores resolvidos (solicitante/tecnico/grupo), categoria, urgencia,
+    impacto, origem, localizacao, SLA com flag de atraso, datas de solucao/
+    fechamento, validacao e contagem de anexos — enriquecidos por
+    TicketService.get_ticket_detail.
+    """
     if not data:
         return "Ticket nao encontrado."
     # @MX:NOTE: delete de ticket no GLPI e soft-delete (is_deleted=1 -> lixeira).
-    # Sinalizamos para o LLM nao tratar um ticket excluido como ativo.
     deleted = str(data.get("is_deleted", 0)) in ("1", "True")
     trash_banner = "\n> ⚠️ Este ticket está NA LIXEIRA do GLPI (excluído / is_deleted=1).\n" if deleted else ""
     trash_row = "| Na lixeira | Sim (is_deleted=1) |\n" if deleted else ""
+
+    # Solicitante: prefere o ator real (Ticket_User type=1); cai p/ quem registrou.
+    requester = data.get("requester_names") or data.get("users_id_recipient")
+    origem = data.get("request_source_name") or data.get("requesttypes_id")
+
     return (
         f"# Ticket #{esc(data.get('id', 'N/A'))}: {esc(data.get('name', 'Sem titulo'))}\n"
         f"{trash_banner}\n"
@@ -62,14 +156,26 @@ def format_ticket_detail(data: dict) -> str:
         f"| Titulo | {esc(data.get('name'))} |\n"
         f"{trash_row}"
         f"| Status | {fmt_status(data.get('status'))} |\n"
-        f"| Prioridade | {fmt_priority(data.get('priority'))} |\n"
         f"| Tipo | {fmt_type(data.get('type'))} |\n"
-        f"| Entidade | {esc(data.get('entities_id', 'N/A'))} |\n"
-        f"| Solicitante | {esc(data.get('users_id_recipient', 'N/A'))} |\n"
+        f"| Prioridade | {fmt_priority(data.get('priority'))} |\n"
+        f"| Urgencia | {fmt_urgency(data.get('urgency'))} |\n"
+        f"| Impacto | {fmt_impact(data.get('impact'))} |\n"
+        f"| Categoria | {_dropdown(data, 'itilcategories_id')} |\n"
+        f"| Solicitante | {_actor(requester, 80)} |\n"
+        f"| Tecnico atribuido | {_actor(data.get('assign_tech_names'), 80)} |\n"
+        f"| Grupo atribuido | {_actor(data.get('assign_group_names'), 80)} |\n"
+        f"| Registrado por | {_dropdown(data, 'users_id_recipient')} |\n"
+        f"| Origem | {_actor(origem, 40)} |\n"
+        f"| Entidade | {_dropdown(data, 'entities_id')} |\n"
+        f"| Localizacao | {_dropdown(data, 'locations_id')} |\n"
+        f"| Anexos | {_attachments(data.get('attachment_count'), data.get('attachment_breakdown'))} |\n"
+        f"| Validacao | {_validation(data.get('global_validation'))} |\n"
         f"| Abertura | {fmt_date(data.get('date'))} |\n"
         f"| Ultima atualizacao | {fmt_date(data.get('date_mod'))} |\n"
-        f"| SLA | {fmt_date(data.get('time_to_resolve'))} |\n"
-        f"| Descricao | {truncate_field(data.get('content', ''), 2000)} |"
+        f"| Prazo SLA (resolver) | {fmt_sla(data.get('time_to_resolve'), data.get('status'))} |\n"
+        f"| Solucionado em | {fmt_date(data.get('solvedate'))} |\n"
+        f"| Fechado em | {fmt_date(data.get('closedate'))} |\n"
+        f"| Descricao | {truncate_field(data.get('content', ''), 4000)} |"
     )
 
 
@@ -200,14 +306,20 @@ def format_assets_list(data, args: dict) -> str:
     for a in items:
         rows.append(
             f"| {esc(a.get('id', 'N/A'))} "
-            f"| {truncate_field(a.get('name', ''), 60)} "
+            f"| {truncate_field(a.get('name', ''), 40)} "
             f"| {esc(a.get('serial', 'N/A'))} "
-            f"| {esc(a.get('otherserial', 'N/A'))} "
-            f"| {esc(a.get('states_id', 'N/A'))} "
-            f"| {esc(a.get('locations_id', 'N/A'))} |"
+            f"| {_actor(a.get('states_id'), 18)} "
+            f"| {_actor(a.get('locations_id'), 22)} "
+            f"| {_actor(a.get('manufacturers_id'), 18)} "
+            f"| {_actor(a.get('models_id'), 20)} "
+            f"| {_actor(a.get('users_id'), 20)} |"
         )
     table = "\n".join(rows)
-    return f"{header}\n\n| ID | Nome | Serial | Patrimonio | Status | Localizacao |\n|---|---|---|---|---|---|\n{table}"
+    return (
+        f"{header}\n\n"
+        f"| ID | Nome | Serial | Status | Localizacao | Fabricante | Modelo | Usuario |\n"
+        f"|---|---|---|---|---|---|---|---|\n{table}"
+    )
 
 
 def _asset_field(data: dict, id_key: str, name_key: str) -> str:
@@ -337,32 +449,61 @@ def format_users_list(data, args: dict) -> str:
     header = page_info(len(items), args.get("limit", 10), args.get("offset", 0), total)
     rows = []
     for u in items:
+        full_name = f"{u.get('realname', '') or ''} {u.get('firstname', '') or ''}".strip()
+        phone = u.get("phone") or u.get("mobile")
+        ativo = "Sim" if str(u.get("is_active", "")) in ("1", "True", "true") else "Nao"
         rows.append(
             f"| {esc(u.get('id'))} "
             f"| {esc(u.get('name', 'N/A'))} "
-            f"| {esc(u.get('realname', ''))} {esc(u.get('firstname', ''))} "
-            f"| {esc(u.get('is_active', 'N/A'))} "
+            f"| {esc(full_name) or '—'} "
+            f"| {_actor(phone, 20)} "
+            f"| {_actor(u.get('entities_id'), 24)} "
+            f"| {ativo} "
             f"| {fmt_date(u.get('last_login'))} |"
         )
     table = "\n".join(rows)
-    return f"{header}\n\n| ID | Login | Nome Completo | Ativo | Ultimo Login |\n|---|---|---|---|---|\n{table}"
+    return (
+        f"{header}\n\n"
+        f"| ID | Login | Nome Completo | Telefone | Entidade | Ativo | Ultimo Login |\n"
+        f"|---|---|---|---|---|---|---|\n{table}"
+    )
 
 
 def format_user_detail(data: dict) -> str:
-    """Format user details."""
+    """Format user details with the MAXIMUM available context."""
     if not data:
         return "Usuario nao encontrado."
+    full_name = f"{data.get('realname', '') or ''} {data.get('firstname', '') or ''}".strip()
+    deleted = str(data.get("is_deleted", 0)) in ("1", "True")
+    trash_row = "| Na lixeira | Sim (is_deleted=1) |\n" if deleted else ""
+    # Conta grupos/perfis quando vierem como subitens enriquecidos.
+    groups = data.get("groups") or []
+    n_groups = len(groups) if isinstance(groups, list) else 0
+    entity = data.get("entities_name") or data.get("entities_id")
+    supervisor = data.get("supervisor_name") or data.get("users_id_supervisor")
+    location = data.get("locations_name") or data.get("locations_id")
     return (
-        f"# Usuario: {esc(data.get('name', 'N/A'))}\n\n"
+        f"# Usuario: {esc(data.get('name', 'N/A'))}"
+        + (f" ({esc(full_name)})" if full_name else "")
+        + "\n\n"
         f"| Campo | Valor |\n|---|---|\n"
         f"| ID | {esc(data.get('id'))} |\n"
         f"| Login | {esc(data.get('name'))} |\n"
-        f"| Nome | {esc(data.get('realname', ''))} {esc(data.get('firstname', ''))} |\n"
-        f"| Email | {esc(data.get('email', 'N/A'))} |\n"
-        f"| Telefone | {esc(data.get('phone', 'N/A'))} |\n"
-        f"| Ativo | {'Sim' if data.get('is_active') else 'Nao'} |\n"
-        f"| Entidade | {esc(data.get('entities_id', 'N/A'))} |\n"
-        f"| Ultimo login | {fmt_date(data.get('last_login'))} |"
+        f"{trash_row}"
+        f"| Nome completo | {esc(full_name) or 'N/A'} |\n"
+        f"| Email | {_dropdown(data, 'email')} |\n"
+        f"| Telefone | {_dropdown(data, 'phone')} |\n"
+        f"| Telefone 2 | {_dropdown(data, 'phone2')} |\n"
+        f"| Celular | {_dropdown(data, 'mobile')} |\n"
+        f"| Matricula | {_dropdown(data, 'registration_number')} |\n"
+        f"| Ativo | {'Sim' if str(data.get('is_active')) in ('1', 'True', 'true') else 'Nao'} |\n"
+        f"| Entidade | {_actor(entity, 60)} |\n"
+        f"| Localizacao | {_actor(location, 60)} |\n"
+        f"| Supervisor | {_actor(supervisor, 60)} |\n"
+        f"| Grupos | {n_groups if n_groups else '—'} |\n"
+        f"| Criado em | {fmt_date(data.get('date_creation'))} |\n"
+        f"| Ultimo login | {fmt_date(data.get('last_login'))} |\n"
+        f"| Comentario | {truncate_field(data.get('comment', ''), 500)} |"
     )
 
 

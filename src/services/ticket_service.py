@@ -2,11 +2,14 @@
 Serviço de gerenciamento de tickets GLPI - Integração Real
 """
 
+import asyncio
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 
 from src.services.glpi_client import glpi_client
+from src.services.dropdown_cache import dropdown_cache
 from src.services.similarity_service import similarity_service
+from src.formatters.markdown_helpers import strip_html
 from src.models.exceptions import (
     GLPIError, 
     NotFoundError, 
@@ -27,31 +30,85 @@ STATUS_MAP = {
     "closed": 6,
 }
 
-# GLPI Search API field IDs for Ticket.
+# GLPI Search API field IDs for Ticket (core search options, stable across
+# GLPI 9/10/11 — defined in CommonITILObject::rawSearchOptions + Ticket).
 # Ref: https://glpi-developer-documentation.readthedocs.io (search options)
+# These ids return RENDERED display values (e.g. requester NAME, category by
+# extenso) directly from /search/Ticket — no N+1 lookups required.
 TICKET_FIELD = {
-    "name": 1,
+    "name": 1,            # titulo
     "id": 2,
     "priority": 3,
+    "requester": 4,       # solicitante(s) — nome renderizado
+    "tech_assign": 5,     # tecnico(s) atribuido(s) — nome renderizado
+    "category": 7,        # itilcategories_id — nome completo
+    "group_assign": 8,    # grupo tecnico atribuido
+    "request_source": 9,  # origem da requisicao
+    "urgency": 10,
+    "impact": 11,
     "status": 12,
     "type": 14,
-    "date": 15,       # opening date
-    "date_mod": 19,   # last update
+    "date": 15,           # abertura
+    "closedate": 16,      # fechamento
+    "solvedate": 17,      # solucao
+    "date_mod": 19,       # ultima atualizacao
+    "content": 21,        # descricao
     "entities_id": 80,
+    "time_to_resolve": 82,  # prazo SLA de resolucao
 }
 
-# Fields requested from the Search API so the normalized result keeps the
-# same shape the formatters expect from the getAllItems endpoint.
+# Campos exibidos na listagem rica. Inclui um superset util: a Search API
+# devolve tudo numa unica chamada, entao o custo extra e desprezivel perto do
+# ganho de visao (atores/categoria/SLA resolvidos, sem N+1).
 TICKET_FORCEDISPLAY = [
     TICKET_FIELD["name"],
     TICKET_FIELD["id"],
     TICKET_FIELD["priority"],
+    TICKET_FIELD["requester"],
+    TICKET_FIELD["tech_assign"],
+    TICKET_FIELD["category"],
+    TICKET_FIELD["group_assign"],
+    TICKET_FIELD["urgency"],
+    TICKET_FIELD["impact"],
     TICKET_FIELD["status"],
     TICKET_FIELD["type"],
     TICKET_FIELD["date"],
+    TICKET_FIELD["solvedate"],
     TICKET_FIELD["date_mod"],
     TICKET_FIELD["entities_id"],
+    # Campo 82 na Search API NAO e o prazo de SLA — e a FLAG "atrasado" (1 quando
+    # o TTR foi estourado, vazio caso contrario). Usamos como indicador na lista.
+    # O prazo (datetime) confiavel vem no detalhe via campo nomeado
+    # 'time_to_resolve' do GET direto /Ticket/{id}.
+    TICKET_FIELD["time_to_resolve"],  # = 82, interpretado como sla_late flag
 ]
+
+
+def _actor_ids(value: Any) -> List[int]:
+    """Extrai IDs numericos de um campo de ator da Search API (escalar ou lista
+    de strings/ints). Ignora vazios/nao-numericos."""
+    if value is None:
+        return []
+    items = value if isinstance(value, (list, tuple)) else [value]
+    out: List[int] = []
+    for x in items:
+        s = str(x).strip()
+        if s.isdigit():
+            out.append(int(s))
+    return out
+
+
+def _pick(row: Dict[str, Any], field_id: int, named_key: str) -> Any:
+    """Read a value from a Search row by numeric field id, falling back to the
+    named key (getAllItems shape). Returns None when absent so callers can drop
+    empty fields."""
+    val = row.get(str(field_id))
+    if val is None or val == "":
+        val = row.get(named_key)
+    # GLPI search devolve '' para atores/categoria vazios; normaliza p/ None.
+    if val == "" or val == 0 or val == "0":
+        return None if named_key in ("requester", "tech_assign", "category", "group_assign") else val
+    return val
 
 
 def _normalize_search_ticket(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -59,18 +116,31 @@ def _normalize_search_ticket(row: Dict[str, Any]) -> Dict[str, Any]:
 
     The Search API returns ``{"1": "...", "12": 2, ...}`` while the getAllItems
     endpoint returns ``{"name": "...", "status": 2, ...}``. Normalizing here lets
-    the same formatters handle both code paths.
+    the same formatters handle both code paths and exposes the FULL field set
+    (solicitante, tecnico, categoria, urgencia, impacto, SLA) to the formatter.
     """
     f = TICKET_FIELD
     normalized = {
-        "id": row.get(str(f["id"])) or row.get("id"),
-        "name": row.get(str(f["name"])) or row.get("name"),
-        "status": row.get(str(f["status"])) if row.get(str(f["status"])) is not None else row.get("status"),
-        "priority": row.get(str(f["priority"])) if row.get(str(f["priority"])) is not None else row.get("priority"),
-        "type": row.get(str(f["type"])) if row.get(str(f["type"])) is not None else row.get("type"),
-        "date": row.get(str(f["date"])) or row.get("date"),
-        "date_mod": row.get(str(f["date_mod"])) or row.get("date_mod"),
-        "entities_id": row.get(str(f["entities_id"])) if row.get(str(f["entities_id"])) is not None else row.get("entities_id"),
+        "id": _pick(row, f["id"], "id"),
+        "name": _pick(row, f["name"], "name"),
+        "status": _pick(row, f["status"], "status"),
+        "priority": _pick(row, f["priority"], "priority"),
+        "urgency": _pick(row, f["urgency"], "urgency"),
+        "impact": _pick(row, f["impact"], "impact"),
+        "type": _pick(row, f["type"], "type"),
+        "requester": _pick(row, f["requester"], "requester"),
+        "tech_assign": _pick(row, f["tech_assign"], "tech_assign"),
+        "group_assign": _pick(row, f["group_assign"], "group_assign"),
+        "category": _pick(row, f["category"], "category"),
+        "date": _pick(row, f["date"], "date"),
+        "date_mod": _pick(row, f["date_mod"], "date_mod"),
+        "solvedate": _pick(row, f["solvedate"], "solvedate"),
+        # Campo 82 = flag de atraso (1 = TTR estourado). Vira "sla_late".
+        "sla_late": _pick(row, f["time_to_resolve"], "sla_late"),
+        "entities_id": _pick(row, f["entities_id"], "entities_id"),
+        # content so vem quando explicitamente pedido (find_similar); a listagem
+        # remove campos pesados depois, mas mantemos para a similaridade.
+        "content": row.get(str(f["content"])) or row.get("content"),
     }
     return {k: v for k, v in normalized.items() if v is not None}
 
@@ -81,6 +151,47 @@ class TicketService:
     def __init__(self):
         """Inicializa o serviço de tickets."""
         logger.info("TicketService initialized")
+
+    async def _resolve_actor_names(
+        self, rows: List[Dict[str, Any]], resolve_groups: bool = True
+    ) -> None:
+        """Substitui IDs de ator (solicitante/tecnico/grupo) por NOMES.
+
+        A Search API devolve as meta-colunas de ator (campos 4/5/8) como IDs
+        crus — e nao as expande nem com expand_dropdowns. Resolvemos via
+        dropdown_cache (cacheado + concorrente), coletando todos os IDs da
+        pagina de uma vez para minimizar chamadas. Mutaciona os dicts in place.
+
+        resolve_groups=False na LISTAGEM (que nao exibe grupo) evita um
+        get_many_names("Group") desperdiçado; o DETALHE usa True.
+        """
+        user_ids: set = set()
+        group_ids: set = set()
+        for r in rows:
+            user_ids.update(_actor_ids(r.get("requester")))
+            user_ids.update(_actor_ids(r.get("tech_assign")))
+            if resolve_groups:
+                group_ids.update(_actor_ids(r.get("group_assign")))
+        if not user_ids and not group_ids:
+            return
+
+        user_names = await dropdown_cache.get_many_names("User", list(user_ids)) if user_ids else {}
+        group_names = await dropdown_cache.get_many_names("Group", list(group_ids)) if group_ids else {}
+
+        def _map(value: Any, names: Dict[int, Any]) -> Any:
+            ids = _actor_ids(value)
+            if not ids:
+                return value
+            resolved = [names.get(i) or str(i) for i in ids]
+            return resolved if len(resolved) > 1 else resolved[0]
+
+        for r in rows:
+            if "requester" in r:
+                r["requester"] = _map(r["requester"], user_names)
+            if "tech_assign" in r:
+                r["tech_assign"] = _map(r["tech_assign"], user_names)
+            if resolve_groups and "group_assign" in r:
+                r["group_assign"] = _map(r["group_assign"], group_names)
 
     async def list_tickets(self, **kwargs) -> List[Dict[str, Any]]:
         """Lista tickets com filtros.
@@ -120,28 +231,33 @@ class TicketService:
         if date_before:
             criteria.append({"field": TICKET_FIELD["date"], "searchtype": "lessthan", "value": date_before})
 
-        if criteria:
-            result = await glpi_client.search(
-                item_type="Ticket",
-                criteria=criteria,
-                forcedisplay=TICKET_FORCEDISPLAY,
-                range_limit=limit,
-                range_offset=offset,
-                is_recursive=entity_id is not None,
-            )
-            rows = result.get("data", []) if isinstance(result, dict) else (result or [])
-            return [_normalize_search_ticket(r) for r in rows]
+        # @MX:NOTE: SEMPRE via /search/Ticket — mesmo sem filtro (criteria=[]).
+        # O endpoint getAllItems devolve IDs crus (solicitante/categoria como
+        # numero); a Search API + expand_dropdowns devolve NOMES ja renderizados
+        # numa unica chamada. Sem criterio, /search retorna todos os visiveis.
+        # @MX:REASON: retornos "podados" — atores/categoria/SLA agora expostos.
 
-        # No filters: lighter getAllItems endpoint (already named fields).
-        params = {
-            "range": f"{offset}-{offset + limit - 1}",
-            "sort": kwargs.get("sort", "date_mod"),
-            "order": kwargs.get("order", "DESC"),
-        }
-        result = await glpi_client.get(
-            "/apirest.php/Ticket", params=params, use_cache=kwargs.get("use_cache", True)
+        # find_similar precisa do conteudo p/ calcular similaridade; a listagem
+        # comum NAO pede content (campo pesado, removido depois de qualquer jeito).
+        forcedisplay = list(TICKET_FORCEDISPLAY)
+        if kwargs.get("_with_content"):
+            forcedisplay.append(TICKET_FIELD["content"])
+
+        result = await glpi_client.search(
+            item_type="Ticket",
+            criteria=criteria,
+            forcedisplay=forcedisplay,
+            range_limit=limit,
+            range_offset=offset,
+            is_recursive=entity_id is not None,
+            sort=TICKET_FIELD["date_mod"],
+            order="DESC",
+            expand_dropdowns=True,
         )
-        return result.get("data", []) if isinstance(result, dict) else (result or [])
+        rows = result.get("data", []) if isinstance(result, dict) else (result or [])
+        normalized = [_normalize_search_ticket(r) for r in rows]
+        await self._resolve_actor_names(normalized, resolve_groups=False)
+        return normalized
     
     async def get_ticket(self, ticket_id: int) -> Dict[str, Any]:
         """Obtém um ticket específico.
@@ -154,10 +270,134 @@ class TicketService:
         result = await glpi_client.get(
             f"/apirest.php/Ticket/{ticket_id}", use_cache=False
         )
-        if not result or "id" not in result:
+        if not isinstance(result, dict) or "id" not in result:
             raise NotFoundError("Ticket", ticket_id)
         return result
     
+    async def get_ticket_detail(self, ticket_id: int) -> Dict[str, Any]:
+        """Detalhe MAXIMO do ticket para a acao 'get'.
+
+        Combina 3 fontes (atores e anexos = 1-2 chamadas extras, conforme
+        escolhido pelo usuario):
+          1. GET /Ticket/{id}?expand_dropdowns=1 -> entidade, categoria, origem,
+             localizacao, SLA e 'registrado por' resolvidos por NOME (nao ID).
+          2. /search/Ticket (campos 4/5/8) -> solicitante, tecnico e grupo
+             atribuidos, ja renderizados, numa unica chamada.
+          3. /Ticket/{id}/Document_Item -> contagem de anexos.
+
+        @MX:NOTE: get_ticket() permanece enxuto (sem enriquecimento) para os
+        fluxos de mutacao que so precisam do estado cru.
+        @MX:REASON: detalhe vinha "podado" — IDs crus e sem atores/anexos/SLA.
+        """
+        if ticket_id <= 0:
+            raise ValidationError("ticket_id must be positive", "ticket_id")
+
+        ticket = await glpi_client.get(
+            f"/apirest.php/Ticket/{ticket_id}",
+            params={"expand_dropdowns": 1},
+            use_cache=False,
+        )
+        if not isinstance(ticket, dict) or "id" not in ticket:
+            raise NotFoundError("Ticket", ticket_id)
+
+        # --- Atores resolvidos (1 chamada /search) ---
+        try:
+            actor_result = await glpi_client.search(
+                item_type="Ticket",
+                criteria=[{"field": TICKET_FIELD["id"], "searchtype": "equals", "value": ticket_id}],
+                forcedisplay=[
+                    TICKET_FIELD["id"],
+                    TICKET_FIELD["requester"],
+                    TICKET_FIELD["tech_assign"],
+                    TICKET_FIELD["group_assign"],
+                    TICKET_FIELD["request_source"],
+                ],
+                range_limit=1,
+                is_recursive=True,
+                expand_dropdowns=True,
+            )
+            rows = actor_result.get("data", []) if isinstance(actor_result, dict) else (actor_result or [])
+            if rows:
+                r = rows[0]
+                # Os campos 4/5/8 voltam como IDs de usuario/grupo — resolve p/ nome.
+                holder = {
+                    "requester": r.get(str(TICKET_FIELD["requester"])),
+                    "tech_assign": r.get(str(TICKET_FIELD["tech_assign"])),
+                    "group_assign": r.get(str(TICKET_FIELD["group_assign"])),
+                }
+                await self._resolve_actor_names([holder])
+                ticket["requester_names"] = holder.get("requester") or None
+                ticket["assign_tech_names"] = holder.get("tech_assign") or None
+                ticket["assign_group_names"] = holder.get("group_assign") or None
+                src = r.get(str(TICKET_FIELD["request_source"]))
+                if src:
+                    ticket.setdefault("request_source_name", src)
+        except Exception as e:  # noqa: BLE001 — enriquecimento e best-effort
+            logger.warning(f"get_ticket_detail: actor enrichment failed for {ticket_id}: {e}")
+
+        # --- Contagem de anexos: direto no Ticket + nos followups ---
+        # @MX:NOTE: no GLPI o anexo costuma ser ligado ao FOLLOWUP (ITILFollowup),
+        # nao ao Ticket — por isso contar so /Ticket/{id}/Document_Item dava 0
+        # mesmo havendo anexo. Somamos os dois niveis.
+        def _count_docs(resp: Any) -> int:
+            items = resp if isinstance(resp, list) else (
+                resp.get("data", []) if isinstance(resp, dict) else []
+            )
+            return len(items)
+
+        attach_ticket = None
+        attach_followups = 0
+        try:
+            docs = await glpi_client.get_subitems("Ticket", ticket_id, "Document_Item")
+            attach_ticket = _count_docs(docs)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"get_ticket_detail: ticket attachment count failed for {ticket_id}: {e}")
+
+        try:
+            fups = await glpi_client.get_subitems("Ticket", ticket_id, "TicketFollowup")
+            fu_list = fups if isinstance(fups, list) else (
+                fups.get("data", []) if isinstance(fups, dict) else []
+            )
+            fu_ids: List[int] = []
+            for f in fu_list:
+                if isinstance(f, dict) and f.get("id") is not None:
+                    try:
+                        fu_ids.append(int(f["id"]))
+                    except (ValueError, TypeError):
+                        continue
+            fu_ids = fu_ids[:30]
+
+            sem = asyncio.Semaphore(5)  # limita conexoes concorrentes ao GLPI
+
+            async def _fu_docs(fid: int) -> int:
+                async with sem:
+                    for itemtype in ("ITILFollowup", "TicketFollowup"):
+                        try:
+                            d = await glpi_client.get_subitems(itemtype, fid, "Document_Item")
+                            n = _count_docs(d)
+                            if n:
+                                return n
+                        except Exception:  # noqa: BLE001
+                            continue
+                    return 0
+
+            if fu_ids:
+                counts = await asyncio.gather(*[_fu_docs(f) for f in fu_ids])
+                attach_followups = sum(counts)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"get_ticket_detail: followup attachment count failed for {ticket_id}: {e}")
+
+        if attach_ticket is None and attach_followups == 0:
+            ticket["attachment_count"] = None
+        else:
+            ticket["attachment_count"] = (attach_ticket or 0) + attach_followups
+            ticket["attachment_breakdown"] = {
+                "ticket": attach_ticket or 0,
+                "followups": attach_followups,
+            }
+
+        return ticket
+
     async def get_ticket_by_number(self, ticket_number: str) -> Optional[Dict[str, Any]]:
         """Busca ticket por número público.
 
@@ -328,8 +568,11 @@ class TicketService:
         
         reference = await self.get_ticket(ticket_id)
 
-        # Buscar candidatos (limitados para performance)
-        candidates = await self.list_tickets(limit=kwargs.get("max_items", 200))
+        # Buscar candidatos (limitados para performance). _with_content garante
+        # que a Search API traga o campo 21 (descricao) p/ a similaridade.
+        candidates = await self.list_tickets(
+            limit=kwargs.get("max_items", 200), _with_content=True
+        )
 
         # Index candidates by id so we can re-attach displayable fields
         # (name/status/date) to the similarity scores afterwards.
@@ -339,10 +582,13 @@ class TicketService:
             target_ticket={
                 "id": reference.get("id"),
                 "title": reference.get("name", ""),
-                "content": reference.get("content", ""),
+                # @MX:NOTE: reference vem do GET direto (HTML cru); candidatos vem
+                # da Search API (campo 21). Normaliza ambos com strip_html p/
+                # similaridade justa (texto vs HTML davam score assimetrico).
+                "content": strip_html(reference.get("content", "")),
             },
             candidate_tickets=[
-                {"id": cid, "title": t.get("name", ""), "content": t.get("content", "")}
+                {"id": cid, "title": t.get("name", ""), "content": strip_html(t.get("content", "") or "")}
                 for cid, t in cand_by_id.items()
             ],
             threshold=kwargs.get("threshold", 0.3),
@@ -394,10 +640,15 @@ class TicketService:
             range_limit=limit,
             range_offset=offset,
             is_recursive=entity_id is not None,
+            sort=TICKET_FIELD["date_mod"],
+            order="DESC",
+            expand_dropdowns=True,
         )
         rows = result.get("data", []) if isinstance(result, dict) else (result or [])
-        return [_normalize_search_ticket(r) for r in rows]
-    
+        normalized = [_normalize_search_ticket(r) for r in rows]
+        await self._resolve_actor_names(normalized, resolve_groups=False)
+        return normalized
+
     async def get_ticket_stats(self, **kwargs) -> Dict[str, Any]:
         """Obtém estatísticas de tickets agregadas por status.
 
