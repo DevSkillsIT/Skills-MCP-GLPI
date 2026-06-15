@@ -81,6 +81,9 @@ TICKET_FORCEDISPLAY = [
     # O prazo (datetime) confiavel vem no detalhe via campo nomeado
     # 'time_to_resolve' do GET direto /Ticket/{id}.
     TICKET_FIELD["time_to_resolve"],  # = 82, interpretado como sla_late flag
+    # Descricao (campo 21) JA na listagem: o usuario quer o teor do chamado sem
+    # abrir um a um. Vira 'desc_snippet' (texto puro) no normalizer.
+    TICKET_FIELD["content"],
 ]
 
 
@@ -138,10 +141,16 @@ def _normalize_search_ticket(row: Dict[str, Any]) -> Dict[str, Any]:
         # Campo 82 = flag de atraso (1 = TTR estourado). Vira "sla_late".
         "sla_late": _pick(row, f["time_to_resolve"], "sla_late"),
         "entities_id": _pick(row, f["entities_id"], "entities_id"),
-        # content so vem quando explicitamente pedido (find_similar); a listagem
-        # remove campos pesados depois, mas mantemos para a similaridade.
+        # content (HTML cru) p/ similaridade; removido na exibicao da lista.
         "content": row.get(str(f["content"])) or row.get("content"),
     }
+    # desc_snippet: texto puro da descricao p/ exibir NA LISTAGEM (chave propria,
+    # nao e removida por remove_heavy_fields). Limita p/ nao inflar o JSON.
+    raw_content = row.get(str(f["content"])) or row.get("content")
+    if raw_content:
+        snippet = strip_html(str(raw_content)).strip()
+        if snippet:
+            normalized["desc_snippet"] = snippet[:400]
     return {k: v for k, v in normalized.items() if v is not None}
 
 
@@ -384,8 +393,32 @@ class TicketService:
             if fu_ids:
                 counts = await asyncio.gather(*[_fu_docs(f) for f in fu_ids])
                 attach_followups = sum(counts)
+
+            # Embute os follow-ups (acompanhamentos) NO DETALHE — p/ responder
+            # "o tecnico ja respondeu?" sem precisar de outra tool. Autor -> nome.
+            author_ids: set = set()
+            for f in fu_list:
+                if isinstance(f, dict):
+                    author_ids.update(_actor_ids(f.get("users_id")))
+            author_names = (
+                await dropdown_cache.get_many_names("User", list(author_ids))
+                if author_ids else {}
+            )
+            followups: List[Dict[str, Any]] = []
+            for f in fu_list[:50]:
+                if not isinstance(f, dict):
+                    continue
+                ids = _actor_ids(f.get("users_id"))
+                author = author_names.get(ids[0]) if ids else None
+                followups.append({
+                    "date": f.get("date") or f.get("date_creation"),
+                    "author": author or (str(f.get("users_id")) if f.get("users_id") else "?"),
+                    "is_private": str(f.get("is_private")) in ("1", "True"),
+                    "content": f.get("content", ""),
+                })
+            ticket["followups"] = followups
         except Exception as e:  # noqa: BLE001
-            logger.warning(f"get_ticket_detail: followup attachment count failed for {ticket_id}: {e}")
+            logger.warning(f"get_ticket_detail: followup enrichment failed for {ticket_id}: {e}")
 
         if attach_ticket is None and attach_followups == 0:
             ticket["attachment_count"] = None

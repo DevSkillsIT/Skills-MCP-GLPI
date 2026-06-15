@@ -70,6 +70,38 @@ def esc(value: Optional[Union[str, int, float]]) -> str:
     return str(value).replace("|", "\\|")
 
 
+def glpi_url(itemtype: str, item_id) -> str:
+    """Monta a URL web do item no GLPI: {base}/front/{itemtype}.form.php?id={id}.
+
+    Le a raiz configurada (settings.glpi_base_url) via import lazy. Retorna ''
+    quando id vazio ou base indisponivel (degradacao graciosa).
+    """
+    if item_id in (None, "", 0, "0") or not itemtype:
+        return ""
+    try:
+        from src.config.settings import settings
+        base = str(settings.glpi_base_url or "").rstrip("/")
+    except Exception:  # noqa: BLE001 — sem base, sem link
+        return ""
+    if base.endswith("/apirest.php"):
+        base = base[: -len("/apirest.php")]
+    if not base:
+        return ""
+    return f"{base}/front/{str(itemtype).lower()}.form.php?id={item_id}"
+
+
+def glpi_id_link(itemtype: str, item_id) -> str:
+    """Renderiza o ID como link Markdown clicavel p/ o item no GLPI.
+
+    Ex: [9273](https://glpi/front/ticket.form.php?id=9273). Cai para o ID cru
+    quando a URL nao pode ser montada.
+    """
+    url = glpi_url(itemtype, item_id)
+    if not url:
+        return esc(item_id if item_id not in (None, "") else "N/A")
+    return f"[{esc(item_id)}]({url})"
+
+
 def strip_html(text: Optional[str]) -> str:
     """
     Remove HTML tags and decode HTML entities.

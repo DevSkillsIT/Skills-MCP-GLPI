@@ -17,6 +17,8 @@ from src.formatters.markdown_helpers import (
     fmt_status,
     fmt_type,
     fmt_urgency,
+    glpi_id_link,
+    glpi_url,
     page_info,
     remove_heavy_fields,
     strip_html,
@@ -69,22 +71,23 @@ def format_tickets_list(data, args: dict) -> str:
     rows = []
     for t in items:
         rows.append(
-            f"| {esc(t.get('id', 'N/A'))} "
-            f"| {truncate_field(t.get('name', ''), 45)} "
+            f"| {glpi_id_link('Ticket', t.get('id'))} "
+            f"| {truncate_field(t.get('name', ''), 150)} "
             f"| {fmt_status(t.get('status'))} "
             f"| {fmt_priority(t.get('priority'))} "
             f"| {fmt_urgency(t.get('urgency'))} "
-            f"| {_actor(t.get('requester'), 22)} "
-            f"| {_actor(t.get('tech_assign'), 22)} "
-            f"| {_actor(t.get('category'), 24)} "
+            f"| {_actor(t.get('requester'), 150)} "
+            f"| {_actor(t.get('tech_assign'), 150)} "
+            f"| {_actor(t.get('category'), 150)} "
+            f"| {truncate_field(t.get('desc_snippet', ''), 300)} "
             f"| {fmt_date(t.get('date'))} "
             f"| {_sla_flag(t.get('sla_late'))} |"
         )
     table = "\n".join(rows)
     return (
         f"{header}\n\n"
-        f"| ID | Titulo | Status | Prio | Urg | Solicitante | Tecnico | Categoria | Aberto | SLA |\n"
-        f"|---|---|---|---|---|---|---|---|---|---|\n{table}"
+        f"| ID | Titulo | Status | Prio | Urg | Solicitante | Tecnico | Categoria | Descricao | Aberto | SLA |\n"
+        f"|---|---|---|---|---|---|---|---|---|---|---|\n{table}"
     )
 
 
@@ -129,6 +132,26 @@ def _attachments(count, breakdown: Optional[dict] = None) -> str:
     return base
 
 
+def _followups_section(followups) -> str:
+    """Render a conversa de acompanhamentos (follow-ups) abaixo do detalhe.
+
+    Permite ao LLM responder 'o tecnico ja respondeu?' direto da tool de
+    detalhe, sem precisar chamar get_followups separadamente.
+    """
+    if not followups or not isinstance(followups, list):
+        return ""
+    parts = [f"\n\n## Acompanhamentos ({len(followups)})\n"]
+    for f in followups:
+        if not isinstance(f, dict):
+            continue
+        date = fmt_date(f.get("date"))
+        author = esc(f.get("author") or "?")
+        vis = " _(privado)_" if f.get("is_private") else ""
+        content = truncate_field(f.get("content", ""), 1500) or "—"
+        parts.append(f"\n**{date} — {author}{vis}:**\n\n{content}\n")
+    return "".join(parts)
+
+
 def format_ticket_detail(data: dict) -> str:
     """Format ticket details with the MAXIMUM available context.
 
@@ -147,13 +170,16 @@ def format_ticket_detail(data: dict) -> str:
     # Solicitante: prefere o ator real (Ticket_User type=1); cai p/ quem registrou.
     requester = data.get("requester_names") or data.get("users_id_recipient")
     origem = data.get("request_source_name") or data.get("requesttypes_id")
+    _url = glpi_url("Ticket", data.get("id"))
+    link = f"[Abrir no GLPI]({_url})" if _url else "N/A"
 
-    return (
+    base = (
         f"# Ticket #{esc(data.get('id', 'N/A'))}: {esc(data.get('name', 'Sem titulo'))}\n"
         f"{trash_banner}\n"
         f"| Campo | Valor |\n|---|---|\n"
         f"| ID | {esc(data.get('id'))} |\n"
         f"| Titulo | {esc(data.get('name'))} |\n"
+        f"| Link | {link} |\n"
         f"{trash_row}"
         f"| Status | {fmt_status(data.get('status'))} |\n"
         f"| Tipo | {fmt_type(data.get('type'))} |\n"
@@ -177,6 +203,7 @@ def format_ticket_detail(data: dict) -> str:
         f"| Fechado em | {fmt_date(data.get('closedate'))} |\n"
         f"| Descricao | {truncate_field(data.get('content', ''), 4000)} |"
     )
+    return base + _followups_section(data.get("followups"))
 
 
 def format_ticket_followups(data, args: dict) -> str:
@@ -282,7 +309,7 @@ def format_similar_tickets(data, args: dict) -> str:
     for t in items:
         score = t.get("score", t.get("similarity", "N/A"))
         rows.append(
-            f"| {esc(t.get('id'))} "
+            f"| {glpi_id_link('Ticket', t.get('id'))} "
             f"| {truncate_field(t.get('name', ''), 80)} "
             f"| {fmt_status(t.get('status'))} "
             f"| {esc(score)} "
@@ -305,7 +332,7 @@ def format_assets_list(data, args: dict) -> str:
     rows = []
     for a in items:
         rows.append(
-            f"| {esc(a.get('id', 'N/A'))} "
+            f"| {glpi_id_link(a.get('asset_type', 'Computer'), a.get('id'))} "
             f"| {truncate_field(a.get('name', ''), 40)} "
             f"| {esc(a.get('serial', 'N/A'))} "
             f"| {_actor(a.get('states_id'), 18)} "
@@ -351,6 +378,7 @@ def format_asset_detail(data: dict) -> str:
         f"| Campo | Valor |\n|---|---|\n"
         f"| ID | {esc(data.get('id'))} |\n"
         f"| Nome | {esc(data.get('name'))} |\n"
+        f"| Link | {('[Abrir no GLPI](' + glpi_url(data.get('asset_type', 'Computer'), data.get('id')) + ')') if glpi_url(data.get('asset_type', 'Computer'), data.get('id')) else 'N/A'} |\n"
         f"{trash_row}"
         f"| Serial | {esc(data.get('serial', 'N/A'))} |\n"
         f"| Patrimonio | {esc(data.get('otherserial', 'N/A'))} |\n"
@@ -405,7 +433,7 @@ def format_reservations_list(data, args: dict) -> str:
         rows = [
             f"| {esc(r.get('id'))} "
             f"| {esc(r.get('itemtype', 'N/A'))} "
-            f"| {esc(r.get('items_id', 'N/A'))} "
+            f"| {glpi_id_link(r.get('itemtype', 'Computer'), r.get('items_id'))} "
             f"| {esc(r.get('name') or r.get('item_name', 'N/A'))} "
             f"| {esc(r.get('is_active', 'N/A'))} |"
             for r in items
@@ -453,7 +481,7 @@ def format_users_list(data, args: dict) -> str:
         phone = u.get("phone") or u.get("mobile")
         ativo = "Sim" if str(u.get("is_active", "")) in ("1", "True", "true") else "Nao"
         rows.append(
-            f"| {esc(u.get('id'))} "
+            f"| {glpi_id_link('User', u.get('id'))} "
             f"| {esc(u.get('name', 'N/A'))} "
             f"| {esc(full_name) or '—'} "
             f"| {_actor(phone, 20)} "
@@ -489,6 +517,7 @@ def format_user_detail(data: dict) -> str:
         f"| Campo | Valor |\n|---|---|\n"
         f"| ID | {esc(data.get('id'))} |\n"
         f"| Login | {esc(data.get('name'))} |\n"
+        f"| Link | {('[Abrir no GLPI](' + glpi_url('User', data.get('id')) + ')') if glpi_url('User', data.get('id')) else 'N/A'} |\n"
         f"{trash_row}"
         f"| Nome completo | {esc(full_name) or 'N/A'} |\n"
         f"| Email | {_dropdown(data, 'email')} |\n"
@@ -520,7 +549,7 @@ def format_groups_list(data, args: dict) -> str:
     rows = []
     for g in items:
         rows.append(
-            f"| {esc(g.get('id'))} "
+            f"| {glpi_id_link('Group', g.get('id'))} "
             f"| {esc(g.get('name', 'N/A'))} "
             f"| {truncate_field(g.get('comment', ''), 100)} "
             f"| {esc(g.get('entities_id', 'N/A'))} |"
@@ -542,7 +571,7 @@ def format_entities_list(data, args: dict) -> str:
     rows = []
     for e in items:
         rows.append(
-            f"| {esc(e.get('id'))} "
+            f"| {glpi_id_link('Entity', e.get('id'))} "
             f"| {esc(e.get('name', 'N/A'))} "
             f"| {truncate_field(e.get('comment', ''), 100)} |"
         )
@@ -563,7 +592,7 @@ def format_locations_list(data, args: dict) -> str:
     rows = []
     for loc in items:
         rows.append(
-            f"| {esc(loc.get('id'))} "
+            f"| {glpi_id_link('Location', loc.get('id'))} "
             f"| {esc(loc.get('name', 'N/A'))} "
             f"| {esc(loc.get('address', 'N/A'))} "
             f"| {esc(loc.get('entities_id', 'N/A'))} |"
@@ -609,7 +638,7 @@ def format_webhooks_list(data, args: dict) -> str:
             else "N/A"
         )
         rows.append(
-            f"| {esc(w.get('id'))} "
+            f"| {glpi_id_link('Webhook', w.get('id'))} "
             f"| {esc(w.get('name', 'N/A'))} "
             f"| {truncate_field(w.get('url', ''), 60)} "
             f"| {'Ativo' if w.get('is_active') else 'Inativo'} "
@@ -628,12 +657,14 @@ def format_webhook_detail(data: dict) -> str:
         if data.get("itemtype")
         else "N/A"
     )
+    _wurl = glpi_url("Webhook", data.get("id"))
     return (
         f"# Webhook: {esc(data.get('name', 'N/A'))}\n\n"
         f"| Campo | Valor |\n|---|---|\n"
         f"| ID | {esc(data.get('id'))} |\n"
+        f"| Link | {('[Abrir no GLPI](' + _wurl + ')') if _wurl else 'N/A'} |\n"
         f"| Nome | {esc(data.get('name'))} |\n"
-        f"| URL | {esc(data.get('url', 'N/A'))} |\n"
+        f"| URL (callback) | {esc(data.get('url', 'N/A'))} |\n"
         f"| Evento (MCP) | {esc(event_label)} |\n"
         f"| Itemtype | {esc(data.get('itemtype', 'N/A'))} |\n"
         f"| Event (GLPI) | {esc(data.get('event', 'N/A'))} |\n"
@@ -714,7 +745,7 @@ def format_knowledge_articles(data, args: dict) -> str:
     rows = []
     for a in items:
         rows.append(
-            f"| {esc(a.get('id'))} "
+            f"| {glpi_id_link('KnowbaseItem', a.get('id'))} "
             f"| {truncate_field(a.get('name', ''), 80)} "
             f"| {esc(a.get('category', 'N/A'))} "
             f"| {esc(a.get('views', 0))} |"

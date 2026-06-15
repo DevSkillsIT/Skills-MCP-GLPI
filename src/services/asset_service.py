@@ -547,6 +547,10 @@ class AssetService:
             # inconsistencia confusa para LLM. Resolve via dropdown_cache.
             await self._enrich_asset_names(asset)
 
+            # Guarda o tipo p/ montar o link web (front/<tipo>.form.php).
+            if isinstance(asset, dict):
+                asset.setdefault("asset_type", asset_type)
+
             return asset
             
         except NotFoundError:
