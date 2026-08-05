@@ -823,7 +823,7 @@ def format_computer_details_enriched(data, args: dict) -> str:
         _section(
             "Software Instalado",
             (data.get("software") or [])[:25],
-            [("ID", "id"), ("Software ID", "softwares_id"), ("Versao ID", "softwareversions_id")],
+            [("ID", "id"), ("Software", "softwares_id"), ("Versao", "softwareversions_id")],
         )
     )
 

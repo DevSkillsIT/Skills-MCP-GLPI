@@ -519,6 +519,7 @@ class AssetService:
 
                     # Obter software instalado
                     software_items = await self.client.get_subitems("Computer", asset_id, "Item_SoftwareVersion")
+                    await self._populate_software_parent_ids(software_items)
                     asset["software"] = software_items
 
                     # Obter gerenciamento remoto (ex: AnyDesk, TeamViewer)
@@ -587,6 +588,50 @@ class AssetService:
                     asset[name_key] = name
             except Exception:  # noqa: BLE001
                 continue
+
+    async def _populate_software_parent_ids(self, software_items: Optional[List[Dict[str, Any]]]) -> None:
+        """Preenche softwares_id em cada item de Item_SoftwareVersion.
+
+        A API GLPI para Item_SoftwareVersion so retorna softwareversions_id,
+        nao softwares_id (esse FK mora na tabela SoftwareVersion, um nivel
+        acima). Sem softwares_id no dict, _enrich_id_fields (response_formatter)
+        nao tem o que resolver e a coluna "Software ID"/nome fica em branco.
+        Busca SoftwareVersion/{id} (cacheado) para cada versao unica e
+        propaga softwares_id de volta para os items originais.
+        """
+        if not software_items:
+            return
+
+        version_ids = sorted({
+            item.get("softwareversions_id")
+            for item in software_items
+            if isinstance(item, dict) and item.get("softwareversions_id") not in (None, "", 0)
+        })
+        if not version_ids:
+            return
+
+        semaphore = asyncio.Semaphore(5)
+
+        async def _fetch(vid: Any) -> tuple[Any, Optional[Dict[str, Any]]]:
+            async with semaphore:
+                try:
+                    data = await self.client.get(f"/apirest.php/SoftwareVersion/{vid}", {}, use_cache=True)
+                    return vid, data if isinstance(data, dict) else None
+                except Exception:  # noqa: BLE001 — enrichment opcional
+                    return vid, None
+
+        results = await asyncio.gather(*[_fetch(vid) for vid in version_ids])
+        parent_map = {
+            vid: data.get("softwares_id")
+            for vid, data in results
+            if data is not None and data.get("softwares_id") not in (None, "")
+        }
+
+        for item in software_items:
+            if isinstance(item, dict):
+                vid = item.get("softwareversions_id")
+                if vid in parent_map:
+                    item["softwares_id"] = parent_map[vid]
 
     async def create_asset(
         self,
