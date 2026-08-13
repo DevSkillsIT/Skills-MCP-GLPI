@@ -154,6 +154,20 @@ def _dispatch_manage_assets(data: Any, args: dict) -> str:
     return format_asset_detail(data)
 
 
+def _format_search_records(data: Any, args: dict) -> str:
+    """Render the free-criteria search tool.
+
+    Imported lazily: the tool module imports the search-options cache, which
+    imports the GLPI client — pulling that chain at module import time would
+    create a cycle through the formatters.
+    """
+    if isinstance(data, str):
+        return data
+    from src.tools.consolidated_search import format_search_records
+
+    return format_search_records(data, args)
+
+
 def _dispatch_search_admin(data: Any, args: dict) -> str:
     """Dispatch for glpi_search_admin based on resource."""
     resource = args.get("resource", "users")
@@ -218,6 +232,10 @@ TOOL_FORMATTERS: dict[str, Any] = {
     "glpi_manage_webhook_integrations": _dispatch_manage_webhooks,
     # === KNOWLEDGE (1 tool) ===
     "glpi_search_knowledge_articles": format_knowledge_articles,
+    # === BUSCA POR CRITERIOS LIVRES (1 tool) ===
+    # @MX:NOTE: sem registro aqui, a tool devolve o JSON cru — contrariando a
+    # propria descricao ("Retorna Markdown") e gastando token a toa.
+    "glpi_search_records_by_criteria": _format_search_records,
     # === BRIDGE TOOLS (4) — pass-through for Markdown ===
     "glpi_list_available_resources": lambda data, args: data if isinstance(data, str) else format_resources_list(data),
     "glpi_read_resource_by_uri": lambda data, args: data if isinstance(data, str) else str(data),

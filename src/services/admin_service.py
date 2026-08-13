@@ -4,17 +4,203 @@ Migrado e expandido de glpi_service.py existente
 Implementa operações CRUD de usuários, grupos, entidades, localizações
 """
 
+import asyncio
 from typing import Optional, List, Dict, Any
-from datetime import datetime
 
 from src.services.glpi_client import glpi_client
 from src.services.dropdown_cache import dropdown_cache
+from src.services.search_options import search_options_cache
 from src.logger import logger
+from src.utils.search_criteria import normalize_order, resolve_sort_field
 from src.models.exceptions import (
     NotFoundError,
     ValidationError,
     GLPIError
 )
+
+
+# GLPI Search API field IDs per admin resource, used only for ordering.
+# The User ids are the ones already confirmed live against /search/User (see
+# AdminTools.search_users); groups, entities and locations use the CommonDBTM
+# defaults, stable across GLPI 9/10/11.
+# Search API field ids for User, validated against a live instance.
+#
+# @MX:ANCHOR: one map feeds both the forcedisplay request and the response
+# parsing in the user search.
+# @MX:REASON: those two used to carry independent comment blocks that
+# contradicted each other — the request assumed 3=is_active, 8=mobile,
+# 12=registration_number, while the parsing read 3=location, 8=is_active,
+# 11=mobile after being corrected against a real instance. Asking for one set
+# of columns and reading another is invisible in the response: every field
+# still comes back populated, just with the wrong content. A single map cannot
+# disagree with itself.
+USER_FIELD = {
+    "id": 2,
+    "name": 1,             # login
+    "firstname": 9,
+    "realname": 34,
+    "email": 5,
+    "phone": 6,
+    "phone2": 10,          # NOT 7 — 7 nao existe no catalogo
+    "mobile": 11,          # NOT 8 — confirmed live
+    "is_active": 8,        # NOT 3 — confirmed live
+    "location": 3,         # NOT is_active — confirmed live
+    "registration_number": 22,  # NOT 12 — 12 nao existe no catalogo
+    "title": 81,                # NOT 13 — 13 e "Grupos"
+    "category": 82,             # NOT 14 — 14 e "Ultima autenticacao"
+    "comment": 16,
+    "last_login": 14,           # NOT 17 — 17 e "Idioma"
+    "date_mod": 19,             # NOT 15 — 15 e "Autenticacao"
+    "profile": 20,
+    "entity": 80,
+    "group": 13,                # NOT 82 — 82 e "Categoria"
+    "date_creation": 121,
+}
+
+#: Colunas da propria tabela de usuarios, para a reconciliacao corrigir.
+#
+# @MX:ANCHOR: o mapa de usuarios e reconciliado como os demais.
+# @MX:REASON: sete ids estavam trocados entre si e nada avisava, porque o
+# pedido (forcedisplay) e a leitura usam o MESMO dicionario — concordavam um
+# com o outro e discordavam do GLPI. Medido na instancia de referencia:
+# 13="Grupos" era lido como 'title', 14="Ultima autenticacao" como 'category',
+# 17="Idioma" como 'last_login'. Ordenar por ultimo acesso ordenava por idioma,
+# e cada linha trazia a coluna errada sob o nome certo. Chamados, ativos e
+# registros ITIL ja passavam por esta rede de seguranca; usuarios, nao.
+_USER_UID_HINTS = {
+    "name": "User.name",
+    "id": "User.id",
+    "firstname": "User.firstname",
+    "realname": "User.realname",
+    "phone": "User.phone",
+    "phone2": "User.phone2",
+    "mobile": "User.mobile",
+    "is_active": "User.is_active",
+    "registration_number": "User.registration_number",
+    "comment": "User.comment",
+    "last_login": "User.last_login",
+    "date_mod": "User.date_mod",
+    "date_creation": "User.date_creation",
+}
+
+_user_field_sync_done = False
+_user_field_sync_lock = asyncio.Lock()
+
+
+async def ensure_user_field_map_synced() -> None:
+    """Correct USER_FIELD against the instance's own catalogue, once.
+
+    Same safety net the ticket, asset and ITIL paths already use: ids move
+    across GLPI versions, profiles and plugins, and a stale id keeps returning
+    rows -- just from another column.
+    """
+    global _user_field_sync_done
+    if _user_field_sync_done:
+        return
+
+    async with _user_field_sync_lock:
+        if _user_field_sync_done:
+            return
+        try:
+            await search_options_cache.reconcile("User", USER_FIELD, _USER_UID_HINTS)
+        except Exception as exc:  # noqa: BLE001 -- never block a search
+            logger.warning(f"User field reconciliation skipped: {exc}")
+        finally:
+            _user_field_sync_done = True
+
+
+def reset_user_field_sync() -> None:
+    """Forget the reconciliation (tests and cache invalidation)."""
+    global _user_field_sync_done
+    _user_field_sync_done = False
+
+ADMIN_SORT_FIELDS = {
+    "users": {
+        "name": USER_FIELD["name"],
+        "id": USER_FIELD["id"],
+        "location": USER_FIELD["location"],
+        "email": USER_FIELD["email"],
+        "firstname": USER_FIELD["firstname"],
+        "realname": USER_FIELD["realname"],
+        "last_login": USER_FIELD["last_login"],
+        "date_mod": USER_FIELD["date_mod"],
+        "date_creation": USER_FIELD["date_creation"],
+        "entity": USER_FIELD["entity"],
+    },
+    "groups": {
+        "name": 1,
+        "id": 2,
+        "comment": 16,
+        "date_mod": 19,
+        "date_creation": 121,
+        "entity": 80,
+    },
+    "entities": {
+        "name": 1,
+        "id": 2,
+        "comment": 16,
+        "date_mod": 19,
+        "date_creation": 121,
+    },
+    "locations": {
+        "name": 1,
+        "id": 2,
+        "comment": 16,
+        "date_mod": 19,
+        "date_creation": 121,
+        "entity": 80,
+    },
+}
+
+# Fallback column for sorting: every admin resource has a name.
+ADMIN_DEFAULT_SORT_FIELD = 1
+
+# Search API field ids used when a listing has to go through /search instead of
+# getAllItems. Keys are the column names the callers already use as filters.
+GROUP_SEARCH_FIELD = {
+    "entities_id": 80,
+    "is_user_group": 15,
+    "is_technician_group": 16,
+}
+
+LOCATION_SEARCH_FIELD = {
+    "entities_id": 80,
+    "locations_id": 3,
+}
+
+# Columns brought back by those searches, so the response keeps the same shape
+# the getAllItems path produces.
+_ADMIN_SEARCH_COLUMNS = {
+    "Group": {2: "id", 1: "name", 16: "comment", 80: "entities_id"},
+    "Location": {2: "id", 1: "name", 16: "comment", 80: "entities_id"},
+}
+
+
+def resolve_admin_sort(resource: str, sort_by: Any = None, order: Any = None) -> tuple:
+    """Resolve sort_by/order into the (field_id, direction) the API expects.
+
+    Shared by every admin listing: users are searched from the tools layer and
+    the other resources from this service, so both resolve here instead of
+    keeping two tables that could drift apart.
+
+    Returns (None, None) when the caller asked for nothing, so a legacy call
+    produces the exact request it produced before sorting existed. A field the
+    resource does not expose falls back to the name column with a warning —
+    an unusable sort key must never fail the whole listing.
+    """
+    if sort_by is None and order is None:
+        return None, None
+
+    fields = ADMIN_SORT_FIELDS.get(resource, ADMIN_SORT_FIELDS["users"])
+    sort_field = resolve_sort_field(
+        sort_by,
+        fields,
+        ADMIN_DEFAULT_SORT_FIELD,
+        context=f"search_admin[{resource}]",
+    )
+    direction = normalize_order(order, default="ASC")
+
+    return sort_field, direction
 
 
 class AdminService:
@@ -32,8 +218,67 @@ class AdminService:
     def __init__(self):
         """Inicializa o serviço de administração."""
         self.client = glpi_client
-        
+
         logger.info("AdminService initialized")
+
+    async def _search_admin_items(
+        self,
+        itemtype: str,
+        field_map: Dict[str, int],
+        filters: Dict[str, Any],
+        limit: int,
+        offset: int,
+    ) -> List[Dict[str, Any]]:
+        """Run a filtered listing through the Search API and normalise it back.
+
+        @MX:ANCHOR: the only filtered path for admin listings.
+        @MX:REASON: getAllItems accepts a criteria payload and quietly ignores
+        it, so every filtered listing silently returned everything. Filters
+        have to travel as numeric search options, which is what this does; the
+        result is mapped back to named keys so callers and formatters keep
+        working unchanged.
+        """
+        criteria = []
+        for column, value in filters.items():
+            field_id = field_map.get(column)
+            if field_id is None:
+                logger.warning(
+                    f"_search_admin_items: filtro '{column}' nao mapeado para "
+                    f"{itemtype}; ignorado para nao filtrar a coluna errada"
+                )
+                continue
+            criteria.append({
+                "field": field_id,
+                # Entity filtering is recursive: a parent entity must include
+                # its children, same contract used for tickets and assets.
+                "searchtype": "under" if column == "entities_id" else "equals",
+                "value": value,
+            })
+
+        if not criteria:
+            return []
+
+        columns = _ADMIN_SEARCH_COLUMNS.get(itemtype, {})
+        result = await self.client.search(
+            item_type=itemtype,
+            criteria=criteria,
+            forcedisplay=list(columns) or None,
+            range_limit=limit,
+            range_offset=offset,
+            expand_dropdowns=True,
+        )
+
+        rows = result.get("data", []) if isinstance(result, dict) else (result or [])
+        normalised = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            item = {name: row.get(str(fid)) for fid, name in columns.items()}
+            # Preserve anything else the API returned under its raw key.
+            for key, value in row.items():
+                item.setdefault(key, value)
+            normalised.append(item)
+        return normalised
     
     # ============= USUÁRIOS =============
     
@@ -64,10 +309,18 @@ class AdminService:
         Returns:
             Lista de usuários
         """
+        await ensure_user_field_map_synced()
+
         # Construir filtros para busca GLPI
         filters = {}
         
-        if entity_id:
+        # @MX:WARN: comparar com None, nunca por veracidade.
+        # @MX:REASON: a entidade raiz tem id 0, que e falso em Python. Com
+        # o teste por veracidade, filtrar pela raiz era silenciosamente
+        # ignorado e a busca devolvia registros de TODAS as entidades —
+        # confirmado ao vivo pedindo grupos da entidade 0 e recebendo os
+        # de outra. Mesmo defeito ja corrigido no lado de ativos.
+        if entity_id is not None:
             filters["entities_id"] = entity_id
         
         if group_id:
@@ -195,26 +448,45 @@ class AdminService:
                 ]
             )
             
-            # Obter grupos do usuário
-            try:
-                groups = await self.client.get_subitems("User", user_id, "Group_User")
-                user["groups"] = groups
-            except Exception:
-                user["groups"] = []
-            
-            # Obter perfis do usuário
-            try:
-                profiles = await self.client.get_subitems("User", user_id, "Profile_User")
-                user["profiles"] = profiles
-            except Exception:
-                user["profiles"] = []
-            
-            # Obter entidades do usuário
-            try:
-                entities = await self.client.get_subitems("User", user_id, "Entity_User")
-                user["entities"] = entities
-            except Exception:
-                user["entities"] = []
+            # @MX:ANCHOR: os tres subitens abaixo custam uma chamada HTTP cada e
+            # precisam chegar ao formatter como NOMES.
+            # @MX:REASON: groups/profiles/entities eram buscados e depois
+            # descartados — a ficha do usuario imprimia so `Grupos | 8`, uma
+            # contagem nua que se le como "grupo 8", e perfis/entidades nao
+            # apareciam em lugar nenhum. Perfil e justamente o campo que explica
+            # um ERROR_RIGHT_MISSING: pagar a chamada e jogar a resposta fora
+            # deixa quem diagnostica sem a unica informacao que importa.
+            # Falha na resolucao degrada para os IDs, nunca para silencio.
+            for key, subitem, dropdown, fk in (
+                ("groups", "Group_User", "Group", "groups_id"),
+                ("profiles", "Profile_User", "Profile", "profiles_id"),
+                ("entities", "Entity_User", "Entity", "entities_id"),
+            ):
+                try:
+                    items = await self.client.get_subitems("User", user_id, subitem)
+                    user[key] = items or []
+                except Exception as e:
+                    logger.warning(
+                        f"get_user({user_id}): subitem {subitem} indisponivel: {e}"
+                    )
+                    user[key] = []
+
+                ids = [
+                    int(item[fk])
+                    for item in user[key]
+                    if isinstance(item, dict) and str(item.get(fk, "")).isdigit()
+                ]
+                names: List[str] = []
+                if ids:
+                    try:
+                        resolved = await dropdown_cache.get_many_names(dropdown, ids)
+                        names = [str(resolved.get(i) or i) for i in ids]
+                    except Exception as e:
+                        logger.warning(
+                            f"get_user({user_id}): nomes de {dropdown} nao resolvidos: {e}"
+                        )
+                        names = [str(i) for i in ids]
+                user[f"{key}_names"] = names
 
             # @MX:NOTE: GLPI guarda emails na tabela glpi_useremails (itemtype
             # UserEmail), NAO no objeto User. O campo "email" do User vem vazio.
@@ -489,11 +761,13 @@ class AdminService:
         is_technical_group: Optional[bool] = None,
         limit: int = 250,
         offset: int = 0,
-        use_cache: bool = True
+        use_cache: bool = True,
+        sort_by: Optional[Any] = None,
+        order: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
         Lista grupos com filtros avançados.
-        
+
         Args:
             entity_id: Filtrar por entidade
             is_user_group: Filtrar grupos de usuários
@@ -501,14 +775,22 @@ class AdminService:
             limit: Limite de resultados
             offset: Offset para paginação
             use_cache: Usar cache
-        
+            sort_by: Coluna de ordenação (nome amigável ou ID do campo GLPI)
+            order: Direção da ordenação (ASC/DESC)
+
         Returns:
             Lista de grupos
         """
         # Construir filtros
         filters = {}
         
-        if entity_id:
+        # @MX:WARN: comparar com None, nunca por veracidade.
+        # @MX:REASON: a entidade raiz tem id 0, que e falso em Python. Com
+        # o teste por veracidade, filtrar pela raiz era silenciosamente
+        # ignorado e a busca devolvia registros de TODAS as entidades —
+        # confirmado ao vivo pedindo grupos da entidade 0 e recebendo os
+        # de outra. Mesmo defeito ja corrigido no lado de ativos.
+        if entity_id is not None:
             filters["entities_id"] = entity_id
         
         if is_user_group is not None:
@@ -537,13 +819,26 @@ class AdminService:
                 "date_mod", "users_id"
             ]
         }
-        
-        if criteria:
-            params["criteria"] = criteria
-        
+
+        sort_field, sort_order = resolve_admin_sort("groups", sort_by, order)
+        if sort_field is not None:
+            params["sort"] = sort_field
+            params["order"] = sort_order
+
         try:
             logger.info(f"Listing groups with filters: {filters}")
-            result = await self.client.get("/apirest.php/Group", params, use_cache)
+
+            if criteria:
+                # @MX:WARN: com filtro, a busca TEM de ir pela Search API.
+                # @MX:REASON: /apirest.php/Group e o endpoint getAllItems, que
+                # IGNORA criteria[] silenciosamente. Pedir grupos de uma
+                # entidade devolvia os grupos de TODAS as entidades — num
+                # servidor multi-tenant, isso e exposicao entre clientes.
+                # Confirmado ao vivo: filtrando pela entidade 4, vieram grupos
+                # da entidade 1. Mesmo motivo ja documentado em list_tickets.
+                result = await self._search_admin_items("Group", GROUP_SEARCH_FIELD, filters, limit, offset)
+            else:
+                result = await self.client.get("/apirest.php/Group", params, use_cache)
             
             # API pode retornar lista diretamente ou dict com "data"
             if isinstance(result, list):
@@ -732,18 +1027,22 @@ class AdminService:
         is_recursive: Optional[bool] = None,
         limit: int = 250,
         offset: int = 0,
-        use_cache: bool = True
+        use_cache: bool = True,
+        sort_by: Optional[Any] = None,
+        order: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
         Lista entidades com filtros avançados.
-        
+
         Args:
             parent_entity_id: Filtrar por entidade pai
             is_recursive: Filtrar entidades recursivas
             limit: Limite de resultados
             offset: Offset para paginação
             use_cache: Usar cache
-        
+            sort_by: Coluna de ordenação (nome amigável ou ID do campo GLPI)
+            order: Direção da ordenação (ASC/DESC)
+
         Returns:
             Lista de entidades
         """
@@ -775,10 +1074,15 @@ class AdminService:
                 "admin_email_name", "date_creation", "date_mod"
             ]
         }
-        
+
+        sort_field, sort_order = resolve_admin_sort("entities", sort_by, order)
+        if sort_field is not None:
+            params["sort"] = sort_field
+            params["order"] = sort_order
+
         if criteria:
             params["criteria"] = criteria
-        
+
         try:
             logger.info(f"Listing entities with filters: {filters}")
             result = await self.client.get("/apirest.php/Entity", params, use_cache)
@@ -844,18 +1148,22 @@ class AdminService:
         entity_id: Optional[int] = None,
         limit: int = 250,
         offset: int = 0,
-        use_cache: bool = True
+        use_cache: bool = True,
+        sort_by: Optional[Any] = None,
+        order: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
         Lista localizações com filtros avançados.
-        
+
         Args:
             parent_location_id: Filtrar por localização pai
             entity_id: Filtrar por entidade
             limit: Limite de resultados
             offset: Offset para paginação
             use_cache: Usar cache
-        
+            sort_by: Coluna de ordenação (nome amigável ou ID do campo GLPI)
+            order: Direção da ordenação (ASC/DESC)
+
         Returns:
             Lista de localizações
         """
@@ -864,7 +1172,13 @@ class AdminService:
         if parent_location_id:
             filters["locations_id"] = parent_location_id
         
-        if entity_id:
+        # @MX:WARN: comparar com None, nunca por veracidade.
+        # @MX:REASON: a entidade raiz tem id 0, que e falso em Python. Com
+        # o teste por veracidade, filtrar pela raiz era silenciosamente
+        # ignorado e a busca devolvia registros de TODAS as entidades —
+        # confirmado ao vivo pedindo grupos da entidade 0 e recebendo os
+        # de outra. Mesmo defeito ja corrigido no lado de ativos.
+        if entity_id is not None:
             filters["entities_id"] = entity_id
         
         criteria = []
@@ -887,13 +1201,25 @@ class AdminService:
                 "date_creation", "date_mod"
             ]
         }
-        
+
+        sort_field, sort_order = resolve_admin_sort("locations", sort_by, order)
+        if sort_field is not None:
+            params["sort"] = sort_field
+            params["order"] = sort_order
+
         if criteria:
             params["criteria"] = criteria
-        
+
         try:
             logger.info(f"Listing locations with filters: {filters}")
-            result = await self.client.get("/apirest.php/Location", params, use_cache)
+
+            if criteria:
+                # Mesmo motivo de list_groups: getAllItems ignora criteria[].
+                result = await self._search_admin_items(
+                    "Location", LOCATION_SEARCH_FIELD, filters, limit, offset
+                )
+            else:
+                result = await self.client.get("/apirest.php/Location", params, use_cache)
             
             # API pode retornar lista diretamente ou dict com "data"
             if isinstance(result, list):

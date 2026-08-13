@@ -12,17 +12,12 @@ from typing import Any, Dict, List, Optional
 
 from src.formatters.markdown_helpers import remove_heavy_fields
 from src.models.exceptions import GLPIError, NotFoundError, ValidationError
-from src.services.asset_service import asset_service
 from src.tools.assets import asset_tools
 from src.utils.helpers import (
-    DateTimeHelper,
     PaginationHelper,
     entity_resolver,
-    input_sanitizer,
     logger,
-    response_truncator,
 )
-from src.utils.safety_guard import require_safety_confirmation
 from src.utils.validators import create_mcp_error, validate_positive_int
 
 # Maximum allowed limit for any list/search query
@@ -80,7 +75,7 @@ async def _resolve_entity(
     if not entity_name:
         return entity_id
     resolved_id = await entity_resolver.resolve_entity_name(entity_name)
-    # @MX:NOTE: `is not None` em vez de truthy — entity_id=0 (root) e valido (Bug Ramada)
+    # @MX:NOTE: `is not None` em vez de truthy — entity_id=0 (root) e valido (defeito real observado em producao)
     if resolved_id is not None:
         logger.info(f"Entity name '{entity_name}' resolved to ID {resolved_id}")
         return resolved_id
@@ -114,6 +109,9 @@ async def search_assets(
     itemtype: Optional[str] = None,
     status: Optional[str] = None,
     fields: Optional[List[str]] = None,
+    assigned_user: Optional[str] = None,
+    sort_by: Optional[str] = None,
+    order: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Consolidated search/list tool for GLPI assets.
@@ -150,6 +148,14 @@ async def search_assets(
         itemtype: Filter reservable items by GLPI type.
         status: Filter by asset status.
         fields: Specific fields to return (search mode only).
+        assigned_user: Filter by the responsible user. Accepts the display
+            name (loose match) or the numeric user id, same contract as the
+            ticket actor filters. Applies to the listing scopes; the free-text
+            branch already resolves users from ``query``.
+        sort_by: Column to sort by. Friendly name (name, id, serial, location,
+            manufacturer, model, status, user, date_mod) or a raw GLPI field
+            id. Unknown names fall back to the asset name.
+        order: Sort direction, 'asc' or 'desc'.
 
     Returns:
         Dict with results and pagination metadata.
@@ -161,7 +167,7 @@ async def search_assets(
             return create_mcp_error(
                 f"Invalid scope '{scope}'",
                 f"Expected one of: {', '.join(VALID_SCOPES)}",
-                "Example: search_assets(scope='computers', entity_name='Skills IT')",
+                "Example: search_assets(scope='computers', entity_name='Acme Corp')",
             )
 
         # -- Cap and validate pagination
@@ -177,15 +183,36 @@ async def search_assets(
             f"limit={limit}, offset={offset}"
         )
 
+        # Filters that apply regardless of the branch taken below.
+        #
+        # @MX:ANCHOR: text search and scope listing must accept the same filters.
+        # @MX:REASON: the text-search branch used to forward only the query, the
+        # asset type and the entity. Everything else the caller passed —
+        # manufacturer, location, status, responsible user — was accepted and
+        # then dropped, so "notebook" plus a manufacturer filter quietly
+        # returned every notebook. Same defect already found and fixed on the
+        # ticket side; building the set once makes it unrepeatable here.
+        common_filters = {
+            "entity_id": entity_id,
+            "location_id": location_id,
+            "manufacturer_id": manufacturer_id,
+            "user_id": user_id,
+            "username": username,
+            "status": status,
+            "assigned_user": assigned_user,
+            "sort_by": sort_by,
+            "order": order,
+        }
+
         # -- Free-text search takes priority
         if query:
             result = await asset_tools.search_assets(
                 query=query,
                 asset_type=asset_type,
-                entity_id=entity_id,
                 fields=fields,
                 limit=limit,
                 offset=offset,
+                **common_filters,
             )
             return _clean_list_response(result)
 
@@ -205,6 +232,9 @@ async def search_assets(
                 username=username,
                 limit=limit,
                 offset=offset,
+                assigned_user=assigned_user,
+                sort_by=sort_by,
+                order=order,
             )
             return _clean_list_response(result)
 
@@ -215,14 +245,21 @@ async def search_assets(
                 manufacturer_id=manufacturer_id,
                 limit=limit,
                 offset=offset,
+                assigned_user=assigned_user,
+                sort_by=sort_by,
+                order=order,
             )
             return _clean_list_response(result)
 
         if scope == "software":
+            # No assigned_user here: Software has no responsible-user column,
+            # so forwarding it would build a criterion GLPI rejects.
             result = await asset_tools.list_software(
                 entity_id=entity_id,
                 limit=limit,
                 offset=offset,
+                sort_by=sort_by,
+                order=order,
             )
             return _clean_list_response(result)
 
@@ -231,6 +268,9 @@ async def search_assets(
                 device_type=device_type or "NetworkEquipment",
                 limit=limit,
                 offset=offset,
+                assigned_user=assigned_user,
+                sort_by=sort_by,
+                order=order,
             )
             return _clean_list_response(result)
 
@@ -260,6 +300,9 @@ async def search_assets(
             status=status,
             limit=limit,
             offset=offset,
+            assigned_user=assigned_user,
+            sort_by=sort_by,
+            order=order,
         )
         return _clean_list_response(result)
 

@@ -8,14 +8,13 @@ import asyncio
 import math
 import re
 import unicodedata
-from typing import Dict, List, Tuple, Optional, Set, Any
+from typing import Dict, List, Tuple, Set, Any
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from collections import Counter
 from difflib import SequenceMatcher
 
 from src.config import settings
 from src.logger import logger
-from src.models.exceptions import SimilarityError
 
 
 class TextSimilarity:

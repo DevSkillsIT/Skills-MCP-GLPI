@@ -3,9 +3,31 @@ Configurações e fixtures para testes.
 """
 
 import pytest
-import os
 from unittest.mock import MagicMock, AsyncMock, patch
 from src.config.settings import Settings
+
+
+@pytest.fixture(autouse=True)
+def _isolated_idempotency_store():
+    """Cada teste começa sem memória de escritas anteriores.
+
+    A proteção contra repetição usa SQLite por padrão, de propósito: ela
+    precisa sobreviver a reinício do processo para deter o retry de um cliente.
+    O efeito colateral é que a suíte se contamina entre EXECUÇÕES — um teste
+    que cria um chamado numa rodada recebe o resultado repetido na rodada
+    seguinte e o serviço nunca é chamado, produzindo falhas que aparecem só na
+    segunda vez. Em teste, o armazenamento é em memória e descartado ao fim.
+    """
+    from src.security.idempotency import (
+        IdempotencyStore,
+        MemoryIdempotencyBackend,
+        reset_idempotency_store,
+        set_idempotency_store,
+    )
+
+    set_idempotency_store(IdempotencyStore(backend=MemoryIdempotencyBackend()))
+    yield
+    reset_idempotency_store()
 
 
 @pytest.fixture

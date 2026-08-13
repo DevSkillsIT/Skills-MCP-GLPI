@@ -8,7 +8,6 @@ import hmac
 import hashlib
 import time
 import json
-from unittest.mock import AsyncMock, patch, MagicMock
 from fastapi.testclient import TestClient
 
 from src.main import app

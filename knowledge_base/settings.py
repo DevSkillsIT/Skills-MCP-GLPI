@@ -23,7 +23,7 @@ from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Provider = Literal["vllm", "openai", "none"]
-EmbedStrategy = Literal["full", "form_description"]
+EmbedStrategy = Literal["full", "form_description", "problem_solution"]
 
 # Resolve .env next to this package so config loads regardless of the CWD the
 # pipeline is invoked from (e.g. `python -m knowledge_base.ingest_tickets`).
@@ -105,9 +105,23 @@ class KbSettings(BaseSettings):
     # What text is embedded:
     #   full              -> title + category + description (default; right when
     #                        the ticket title is real signal — most GLPI setups)
-    #   form_description  -> only the form's "Descrição" field (for form-driven
-    #                        instances where titles are repetitive boilerplate)
+    #   form_description  -> only the form's free-text problem field (for
+    #                        form-driven instances where titles are boilerplate)
+    #   problem_solution  -> problem + resolution (findable by symptom AND fix)
     embed_strategy: EmbedStrategy = "full"
+
+    # Labels of the form field holding the free-text problem. Instance-specific:
+    # Formcreator forms name it differently ("Descrição", "Por favor, descreva o
+    # problema", ...). Empty = use the built-in defaults.
+    description_labels: list[str] = Field(default_factory=list)
+
+    # Fold technician follow-ups into the indexed resolution text. GLPI keeps the
+    # fix in a follow-up rather than a formal solution on many tickets.
+    include_followups: bool = True
+
+    # Exact secret values to strip from indexed text. Patterns cannot catch a
+    # shared password sitting on a line of its own with no label near it.
+    redact_literals: list[str] = Field(default_factory=list)
 
     # Identifies the source GLPI instance in the `source` column / metadata.
     source_label: str = "glpi"
@@ -179,6 +193,9 @@ class Settings:
             source_label=ing.get("source_label", "glpi"),
             ssh_host=ing.get("ssh_host", ""),
             remote_db_config=ing.get("remote_db_config", "/etc/glpi/config_db.php"),
+            description_labels=list(ing.get("description_labels") or []),
+            include_followups=bool(ing.get("include_followups", True)),
+            redact_literals=list(ing.get("redact_literals") or []),
         )
         return cls(pg=pg, vllm=vllm, openai=openai, kb=kbset, provider=provider)
 

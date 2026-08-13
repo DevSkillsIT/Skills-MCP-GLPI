@@ -29,6 +29,7 @@ class Hit:
     similarity: float | None = None
     canonical_id: str | None = None
     body: str = ""
+    solution: str = ""
     extra: dict = field(default_factory=dict)
 
 
@@ -40,6 +41,7 @@ class SourceResults:
     is_official: bool
     hits: list[Hit]
     weight: float = 1.0
+    solutions_expected: bool = False
 
 
 @dataclass(slots=True)
@@ -55,6 +57,8 @@ class UnifiedHit:
     similarity: float | None
     canonical_id: str | None = None
     body: str = ""
+    solution: str = ""
+    solutions_expected: bool = False
 
 
 def _normalize_title(title: str) -> str:
@@ -111,6 +115,8 @@ def cross_source_rrf(sources: list[SourceResults], k: int = DEFAULT_K) -> list[U
                     similarity=hit.similarity,
                     canonical_id=hit.canonical_id,
                     body=hit.body,
+                    solution=hit.solution,
+                    solutions_expected=src.solutions_expected,
                 )
             )
 

@@ -1,0 +1,13 @@
+[Unit]
+Description=Run the GLPI knowledge-base ingest daily (%i)
+
+[Timer]
+# 05:00 — after the Sankhya help (03:00) and community (04:00) syncs, which
+# share the embedding endpoint. Persistent catches up after downtime;
+# randomized delay avoids several instances starting at the same instant.
+OnCalendar=*-*-* 05:00:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

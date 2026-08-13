@@ -3,7 +3,7 @@ Cliente HTTP para comunicação com GLPI API.
 """
 
 import httpx
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 from src.config import settings
 from src.logger import logger
 from src.models import (

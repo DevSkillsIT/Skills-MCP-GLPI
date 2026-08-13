@@ -5,10 +5,14 @@ Wrappers para admin_service com validação e tratamento de erros
 """
 
 from typing import Dict, Any, List, Optional
-from datetime import datetime
-import json
 
-from src.services.admin_service import admin_service
+from src.services.admin_service import (
+    USER_FIELD,
+    admin_service,
+    ensure_user_field_map_synced,
+    resolve_admin_sort,
+)
+from src.services.glpi_client import _emit_criteria
 from src.models.exceptions import (
     NotFoundError,
     ValidationError,
@@ -22,6 +26,24 @@ from src.utils.helpers import (
     entity_resolver
 )
 from src.utils.safety_guard import require_safety_confirmation
+from src.utils.text_search import (
+    build_text_criteria,
+    describe_stage,
+    significant_terms,
+    split_terms,
+)
+
+# Columns requested from /search/User, in the order USER_FIELD declares them.
+# Derived rather than written out, so the request can never ask for a column
+# the parser does not read (or vice versa).
+#
+# @MX:WARN: lido a cada chamada, nunca no import.
+# @MX:REASON: a reconciliacao corrige USER_FIELD em runtime, no lugar. Uma
+# tupla congelada no import continuaria pedindo os ids antigos enquanto o
+# parser ja leria os novos — request e parse voltariam a divergir, que e
+# exatamente a falha que a reconciliacao existe para impedir.
+def _user_forcedisplay() -> tuple:
+    return tuple(USER_FIELD.values())
 
 
 class AdminTools:
@@ -232,7 +254,7 @@ class AdminTools:
                 phone = input_sanitizer.validate_phone(phone)
             
             if comment:
-                comment = input_sanitizer.sanitize_string(comment)
+                comment = input_sanitizer.sanitize_string(comment, allow_html=True)
             
             if registration_number:
                 registration_number = input_sanitizer.sanitize_string(registration_number)
@@ -400,7 +422,9 @@ class AdminTools:
         is_user_group: Optional[bool] = None,
         is_technical_group: Optional[bool] = None,
         limit: int = 250,
-        offset: int = 0
+        offset: int = 0,
+        sort_by: Optional[Any] = None,
+        order: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Tool MCP: list_groups
@@ -413,6 +437,8 @@ class AdminTools:
             is_technical_group: Filtrar grupos técnicos
             limit: Número máximo de resultados (padrão: 50)
             offset: Deslocamento para paginação (padrão: 0)
+            sort_by: Coluna de ordenação (nome amigável ou ID do campo GLPI)
+            order: Direção da ordenação (asc/desc)
 
         Returns:
             Lista de grupos com metadados de paginação
@@ -446,7 +472,9 @@ class AdminTools:
                 is_technical_group=is_technical_group,
                 limit=limit,
                 offset=offset,
-                use_cache=True
+                use_cache=True,
+                sort_by=sort_by,
+                order=order
             )
             
             # Truncar resposta se necessário
@@ -544,7 +572,7 @@ class AdminTools:
             name = input_sanitizer.sanitize_string(name)
 
             if comment:
-                comment = input_sanitizer.sanitize_string(comment)
+                comment = input_sanitizer.sanitize_string(comment, allow_html=True)
             
             group = await admin_service.create_group(
                 name=name,
@@ -575,18 +603,22 @@ class AdminTools:
         parent_entity_id: Optional[int] = None,
         is_recursive: Optional[bool] = None,
         limit: int = 250,
-        offset: int = 0
+        offset: int = 0,
+        sort_by: Optional[Any] = None,
+        order: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Tool MCP: list_entities
         Lista todas as entidades com filtros opcionais
-        
+
         Args:
             parent_entity_id: Filtrar por entidade pai
             is_recursive: Filtrar entidades recursivas
             limit: Número máximo de resultados (padrão: 50)
             offset: Deslocamento para paginação (padrão: 0)
-        
+            sort_by: Coluna de ordenação (nome amigável ou ID do campo GLPI)
+            order: Direção da ordenação (asc/desc)
+
         Returns:
             Lista de entidades com metadados de paginação
         """
@@ -601,7 +633,9 @@ class AdminTools:
                 is_recursive=is_recursive,
                 limit=limit,
                 offset=offset,
-                use_cache=True
+                use_cache=True,
+                sort_by=sort_by,
+                order=order
             )
             
             # Truncar resposta se necessário
@@ -653,7 +687,9 @@ class AdminTools:
         entity_id: Optional[int] = None,
         entity_name: Optional[str] = None,
         limit: int = 250,
-        offset: int = 0
+        offset: int = 0,
+        sort_by: Optional[Any] = None,
+        order: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Tool MCP: list_locations
@@ -665,6 +701,8 @@ class AdminTools:
             entity_name: Filtrar por nome da entidade/cliente (ex: "Acme Corp", "Example Client")
             limit: Número máximo de resultados (padrão: 50)
             offset: Deslocamento para paginação (padrão: 0)
+            sort_by: Coluna de ordenação (nome amigável ou ID do campo GLPI)
+            order: Direção da ordenação (asc/desc)
 
         Returns:
             Lista de localizações com metadados de paginação
@@ -697,7 +735,9 @@ class AdminTools:
                 entity_id=entity_id,
                 limit=limit,
                 offset=offset,
-                use_cache=True
+                use_cache=True,
+                sort_by=sort_by,
+                order=order
             )
             
             # Truncar resposta se necessário
@@ -807,7 +847,7 @@ class AdminTools:
                 address = input_sanitizer.sanitize_string(address)
             
             if comment:
-                comment = input_sanitizer.sanitize_string(comment)
+                comment = input_sanitizer.sanitize_string(comment, allow_html=True)
             
             location = await admin_service.create_location(
                 name=name,
@@ -889,6 +929,9 @@ class AdminTools:
         limit: int = 250,
         offset: int = 0,
         match_mode: str = "all",
+        text_query: Optional[str] = None,
+        sort_by: Optional[Any] = None,
+        order: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Tool MCP: search_users
@@ -911,6 +954,9 @@ class AdminTools:
             entity_id: Filtrar por ID da entidade
             limit: Número máximo de resultados
             offset: Deslocamento para paginação
+            match_mode: "all" combina os filtros textuais com AND, "any" com OR
+            sort_by: Coluna de ordenação (nome amigável ou ID do campo GLPI)
+            order: Direção da ordenação (asc/desc)
 
         Returns:
             Lista completa de usuários com todos os campos
@@ -956,8 +1002,31 @@ class AdminTools:
             # 82 = groups_id (grupo)
             # 20 = profiles_id (perfil)
             
+            await ensure_user_field_map_synced()
+
             criteria = []
-            
+
+            # Busca por frase livre: cada palavra precisa aparecer em ALGUM dos
+            # campos de identificacao, nao a frase inteira em UM deles.
+            #
+            # @MX:WARN: este caminho ignora name/firstname/realname/email.
+            # @MX:REASON: repassar a mesma frase aos quatro campos e uni-los por
+            # OR faz "Adriano Fante" nunca casar, porque o nome esta em um campo
+            # e o sobrenome em outro -- nenhum dos dois contem a frase. Buscar
+            # uma pessoa pelo nome completo e o uso mais comum da tool e era
+            # justamente o que devolvia vazio.
+            term_groups: List[Dict[str, Any]] = []
+            _USER_TEXT_FIELDS = [1, 9, 34, 5]  # login, nome, sobrenome, email
+            _search_terms: List[str] = []
+            if text_query:
+                _terms, _ = split_terms(str(text_query))
+                _search_terms = (
+                    significant_terms(_terms) if len(_terms) > 1 else _terms
+                )
+                term_groups = build_text_criteria(
+                    _USER_TEXT_FIELDS, _search_terms, mode="all"
+                )
+
             if name:
                 criteria.append({
                     "field": 1,
@@ -986,7 +1055,8 @@ class AdminTools:
                     "value": email
                 })
 
-            if entity_id:
+            # Entidade raiz tem id 0 (falso em Python): comparar com None.
+            if entity_id is not None:
                 criteria.append({
                     "field": 80,
                     "searchtype": "under", # Busca recursiva na entidade e filhas
@@ -1002,44 +1072,103 @@ class AdminTools:
             params = {
                 "range": f"{offset}-{offset + limit - 1}",
             }
-            
-            # forcedisplay: TODOS os campos importantes do usuário (IDs corretos)
-            # Usar formato de array PHP para garantir que a API aceite
-            params["forcedisplay[0]"] = 2   # id
-            params["forcedisplay[1]"] = 1   # name (login)
-            params["forcedisplay[2]"] = 9   # firstname (nome)
-            params["forcedisplay[3]"] = 34  # realname (sobrenome)
-            params["forcedisplay[4]"] = 5   # email
-            params["forcedisplay[5]"] = 6   # phone
-            params["forcedisplay[6]"] = 7   # phone2
-            params["forcedisplay[7]"] = 8   # mobile
-            params["forcedisplay[8]"] = 3   # is_active (ativo)
-            params["forcedisplay[9]"] = 11  # registration_number
-            params["forcedisplay[10]"] = 12 # locations_id (localização)
-            params["forcedisplay[11]"] = 13 # usertitles_id (título)
-            params["forcedisplay[12]"] = 14 # usercategories_id (categoria)
-            params["forcedisplay[13]"] = 16 # comment
-            params["forcedisplay[14]"] = 80 # entities_id (entidade)
-            params["forcedisplay[15]"] = 82 # groups_id (grupo)
-            params["forcedisplay[16]"] = 20 # profiles_id (perfil)
-            params["forcedisplay[17]"] = 17 # last_login
-            params["forcedisplay[18]"] = 15 # date_mod
-            params["forcedisplay[19]"] = 121 # date_creation
+
+            # Ordenacao opcional. Sem sort_by/order os parametros nao entram,
+            # mantendo a requisicao identica a de antes.
+            sort_field, sort_order = resolve_admin_sort("users", sort_by, order)
+            if sort_field is not None:
+                params["sort"] = sort_field
+                params["order"] = sort_order
+
+            # forcedisplay: campos do usuário, na ordem de USER_FIELD.
+            # @MX:NOTE: pedido e leitura saem do MESMO mapa (USER_FIELD).
+            # @MX:REASON: quando as duas pontas mantinham listas separadas, elas
+            # divergiram — pedia-se uma coluna e lia-se outra. O erro não
+            # aparece na resposta: todos os campos vêm preenchidos, só que com
+            # o conteúdo trocado (localização exibida como "ativo", por ex.).
+            for position, field_id in enumerate(_user_forcedisplay()):
+                params[f"forcedisplay[{position}]"] = field_id
             
             # Adicionar critérios.
             # Text criteria (name/firstname/realname/email) combinam por match_mode
             # ("any"=OR/"all"=AND). entity_id filter SEMPRE combina por AND.
+            #
+            # @MX:WARN: com match_mode="any", as condições de texto vão AGRUPADAS.
+            # @MX:REASON: o GLPI avalia critérios da esquerda para a direita, sem
+            # precedência. Planos, "nome OR sobrenome OR email AND entidade"
+            # aplicava a entidade apenas ao ÚLTIMO termo do OR — uma busca por
+            # nome restrita a um cliente devolvia usuários de OUTROS clientes,
+            # sem nenhum sinal de erro. Num servidor multi-tenant isso é
+            # vazamento entre clientes, não só um filtro frouxo.
             text_link = "OR" if match_mode == "any" else "AND"
-            for i, crit in enumerate(criteria):
-                for key, value in crit.items():
-                    params[f"criteria[{i}][{key}]"] = value
-                if i > 0:
-                    # Field 80 (entities) is an AND filter regardless of match_mode
-                    link = "AND" if crit.get("field") == 80 else text_link
-                    params[f"criteria[{i}][link]"] = link
-            
+            text_criteria = [c for c in criteria if c.get("field") != 80]
+            entity_criteria = [c for c in criteria if c.get("field") == 80]
+
+            structured: List[Dict[str, Any]] = []
+            if term_groups:
+                # Ja sao grupos de topo, um por termo, unidos por AND. Envolve-los
+                # de novo criaria um terceiro nivel de aninhamento sem necessidade.
+                structured.extend(term_groups)
+            elif text_criteria:
+                grouped = []
+                for position, crit in enumerate(text_criteria):
+                    item = dict(crit)
+                    if position > 0:
+                        item["link"] = text_link
+                    else:
+                        item.pop("link", None)
+                    grouped.append(item)
+                # Um único termo não precisa de grupo.
+                structured.append(grouped[0] if len(grouped) == 1 else {"criteria": grouped})
+
+            # Guardado a parte: a repescagem em OR troca so os grupos de texto e
+            # precisa reaplicar estes filtros intactos. Perder o filtro de
+            # entidade numa repescagem vazaria usuarios de outro cliente.
+            entity_structured: List[Dict[str, Any]] = []
+            for crit in entity_criteria:
+                item = dict(crit)
+                item["link"] = "AND"
+                entity_structured.append(item)
+            structured.extend(entity_structured)
+
+            _emit_criteria(params, structured, "criteria")
+
             # Fazer requisição
             result = await glpi_client.get("/apirest.php/search/User", params, use_cache=False)
+
+            # Repescagem: exigir TODAS as palavras nao achou ninguem, entao
+            # aceitar QUALQUER uma.
+            #
+            # @MX:NOTE: so dispara na busca por frase com mais de um termo.
+            # @MX:REASON: quem digita o nome completo de alguem que esta
+            # cadastrado com outro sobrenome (ou so com o primeiro nome) recebe
+            # zero, e zero aqui parece "essa pessoa nao existe" em vez de "o
+            # cadastro escreve o nome de outro jeito".
+            search_notice = None
+            if term_groups and len(term_groups) > 1:
+                found = bool((result or {}).get("data")) if isinstance(result, dict) else bool(result)
+                if not found:
+                    widened = build_text_criteria(
+                        _USER_TEXT_FIELDS, _search_terms, mode="any"
+                    )
+                    retry_params = {
+                        k: v for k, v in params.items() if not k.startswith("criteria[")
+                    }
+                    _emit_criteria(
+                        retry_params, widened + entity_structured, "criteria"
+                    )
+                    result = await glpi_client.get(
+                        "/apirest.php/search/User", retry_params, use_cache=False
+                    )
+                    search_notice = describe_stage(
+                        "any",
+                        _search_terms,
+                        found=bool((result or {}).get("data"))
+                        if isinstance(result, dict)
+                        else bool(result),
+                    )
+                else:
+                    search_notice = describe_stage("all", _search_terms)
             
             # Processar resultado
             users = []
@@ -1048,42 +1177,11 @@ class AdminTools:
                 # data é uma lista de dicionários com índices numéricos das colunas
                 if isinstance(data, list):
                     for item in data:
+                        # Lê pelo MESMO mapa usado no forcedisplay acima, então
+                        # pedir e ler não podem apontar para colunas distintas.
                         user = {
-                            # Dados básicos (CONFIRMADOS)
-                            "id": item.get("2", ""),  # Campo 2 = ID ✅
-                            "name": item.get("1", ""),  # Campo 1 = Login ✅
-                            "firstname": item.get("9", ""),  # Campo 9 = Firstname ✅
-                            "realname": item.get("34", ""),  # Campo 34 = Realname ✅
-                            
-                            # Contatos (CONFIRMADOS)
-                            "email": item.get("5", ""),  # Campo 5 = Email ✅
-                            "phone": item.get("6", ""),  # Campo 6 = Phone ✅
-                            "phone2": item.get("7", ""),  # Campo 7 = Phone2 (não veio no exemplo)
-                            "mobile": item.get("11", ""),  # Campo 11 = Mobile ✅ (NÃO é 8!)
-                            
-                            # Status (CAMPO 8 = is_active conforme visto)
-                            "is_active": item.get("8", ""),  # Campo 8 = is_active ✅
-                            
-                            # Campo 3 = Localização (não is_active!)
-                            "location": item.get("3", ""),  # Campo 3 = Location ✅
-                            
-                            # Número administrativo
-                            "registration_number": item.get("12", ""),  # Campo 12 - tentativa
-                            
-                            # Categoria e título
-                            "title": item.get("13", ""),  # Campo 13 ✅ (null no exemplo)
-                            "category": item.get("14", ""),  # Campo 14 ✅ (null no exemplo)
-                            "comment": item.get("16", ""),  # Campo 16 = Comment ✅
-                            
-                            # Entidade e grupos (CONFIRMADOS)
-                            "entity": item.get("80", ""),  # Campo 80 = Entity ✅
-                            "group": item.get("82", ""),  # Campo 82 = Group ✅
-                            "profile": item.get("20", ""),  # Campo 20 = Profile ✅
-                            
-                            # Datas (CONFIRMADAS)
-                            "last_login": item.get("17", ""),  # Campo 17 (null no exemplo)
-                            "date_mod": item.get("15", ""),  # Campo 15 ✅
-                            "date_creation": item.get("121", "")  # Campo 121 ✅
+                            key: item.get(str(field_id), "")
+                            for key, field_id in USER_FIELD.items()
                         }
                         users.append(user)
             
@@ -1096,15 +1194,17 @@ class AdminTools:
             if len(users) == 0:
                 logger.info("search_users: Nenhum usuário ativo encontrado, buscando nos deletados...")
                 try:
-                    deleted_params = dict(params)  # Cópia dos parâmetros
+                    # A cópia já traz os critérios exatamente como foram
+                    # enviados na primeira busca; só muda o escopo.
+                    #
+                    # @MX:WARN: não re-emitir critérios aqui.
+                    # @MX:REASON: o bloco anterior reescrevia criteria[N] por
+                    # cima da cópia. Como os critérios agora vão agrupados, o
+                    # resultado eram DUAS formas no mesmo pedido —
+                    # criteria[0][criteria][...] do grupo e criteria[0][field]
+                    # do loop — e o GLPI recebia condições contraditórias.
+                    deleted_params = dict(params)
                     deleted_params["is_deleted"] = 1  # Parâmetro de query para buscar deletados
-
-                    # Manter os critérios originais (não adicionar novo critério)
-                    for i, crit in enumerate(criteria):
-                        for key, value in crit.items():
-                            deleted_params[f"criteria[{i}][{key}]"] = value
-                        if i > 0:
-                            deleted_params[f"criteria[{i}][link]"] = "AND"
 
                     deleted_result = await glpi_client.get("/apirest.php/search/User", deleted_params, use_cache=False)
 
@@ -1158,6 +1258,9 @@ class AdminTools:
                     "has_more": total > (offset + len(all_users))
                 }
             }
+
+            if search_notice:
+                response["search_notice"] = search_notice
 
             # Adicionar aviso se retornou apenas deletados
             if len(deleted_users) > 0 and len(users) == 0:

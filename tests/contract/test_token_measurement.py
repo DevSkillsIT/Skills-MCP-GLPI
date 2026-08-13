@@ -23,7 +23,14 @@ from src.formatters.response_formatter import format_tool_response
 
 @pytest.fixture
 def large_ticket_list() -> dict:
-    """Generate a list of 50 tickets for size measurement."""
+    """Generate 50 tickets in the shape the formatter actually receives.
+
+    The formatter consumes rows already normalized by the ticket service, with
+    named keys and resolved actor names. Feeding it raw API rows would leave
+    every rich column empty, so the measurement would compare a table of dashes
+    against a full JSON payload — flattering the JSON side and telling us
+    nothing about real responses.
+    """
     tickets = []
     for i in range(1, 51):
         tickets.append(
@@ -32,10 +39,22 @@ def large_ticket_list() -> dict:
                 "name": f"Ticket de teste numero {i} com descricao longa para simular dados reais do GLPI",
                 "status": (i % 6) + 1,
                 "priority": (i % 5) + 1,
+                "urgency": (i % 5) + 1,
+                "impact": (i % 5) + 1,
                 "type": (i % 2) + 1,
+                "requester": f"Usuario Solicitante {i % 20}",
+                "tech_assign": f"Tecnico Responsavel {i % 8}",
+                "group_assign": f"Grupo de Atendimento {i % 4}",
+                "category": f"Categoria > Subcategoria {i % 12}",
                 "date": f"2025-01-{(i % 28) + 1:02d}T10:00:00",
+                "date_mod": f"2025-02-{(i % 28) + 1:02d}T14:30:00",
+                "solvedate": "",
+                "sla_late": 1 if i % 5 == 0 else "",
                 "entities_id": i % 10,
-                "users_id_recipient": i % 20,
+                "desc_snippet": (
+                    f"Descricao detalhada do ticket {i} com contexto suficiente "
+                    f"para o analista decidir sem abrir o chamado"
+                ),
                 "content": f"<p>Descricao detalhada do ticket {i} com <b>HTML</b> e &amp; entidades</p>",
             }
         )

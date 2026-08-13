@@ -88,6 +88,18 @@ async def get_ticket_hash(source: str, ticket_id: int) -> str | None:
         return row["body_hash"] if row else None
 
 
+async def has_embedding(source: str, ticket_id: int) -> bool:
+    """Whether the stored row already carries a vector. Lets the hash gate tell
+    "unchanged and indexed" from "unchanged but never embedded"."""
+    async with acquire() as conn:
+        cur = await conn.execute(
+            "SELECT embedding IS NOT NULL AS has_vec FROM tickets WHERE source = %s AND id = %s",
+            (source, ticket_id),
+        )
+        row = cast("dict[str, Any] | None", await cur.fetchone())
+        return bool(row and row["has_vec"])
+
+
 def _common_params(doc: TicketDocument) -> dict[str, Any]:
     return {
         "id": doc.id,

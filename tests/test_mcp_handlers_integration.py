@@ -2,7 +2,7 @@
 Integration Tests for MCP Handlers - JSON-RPC 2.0 Protocol.
 
 Atualizado para a arquitetura consolidada (SPEC-GLPI-ENHANCE-001/F04):
-- 15 tools consolidadas baseadas em `action`/`resource` (não mais ~48 tools
+- 18 tools consolidadas baseadas em `action`/`resource`/`scope` (não mais ~48 tools
   per-action).
 - O envelope de `tools/call` agora retorna o array `content` do protocolo MCP
   (texto Markdown), não mais `data`/`_execution_metadata`.
@@ -36,7 +36,7 @@ def _text(response):
 
 
 class TestMCPHandlersIntegration:
-    """Testes de integração para MCP Handlers JSON-RPC 2.0 (15 tools consolidadas)."""
+    """Testes de integração para MCP Handlers JSON-RPC 2.0 (tools consolidadas)."""
 
     @pytest.fixture
     def sample_list_tools_request(self):
@@ -63,7 +63,7 @@ class TestMCPHandlersIntegration:
 
     @pytest.mark.asyncio
     async def test_tools_list_integration(self, sample_list_tools_request):
-        """AC01: tools/list deve retornar as 15 tools consolidadas"""
+        """AC01: tools/list deve retornar todas as tools consolidadas registradas"""
         response = await mcp_handler.handle_request(sample_list_tools_request)
 
         assert response["jsonrpc"] == "2.0"
@@ -74,13 +74,19 @@ class TestMCPHandlersIntegration:
         assert "total_count" in result
         assert "categories" in result
 
-        # Arquitetura consolidada: 15 tools (SPEC-GLPI-ENHANCE-001/F04)
-        assert result["total_count"] == 15
-        assert len(result["tools"]) == 15
+        # Arquitetura consolidada. O numero cresce quando um dominio novo entra
+        # (ITIL alem do incidente, busca por criterios livres), entao a asserção
+        # e de coerencia, nao de um total fixo que envelhece a cada entrega.
+        from src.handlers import MCPHandler
+        expected = len(MCPHandler().tools)
+        assert result["total_count"] == expected
+        assert len(result["tools"]) == expected
 
-        # Categorias consolidadas
+        # Categorias consolidadas. Tickets tem 2 tools sempre registradas; a
+        # terceira (analise IA) so entra com settings.enable_ai_analysis.
+        from src.config.settings import settings
         categories = result["categories"]
-        assert categories["tickets"] >= 3
+        assert categories["tickets"] >= (3 if settings.enable_ai_analysis else 2)
         assert categories["assets"] >= 2
         assert categories["admin"] >= 2
         assert categories["webhooks"] >= 2
@@ -183,8 +189,10 @@ class TestMCPHandlersIntegration:
         admin_tools = mcp_handler.get_tools_by_category("admin")
         webhook_tools = mcp_handler.get_tools_by_category("webhooks")
 
-        # Quantidades na arquitetura consolidada
-        assert len(ticket_tools) >= 3
+        # Quantidades na arquitetura consolidada. A tool de analise IA e
+        # opcional (settings.enable_ai_analysis), as outras duas nao.
+        from src.config.settings import settings
+        assert len(ticket_tools) >= (3 if settings.enable_ai_analysis else 2)
         assert len(asset_tools) >= 2
         assert len(admin_tools) >= 2
         assert len(webhook_tools) >= 2
@@ -225,7 +233,8 @@ class TestMCPHandlersIntegration:
         assert "protocol" in stats
         assert "last_updated" in stats
 
-        assert stats["total_tools"] == 15
+        from src.handlers import MCPHandler
+        assert stats["total_tools"] == len(MCPHandler().tools)
         assert len(stats["categories"]) >= 4
         assert "tools/list" in stats["available_methods"]
         assert "tools/call" in stats["available_methods"]
@@ -244,8 +253,11 @@ class TestMCPHandlersIntegration:
             "id": 7,
         }
 
+        # action="get" reads the maximum-detail view, so this is the method the
+        # request actually reaches. Patching get_ticket left the mock unused and
+        # let the call fall through to a real GLPI request.
         with patch(
-            "src.services.ticket_service.ticket_service.get_ticket",
+            "src.services.ticket_service.ticket_service.get_ticket_detail",
             new_callable=AsyncMock,
         ) as mock_get:
             mock_get.side_effect = GLPIError(404, "Ticket not found")
@@ -296,11 +308,14 @@ class TestMCPHandlersIntegration:
         tasks = [mcp_handler.handle_request(req) for req in requests]
         responses = await asyncio.gather(*tasks)
 
+        from src.handlers import MCPHandler
+
+        expected_total = len(MCPHandler().tools)
         for i, response in enumerate(responses):
             assert response["jsonrpc"] == "2.0"
             assert response["id"] == i
             result = _result(response)
-            assert result["total_count"] == 15
+            assert result["total_count"] == expected_total
 
     @pytest.mark.asyncio
     async def test_response_truncation_large_data(self):

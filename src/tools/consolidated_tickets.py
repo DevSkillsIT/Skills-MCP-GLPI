@@ -7,8 +7,14 @@ Reduces 18 ticket tools + 3 AI tools = 21 tools into 3 consolidated tools:
   3. manage_ai_analysis - trigger/get/publish AI analysis
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
+from src.formatters.glpi_formatters import (
+    format_itil_operation,
+    format_ticket_tasks,
+    format_ticket_timeline,
+    format_ticket_validations,
+)
 from src.formatters.markdown_helpers import remove_heavy_fields
 from src.models.exceptions import GLPIError, NotFoundError, SimilarityError, ValidationError
 from src.services.ai_integration import ai_integration
@@ -72,9 +78,21 @@ MANAGE_ACTIONS = [
     "get_history",
     "get_stats",
     "find_similar",
+    # ITIL coverage
+    "get_timeline",
+    "add_task",
+    "get_tasks",
+    "request_validation",
+    "answer_validation",
+    "get_validations",
+    "assign_group",
+    "link_tickets",
+    "add_document",
 ]
 
-# Actions that require a valid ticket_id
+# Actions that require a valid ticket_id.
+# answer_validation is deliberately absent: it acts on a validation_id, and
+# only falls back to the ticket when the caller did not supply one.
 ACTIONS_REQUIRING_TICKET_ID = [
     "get",
     "update",
@@ -86,7 +104,31 @@ ACTIONS_REQUIRING_TICKET_ID = [
     "get_followups",
     "get_history",
     "find_similar",
+    "get_timeline",
+    "add_task",
+    "get_tasks",
+    "request_validation",
+    "get_validations",
+    "assign_group",
+    "link_tickets",
+    "add_document",
 ]
+
+# Actions that WRITE and therefore have to pass through the safety guard.
+# @MX:NOTE: none of them is protected by default (the guard only ships with the
+# delete_* operations), so this is a no-op today.
+# @MX:REASON: an operator who adds "add_document" to
+# SafetyGuard.PROTECTED_OPERATIONS expects it to start requiring a token. That
+# only works if the write already asks the guard, so the call is wired now
+# instead of the next time someone is surprised by a silent write.
+ITIL_WRITE_ACTIONS = {
+    "add_task": "Criar tarefa no chamado",
+    "request_validation": "Solicitar aprovacao do chamado",
+    "answer_validation": "Responder aprovacao do chamado",
+    "assign_group": "Atribuir chamado a um grupo",
+    "link_tickets": "Vincular chamados",
+    "add_document": "Anexar documento ao chamado",
+}
 
 # Valid actions for manage_ai_analysis
 AI_ACTIONS = ["trigger", "get_result", "publish"]
@@ -96,7 +138,7 @@ async def _resolve_entity(entity_name: str) -> int:
     """Resolve entity_name to entity_id, raising ValidationError if not found.
 
     @MX:NOTE: `is not None` em vez de truthy — entity_id=0 (root) e valido.
-    @MX:REASON: Bug Ramada — entity_name='RAMADA' resolvia para 0 mas era rejeitado.
+    @MX:REASON: defeito real: entity_name com o nome do cliente principal resolvia para 0 mas era rejeitado.
     """
     resolved_id = await entity_resolver.resolve_entity_name(entity_name)
     if resolved_id is not None:
@@ -129,6 +171,14 @@ async def search_tickets(
     offset: int = 0,
     date_after: Optional[str] = None,
     date_before: Optional[str] = None,
+    assigned_tech: Optional[Any] = None,
+    assigned_group: Optional[Any] = None,
+    requester: Optional[Any] = None,
+    category: Optional[Any] = None,
+    urgency: Optional[int] = None,
+    open_only: bool = False,
+    sort_by: Optional[str] = None,
+    order: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Consolidated search/list tool for GLPI tickets.
@@ -184,6 +234,14 @@ async def search_tickets(
                     "Priority must be integer between 1 and 6", "priority"
                 )
 
+        # Validate urgency — a distinct axis from priority in GLPI, scaled 1..5
+        if urgency is not None:
+            urgency = _coerce_int(urgency)
+            if not isinstance(urgency, int) or urgency < 1 or urgency > 5:
+                raise ValidationError(
+                    "Urgency must be integer between 1 and 5", "urgency"
+                )
+
         # Validate dates
         if date_after or date_before:
             date_after, date_before = DateTimeHelper.parse_date_range(
@@ -194,6 +252,27 @@ async def search_tickets(
         offset, limit = PaginationHelper.validate_pagination_params(offset, limit)
         limit = min(limit, MAX_LIMIT)
 
+        # Filters apply to both branches. Built once so the text-search path
+        # can never diverge from the listing path — it used to accept these
+        # values and drop them, silently widening the result set.
+        filters = {
+            "status": status,
+            "priority": priority,
+            "urgency": urgency,
+            "assigned_tech": assigned_tech,
+            "assigned_group": assigned_group,
+            "requester": requester,
+            "category": category,
+            "open_only": open_only,
+            "entity_id": entity_id,
+            "date_created_after": date_after,
+            "date_created_before": date_before,
+            "sort_by": sort_by,
+            "order": order,
+            "limit": limit,
+            "offset": offset,
+        }
+
         # --- Branch: text search vs filter list ---
         if query:
             query = input_sanitizer.sanitize_search_query(query)
@@ -202,26 +281,19 @@ async def search_tickets(
                     "Search query must be at least 2 characters", "query"
                 )
 
-            result = await ticket_service.search_tickets(
-                query=query,
-                entity_id=entity_id,
-                limit=limit,
-                offset=offset,
-            )
+            result = await ticket_service.search_tickets(query=query, **filters)
         else:
-            result = await ticket_service.list_tickets(
-                status=status,
-                priority=priority,
-                entity_id=entity_id,
-                date_created_after=date_after,
-                date_created_before=date_before,
-                limit=limit,
-                offset=offset,
-                use_cache=True,
-            )
+            result = await ticket_service.list_tickets(use_cache=True, **filters)
 
         # Strip heavy fields from list items
-        if isinstance(result, dict) and "tickets" in result:
+        # @MX:NOTE: the text-search path returns {items, totalcount, search_notice}.
+        # @MX:REASON: a widened search has to say so, and a bare list has nowhere
+        # to carry that. Truncating the envelope instead of its rows would drop
+        # the rows' heavy-field stripping and mangle the metadata.
+        if isinstance(result, dict) and "items" in result:
+            rows = _remove_heavy_from_list(result.get("items") or [])
+            result["items"] = response_truncator.truncate_json_response(rows)
+        elif isinstance(result, dict) and "tickets" in result:
             result["tickets"] = _remove_heavy_from_list(result["tickets"])
             result["tickets"] = response_truncator.truncate_json_response(
                 result["tickets"]
@@ -283,14 +355,37 @@ async def manage_tickets(
     # find_similar
     threshold: float = 0.3,
     max_results: int = 10,
-) -> Dict[str, Any]:
+    # get_timeline
+    limit: int = 100,
+    # add_task
+    actiontime: Optional[int] = None,
+    task_category_id: Optional[int] = None,
+    # validations
+    approver: Optional[Any] = None,
+    comment: Optional[str] = None,
+    validation_id: Optional[int] = None,
+    validation_status: Optional[Any] = None,
+    # assign_group
+    group: Optional[Any] = None,
+    group_type: str = "assigned",
+    # link_tickets
+    linked_ticket_id: Optional[int] = None,
+    link_type: Optional[Any] = "link",
+    # add_document
+    file_path: Optional[str] = None,
+    file_base64: Optional[str] = None,
+    file_name: Optional[str] = None,
+    document_title: Optional[str] = None,
+) -> Any:
     """
     Consolidated management tool for individual GLPI tickets.
 
     Args:
         action: One of get, get_by_number, create, update, delete, assign,
                 close, resolve, add_followup, get_followups, get_history,
-                get_stats, find_similar.
+                get_stats, find_similar, get_timeline, add_task, get_tasks,
+                request_validation, answer_validation, get_validations,
+                assign_group, link_tickets, add_document.
         ticket_id: Ticket ID (required for most actions).
         title: Ticket title (create/update).
         description: Ticket description (create/update).
@@ -317,9 +412,35 @@ async def manage_tickets(
         date_to: End date YYYY-MM-DD (get_stats).
         threshold: Similarity threshold 0.0-1.0 (find_similar).
         max_results: Max similar results (find_similar).
+        limit: Max timeline entries, most recent kept (get_timeline, default 100).
+        actiontime: Planned task duration in SECONDS (add_task).
+        task_category_id: Task category ID (add_task, optional).
+        approver: Approver user, by name or ID (request_validation).
+        comment: Comment text (request_validation / answer_validation;
+                 mandatory when refusing).
+        validation_id: TicketValidation ID (answer_validation). When omitted,
+                 the single pending approval of ticket_id is used.
+        validation_status: Approval answer: aprovado/recusado (answer_validation).
+        group: Group to assign, by name or ID (assign_group).
+        group_type: Actor role of the group: requester, observer or assigned
+                 (assign_group, default assigned).
+        linked_ticket_id: The other ticket ID (link_tickets).
+        link_type: link (1), duplicate (2), son (3) or parent (4) (link_tickets).
+        file_path: Server-side path of the file to attach (add_document).
+        file_base64: Base64 payload of the file to attach (add_document).
+        file_name: File name, required with file_base64 (add_document).
+        document_title: Document title in GLPI, defaults to the file name
+                 (add_document).
 
     Returns:
-        Dict with action-specific response data.
+        Dict with action-specific response data, or a Markdown string for the
+        ITIL actions.
+
+    @MX:NOTE: the ITIL actions return Markdown directly instead of a payload.
+    @MX:REASON: the response interceptor passes a string straight through, but
+    dispatches a dict for this tool through the ticket-detail formatter — which
+    would render a timeline as an empty ticket. Formatting here keeps the new
+    actions correct without a second registry to keep in sync.
     """
     try:
         # Normalize loose inputs from less-strict external agents (Codex suggestion):
@@ -335,6 +456,11 @@ async def manage_tickets(
         user_id = _coerce_int(user_id)
         max_results = _coerce_int(max_results)
         status = _normalize_status(status)
+        actiontime = _coerce_int(actiontime)
+        task_category_id = _coerce_int(task_category_id)
+        validation_id = _coerce_int(validation_id)
+        linked_ticket_id = _coerce_int(linked_ticket_id)
+        limit = _coerce_int(limit)
 
         # Validate action
         if action not in MANAGE_ACTIONS:
@@ -356,6 +482,17 @@ async def manage_tickets(
                     "Example: manage_tickets(action='get', ticket_id=42)",
                 )
             ticket_id = check["value"]
+
+        # Destructive-write gate. See ITIL_WRITE_ACTIONS for why this runs even
+        # though none of these operations is protected out of the box.
+        if action in ITIL_WRITE_ACTIONS:
+            require_safety_confirmation(
+                action,
+                confirmation_token=confirmation_token,
+                reason=reason,
+                target_id=ticket_id,
+                target_type="Ticket",
+            )
 
         # Resolve entity_name when applicable
         if entity_name and action in ("create", "update", "get_stats"):
@@ -391,7 +528,7 @@ async def manage_tickets(
                     "description is required for create action", "description"
                 )
             title = input_sanitizer.sanitize_string(title)
-            description = input_sanitizer.sanitize_string(description)
+            description = input_sanitizer.sanitize_string(description, allow_html=True)
 
             type_map = {"incident": 1, "request": 2, "change": 3}
             type_int = type_map.get((type or "incident").lower(), 1)
@@ -416,10 +553,10 @@ async def manage_tickets(
                 update_data["title"] = input_sanitizer.sanitize_string(title)
             if description:
                 update_data["description"] = input_sanitizer.sanitize_string(
-                    description
+                    description, allow_html=True
                 )
             if solution:
-                update_data["solution"] = input_sanitizer.sanitize_string(solution)
+                update_data["solution"] = input_sanitizer.sanitize_string(solution, allow_html=True)
             if status:
                 update_data["status"] = status
             if priority:
@@ -469,7 +606,7 @@ async def manage_tickets(
                     "solution (or resolution) is required for close action",
                     "solution",
                 )
-            sanitized_resolution = input_sanitizer.sanitize_string(close_text)
+            sanitized_resolution = input_sanitizer.sanitize_string(close_text, allow_html=True)
             ticket = await ticket_service.close_ticket(
                 ticket_id, sanitized_resolution, solution_type=solution_type
             )
@@ -488,7 +625,7 @@ async def manage_tickets(
                 raise ValidationError(
                     "content must be at least 5 characters", "content"
                 )
-            content = input_sanitizer.sanitize_string(content)
+            content = input_sanitizer.sanitize_string(content, allow_html=True)
             result = await ticket_service.add_ticket_followup(
                 ticket_id=ticket_id, content=content, is_private=is_private
             )
@@ -531,6 +668,94 @@ async def manage_tickets(
             # Return a list (like get_followups/get_history): format_similar_tickets
             # expects a list, not a {similar_tickets: [...]} wrapper.
             return response_truncator.truncate_json_response(similar)
+
+        # --- ITIL coverage ---
+
+        if action == "get_timeline":
+            timeline = await ticket_service.get_ticket_timeline(
+                ticket_id, limit=limit or 100
+            )
+            return format_ticket_timeline(timeline, {"action": action})
+
+        if action == "add_task":
+            if not content or len(str(content).strip()) < 5:
+                raise ValidationError(
+                    "content must be at least 5 characters", "content"
+                )
+            task_result = await ticket_service.add_ticket_task(
+                ticket_id,
+                input_sanitizer.sanitize_string(content, allow_html=True),
+                actiontime=actiontime,
+                is_private=is_private,
+                task_category_id=task_category_id,
+            )
+            return format_itil_operation(task_result, "adicionar tarefa")
+
+        if action == "get_tasks":
+            tasks = await ticket_service.get_ticket_tasks(ticket_id)
+            return format_ticket_tasks(tasks, {"action": action})
+
+        if action == "request_validation":
+            if approver in (None, ""):
+                raise ValidationError(
+                    "approver e obrigatorio (nome ou id do usuario aprovador)",
+                    "approver",
+                )
+            validation_result = await ticket_service.request_ticket_validation(
+                ticket_id,
+                approver,
+                comment=input_sanitizer.sanitize_string(comment, allow_html=True) if comment else None,
+            )
+            return format_itil_operation(validation_result, "solicitar aprovacao")
+
+        if action == "answer_validation":
+            answer_result = await ticket_service.answer_ticket_validation(
+                validation_id=validation_id,
+                status=validation_status,
+                comment=input_sanitizer.sanitize_string(comment, allow_html=True) if comment else None,
+                ticket_id=ticket_id,
+            )
+            return format_itil_operation(answer_result, "responder aprovacao")
+
+        if action == "get_validations":
+            validations = await ticket_service.get_ticket_validations(ticket_id)
+            return format_ticket_validations(validations, {"action": action})
+
+        if action == "assign_group":
+            if group in (None, ""):
+                raise ValidationError(
+                    "group e obrigatorio (nome ou id do grupo)", "group"
+                )
+            group_result = await ticket_service.assign_ticket_group(
+                ticket_id, group, group_type=group_type
+            )
+            return format_itil_operation(group_result, "atribuir chamado a grupo")
+
+        if action == "link_tickets":
+            check_linked = validate_positive_int(linked_ticket_id, "linked_ticket_id")
+            if not check_linked["valid"]:
+                return create_mcp_error(
+                    check_linked["error"],
+                    "linked_ticket_id must be a positive integer",
+                    "Example: manage_tickets(action='link_tickets', ticket_id=42, "
+                    "linked_ticket_id=43, link_type='duplicate')",
+                )
+            link_result = await ticket_service.link_tickets(
+                ticket_id, check_linked["value"], link_type=link_type
+            )
+            return format_itil_operation(link_result, "vincular chamados")
+
+        if action == "add_document":
+            document_result = await ticket_service.add_ticket_document(
+                ticket_id,
+                file_path=file_path,
+                file_base64=file_base64,
+                file_name=file_name,
+                title=input_sanitizer.sanitize_string(document_title)
+                if document_title
+                else None,
+            )
+            return format_itil_operation(document_result, "anexar documento")
 
         # Should never reach here given the action validation above
         return create_mcp_error(

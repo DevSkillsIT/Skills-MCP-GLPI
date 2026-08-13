@@ -35,6 +35,18 @@ EXPECTED_TOOLS = [
     "glpi_read_resource_by_uri",
     "glpi_list_available_prompts",
     "glpi_get_prompt_template",
+    # Busca por criterios livres (1)
+    "glpi_search_records_by_criteria",
+]
+
+# Tools que NAO aparecem no registro de formatters porque ja devolvem Markdown
+# pronto da propria camada de tool. Listadas aqui para que a diferenca seja uma
+# decisao explicita, e nao um esquecimento — foi exatamente assim que a busca
+# por criterios livres passou a devolver JSON cru sem ninguem notar.
+SELF_FORMATTING_TOOLS = [
+    "glpi_search_itil_records",
+    "glpi_manage_itil_records",
+    "glpi_search_knowledge_unified",
 ]
 
 SEARCH_TOOLS = [
@@ -64,9 +76,18 @@ BRIDGE_TOOLS = [
 class TestToolsRegistry:
     """Tests for TOOL_FORMATTERS central registry."""
 
-    def test_total_tools_count_is_14(self) -> None:
-        """TOOL_FORMATTERS must have exactly 14 entries."""
-        assert len(TOOL_FORMATTERS) == 14
+    def test_registry_matches_the_expected_list(self) -> None:
+        """The registry must be exactly the expected list — no more, no less.
+
+        Comparing sets instead of counting: a fixed number ages badly and, worse,
+        a count still passes when one tool is swapped for another.
+        """
+        assert set(TOOL_FORMATTERS) == set(EXPECTED_TOOLS)
+
+    def test_self_formatting_tools_stay_out_of_the_registry(self) -> None:
+        """Tools that build their own Markdown must not be registered twice."""
+        for tool_name in SELF_FORMATTING_TOOLS:
+            assert tool_name not in TOOL_FORMATTERS
 
     def test_all_expected_tools_present(self) -> None:
         """Every expected tool name must exist as a key."""

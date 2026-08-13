@@ -5,16 +5,171 @@ Implementa operações CRUD de assets + reservas + validação
 """
 
 from typing import Optional, List, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime
 import asyncio
 
 from src.services.glpi_client import glpi_client
+from src.services.search_options import search_options_cache
 from src.logger import logger
+from src.utils.text_search import (
+    describe_stage,
+    score_by_coverage,
+    significant_terms,
+    split_terms,
+)
+from src.utils.search_criteria import (
+    actor_criterion as _actor_criterion,
+    normalize_order,
+    resolve_sort_field,
+)
 from src.models.exceptions import (
     NotFoundError,
     ValidationError,
     GLPIError
 )
+
+
+# GLPI Search API field IDs shared by the asset item types (Computer, Monitor,
+# Printer, NetworkEquipment, ...). Same numbers already used by the criteria
+# and forcedisplay lists below — collected here so callers can name a column
+# instead of memorising an id.
+ASSET_FIELD = {
+    "name": 1,
+    "id": 2,
+    "location": 3,
+    "type": 4,
+    "serial": 5,
+    "otherserial": 6,
+    "comment": 16,
+    "date_mod": 19,
+    "manufacturer": 23,
+    "status": 31,
+    "model": 40,
+    "user": 70,
+    "group": 71,
+    "entity": 80,
+}
+
+# Hardware columns that only Computer has. All of them live on /search/Computer,
+# so they ride along in the listing request instead of costing a call per asset.
+# 116 (tipo do disco) is deliberately absent: GLPI collapses it to a single value
+# even on a machine with two drives, so it says "HDD" for an HDD+SSD pair. The
+# drive MODEL (114) carries the truth and is what gets rendered.
+COMPUTER_HARDWARE_FIELDS = {
+    "cpu": 17,
+    "memory_type": 110,
+    "memory_mb": 111,
+    "disk_names": 114,
+    "disk_capacity_mb": 115,
+    "volume_total_mb": 150,
+    "volume_free_mb": 151,
+    "volume_free_pct": 152,
+}
+
+def _as_values(raw: Any) -> List[Any]:
+    """Normalise a Search API cell into a list.
+
+    @MX:NOTE: a mesma coluna volta escalar ou lista conforme a maquina.
+    @MX:REASON: um computador com um disco devolve `'953739'` e com dois
+    devolve `['1246', '953739']`. Codigo que assume um dos dois formatos quebra
+    exatamente na metade do parque.
+    """
+    if raw is None or raw == "":
+        return []
+    return list(raw) if isinstance(raw, (list, tuple)) else [raw]
+
+
+def _first_value(raw: Any) -> Optional[str]:
+    """First non-empty value of a Search API cell."""
+    for item in _as_values(raw):
+        text = str(item).strip()
+        if text and text.lower() not in ("none", "null"):
+            return text
+    return None
+
+
+def _sum_values(raw: Any) -> int:
+    """Sum the numeric values of a cell, ignoring what cannot be read."""
+    total = 0
+    for item in _as_values(raw):
+        try:
+            total += int(float(str(item).strip()))
+        except (TypeError, ValueError):
+            continue
+    return total
+
+
+def _fmt_mb_label(megabytes: int) -> str:
+    """MB -> the unit a person would say, or N/A."""
+    if megabytes <= 0:
+        return "N/A"
+    if megabytes >= 1_048_576:
+        return f"{megabytes / 1_048_576:.1f} TB"
+    if megabytes >= 1024:
+        return f"{megabytes / 1024:.1f} GB"
+    return f"{megabytes} MB"
+
+
+# Fallback column for sorting: the name is the only column every asset type
+# always renders, so it is the safe landing spot for an unknown field.
+ASSET_DEFAULT_SORT_FIELD = ASSET_FIELD["name"]
+
+# Columns living on the asset's own table, which the live catalogue can
+# re-derive unambiguously. The rest (location, manufacturer, status, model,
+# responsible user, group, entity) arrive through joins and are only checked.
+# Computer stands in for every asset type here: these ids come from the shared
+# base class, so validating one validates the family.
+_ASSET_UID_HINTS = {
+    "name": "Computer.name",
+    "id": "Computer.id",
+    "serial": "Computer.serial",
+    "otherserial": "Computer.otherserial",
+    "comment": "Computer.comment",
+    "date_mod": "Computer.date_mod",
+}
+
+_asset_field_sync_lock = asyncio.Lock()
+_asset_field_sync_done = False
+
+
+async def _ensure_asset_fields_synced() -> None:
+    """Reconcile ASSET_FIELD with this instance's catalogue, once per process.
+
+    Best-effort by design: the static map is what production runs on, so a
+    failure here must leave searches working exactly as before.
+    """
+    global _asset_field_sync_done
+    if _asset_field_sync_done:
+        return
+
+    async with _asset_field_sync_lock:
+        if _asset_field_sync_done:
+            return
+        try:
+            await search_options_cache.reconcile(
+                "Computer", ASSET_FIELD, _ASSET_UID_HINTS
+            )
+        except Exception as exc:  # noqa: BLE001 — never block a search
+            logger.warning(f"Asset field reconciliation skipped: {exc}")
+        finally:
+            _asset_field_sync_done = True
+
+
+def _resolve_sort(sort_by: Any = None, order: Any = None) -> tuple:
+    """Resolve sort_by/order into the (field_id, direction) the API expects.
+
+    Returns (None, None) when the caller asked for nothing, so a legacy call
+    still produces the exact request it produced before sorting existed and
+    keeps whatever ordering GLPI applies by default. An unknown field name
+    falls back to the asset name rather than failing the whole query.
+    """
+    if sort_by is None and order is None:
+        return None, None
+
+    sort_field = resolve_sort_field(
+        sort_by, ASSET_FIELD, ASSET_DEFAULT_SORT_FIELD, context="list_assets"
+    )
+    return sort_field, normalize_order(order, default="ASC")
 
 
 class AssetService:
@@ -91,7 +246,10 @@ class AssetService:
         is_template: Optional[bool] = None,
         limit: int = 250,
         offset: int = 0,
-        use_cache: bool = True
+        use_cache: bool = True,
+        assigned_user: Optional[Any] = None,
+        sort_by: Optional[Any] = None,
+        order: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
         Lista assets com filtros avançados.
@@ -113,6 +271,12 @@ class AssetService:
             limit: Limite de resultados
             offset: Offset para paginação
             use_cache: Usar cache
+            assigned_user: Filtrar por responsável aceitando NOME ou ID
+                (mesmo contrato dos filtros de ator dos chamados)
+            sort_by: Coluna de ordenação (nome amigável de ASSET_FIELD ou ID
+                numérico do campo). Campo desconhecido cai no nome do ativo.
+            order: Direção da ordenação (ASC/DESC). Padrão ASC quando
+                sort_by é informado.
 
         Returns:
             Lista de assets
@@ -124,6 +288,9 @@ class AssetService:
                 f"Asset type must be one of: {self.asset_types[:10]}...",
                 "asset_type"
             )
+
+        # Reconcile the static field map with this instance before using it.
+        await _ensure_asset_fields_synced()
 
         # Construir critérios de busca no formato GLPI Search API
         # Referência campos: https://glpi-user-documentation.readthedocs.io/
@@ -179,7 +346,11 @@ class AssetService:
             # Por enquanto, logamos aviso. O ideal é o caller passar user_id.
             logger.warning(f"Filtering by username '{username}' requires resolving to ID first. Please provide user_id.")
             
-        if target_user_id:
+        # assigned_user accepts a name or an id and wins over the legacy
+        # user_id/username pair, which only ever worked with a numeric id.
+        if assigned_user not in (None, ""):
+            criteria.append(_actor_criterion(ASSET_FIELD["user"], assigned_user))
+        elif target_user_id:
             criteria.append({
                 "field": 70,  # User field ID
                 "searchtype": "equals",
@@ -198,9 +369,32 @@ class AssetService:
         # 80=entities_id, 70=users_id, 71=groups_id, 23=manufacturers_id, 40=models_id
         forcedisplay_ids = [1, 2, 5, 6, 31, 3, 80, 70, 71, 23, 40, 19, 16, 4]
 
+        # @MX:ANCHOR: o hardware basico do computador sai na MESMA chamada da
+        # listagem.
+        # @MX:REASON: a pergunta que segue "liste os computadores do fulano" e
+        # sempre "quanto de RAM, que disco, e notebook ou desktop" — e a
+        # resposta obrigava outra tool por ativo. A Search API ja expoe tudo
+        # isso em colunas do proprio Computer (RAM, tipo de pente, capacidade e
+        # nomes dos discos, tamanho/livre por volume), entao pedir esses ids no
+        # forcedisplay custa ZERO chamada extra. Antes disso, list_assets fazia
+        # 5 requisicoes POR computador so para montar cpu_info/memory_info, que
+        # a tabela nem imprimia.
+        if item_type == "Computer":
+            forcedisplay_ids += list(COMPUTER_HARDWARE_FIELDS.values())
+
+        # Caller-controlled ordering. Both branches below understand sort/order,
+        # and both leave the request untouched when nothing was asked for.
+        sort_field, sort_order = _resolve_sort(sort_by, order)
+
         try:
-            # Se há filtros, usar Search API que suporta criteria
-            if criteria:
+            # @MX:NOTE: Computer vai SEMPRE pela Search API, mesmo sem filtro.
+            # @MX:REASON: o endpoint simples /Computer e mais rapido, mas nao
+            # devolve coluna nenhuma de hardware — uma listagem sem filtro sairia
+            # sem RAM e sem disco, e a mesma tool responderia coisas diferentes
+            # dependendo de o chamador ter passado um filtro ou nao. /search sem
+            # criteria retorna todos os visiveis do mesmo jeito.
+            used_search = bool(criteria) or item_type == "Computer"
+            if used_search:
                 logger.info(f"Listing {item_type} assets with filters via Search API: entity_id={entity_id}, user_id={target_user_id}")
                 result = await self.client.search(
                     item_type=item_type,
@@ -210,6 +404,8 @@ class AssetService:
                     range_offset=offset,
                     is_recursive=entity_id is not None,  # Buscar em sub-entidades quando filtrar por entity
                     expand_dropdowns=True,  # status/local/fabricante/usuario como NOME
+                    sort=sort_field,
+                    order=sort_order,
                 )
             else:
                 # Sem filtros, usar endpoint simples (mais rápido)
@@ -219,6 +415,9 @@ class AssetService:
                     # expand_dropdowns: status/localizacao/etc. voltam como NOME.
                     "expand_dropdowns": 1,
                 }
+                if sort_field is not None:
+                    params["sort"] = sort_field
+                    params["order"] = sort_order
                 endpoint = f"/apirest.php/{item_type}"
                 result = await self.client.get(endpoint, params, use_cache)
 
@@ -234,7 +433,7 @@ class AssetService:
             normalized_assets = []
             for asset in assets:
                 # Se veio da Search API, os campos são numéricos
-                if criteria and isinstance(asset, dict):
+                if used_search and isinstance(asset, dict):
                     normalized = {
                         "id": asset.get("2") or asset.get("id"),
                         "name": asset.get("1") or asset.get("name"),
@@ -252,6 +451,9 @@ class AssetService:
                         "types_id": asset.get("4") or asset.get("types_id"),
                         "asset_type": item_type
                     }
+                    if item_type == "Computer":
+                        for key, field_id in COMPUTER_HARDWARE_FIELDS.items():
+                            normalized[key] = asset.get(str(field_id))
                     # Remover campos None
                     normalized = {k: v for k, v in normalized.items() if v is not None}
                     normalized_assets.append(normalized)
@@ -259,16 +461,20 @@ class AssetService:
                     asset["asset_type"] = item_type
                     normalized_assets.append(asset)
 
+            # @MX:WARN: enriquecer UMA vez so.
+            # @MX:REASON: o enriquecimento rodava dentro do bloco de paginacao e
+            # DE NOVO na saida comum. Quando totalcount <= limit o primeiro nao
+            # retornava cedo, entao toda listagem pequena — o caso normal —
+            # pagava o dobro das requisicoes por computador, em silencio.
+            if item_type == "Computer" and normalized_assets:
+                logger.info(f"Enriching {len(normalized_assets)} computers with detailed info...")
+                normalized_assets = await self._enrich_computers(normalized_assets)
+
             # Adicionar metadados de paginação (só disponível quando API retorna dict)
             if isinstance(result, dict) and "totalcount" in result:
                 total_count = result["totalcount"]
                 has_more = offset + limit < total_count
                 next_offset = offset + limit if has_more else None
-                
-                # Se for computador, enriquecer com dados detalhados (CPU, RAM, AnyDesk)
-                if item_type == "Computer" and normalized_assets:
-                    logger.info(f"Enriching {len(normalized_assets)} computers with detailed info...")
-                    normalized_assets = await self._enrich_computers(normalized_assets)
 
                 # Retornar assets com metadados se houver muitos
                 if total_count > limit:
@@ -290,11 +496,6 @@ class AssetService:
                         "hint": f"Use offset parameter to get more assets. Total: {total_count}"
                     }
             
-            # Se for lista simples e for computador, também enriquecer
-            if item_type == "Computer" and normalized_assets:
-                logger.info(f"Enriching {len(normalized_assets)} computers with detailed info...")
-                normalized_assets = await self._enrich_computers(normalized_assets)
-
             return normalized_assets
 
         except Exception as e:
@@ -343,15 +544,16 @@ class AssetService:
             # mas sim endpoints específicos ou reutilizar get_item leve.
 
             # Buscar item principal leve para pegar last_inventory_update e users_id
+            # @MX:NOTE: CPU e memoria NAO sao mais buscadas aqui.
+            # @MX:REASON: /search/Computer ja devolve processador (17), memoria
+            # (111) e tipo de pente (110) na propria listagem. Manter os dois
+            # subitens custava duas requisicoes POR computador para recalcular o
+            # que ja tinha chegado — 20 chamadas extras numa lista de 10.
             task_details = self.client.get_item("Computer", cid, forcedisplay=["last_inventory_update", "contact", "contact_num", "users_id"])
             task_remote = self.client.get_subitems("Computer", cid, "Item_RemoteManagement")
-            # Solicitar expansão de dropdowns para pegar o nome do processador
-            task_cpu = self.client.get_subitems("Computer", cid, "Item_DeviceProcessor", params={"expand_dropdowns": "true"})
-            task_mem = self.client.get_subitems("Computer", cid, "Item_DeviceMemory")
 
-            # Await all
-            details, remote_list, cpu_list, mem_list = await asyncio.gather(
-                task_details, task_remote, task_cpu, task_mem, return_exceptions=True
+            details, remote_list = await asyncio.gather(
+                task_details, task_remote, return_exceptions=True
             )
             
             # Processar Detalhes
@@ -407,45 +609,10 @@ class AssetService:
                             break 
             comp["anydesk_id"] = anydesk_id
             
-            # Processar CPU (Pegar o modelo do primeiro processador e a contagem)
-            cpu_info = "N/A"
-            if isinstance(cpu_list, list) and cpu_list:
-                count = len(cpu_list)
-                first_cpu = cpu_list[0]
-                cpu_model = "Processor"
-                
-                # Com expand_dropdowns, o ID vira o nome (str)
-                proc_id_val = first_cpu.get("deviceprocessors_id")
-                if isinstance(proc_id_val, str):
-                    cpu_model = proc_id_val
-                elif first_cpu.get("designation"):
-                    cpu_model = first_cpu.get("designation")
-                
-                freq = first_cpu.get('frequency', '')
-                freq_str = f" @ {freq}MHz" if freq else ""
-                
-                cpu_info = f"{count}x {cpu_model}{freq_str}"
-                
-            comp["cpu_info"] = cpu_info
-
-            # Processar Memória (Somar tamanho)
-            total_mem = 0
-            if isinstance(mem_list, list):
-                for mem in mem_list:
-                    try:
-                        size = int(mem.get("size", 0))
-                        total_mem += size
-                    except:
-                        pass
-            
-            # Converter MB para GB se > 1024
-            if total_mem > 0:
-                if total_mem >= 1024:
-                    comp["memory_info"] = f"{total_mem/1024:.1f} GB"
-                else:
-                    comp["memory_info"] = f"{total_mem} MB"
-            else:
-                comp["memory_info"] = "N/A"
+            # CPU e memoria vieram da Search API na listagem (campos 17/111/110).
+            # Aqui so normalizamos o rotulo que a tool promete no schema.
+            comp["cpu_info"] = _first_value(comp.get("cpu")) or "N/A"
+            comp["memory_info"] = _fmt_mb_label(_sum_values(comp.get("memory_mb")))
 
             return comp
 
@@ -577,6 +744,26 @@ class AssetService:
             "users_id": ("User", "users_name"),
             "groups_id": ("Group", "groups_name"),
         }
+        # Modelo e tipo sao nomeados por tipo de ativo: um Computer guarda
+        # `computermodels_id` (dropdown ComputerModel), um Monitor guarda
+        # `monitormodels_id`. Derivado da chave presente, em vez de listado.
+        #
+        # @MX:NOTE: sem isto, o detalhe mostrava "Modelo: 3" -- o id cru.
+        # @MX:REASON: a LISTA do mesmo ativo mostra "OptiPlex 5060", porque a
+        # Search API resolve o dropdown e o GET nao. Um numero sob o rotulo
+        # "Modelo" nao se le como "nao resolvido": le-se como o modelo.
+        for id_key in list(asset.keys()):
+            for suffix, dropdown_suffix in (("models_id", "Model"), ("types_id", "Type")):
+                if id_key.endswith(suffix) and id_key != suffix:
+                    prefix = id_key[: -len(suffix)]
+                    mapping.setdefault(
+                        id_key,
+                        (
+                            f"{prefix.capitalize()}{dropdown_suffix}",
+                            f"{id_key[:-3]}_name",
+                        ),
+                    )
+
         for id_key, (itemtype, name_key) in mapping.items():
             raw = asset.get(id_key)
             if raw in (None, "", 0, "0"):
@@ -762,7 +949,15 @@ class AssetService:
         entity_id: Optional[int] = None,
         fields: Optional[List[str]] = None,
         limit: int = 250,
-        offset: int = 0
+        offset: int = 0,
+        sort_by: Optional[Any] = None,
+        order: Optional[str] = None,
+        location_id: Optional[int] = None,
+        manufacturer_id: Optional[int] = None,
+        user_id: Optional[int] = None,
+        username: Optional[str] = None,
+        status: Optional[str] = None,
+        assigned_user: Optional[Any] = None,
     ) -> List[Dict[str, Any]]:
         """
         Busca assets por texto livre com Smart Search otimizado.
@@ -790,6 +985,9 @@ class AssetService:
             fields: Campos específicos para retornar
             limit: Limite de resultados
             offset: Offset para paginação
+            sort_by: Coluna de ordenação (nome amigável de ASSET_FIELD ou ID
+                numérico do campo). Campo desconhecido cai no nome do ativo.
+            order: Direção da ordenação (ASC/DESC)
 
         Returns:
             Assets que correspondem à busca (sempre incluindo ID)
@@ -869,77 +1067,208 @@ class AssetService:
                     logger.warning(f"Smart Search user lookup failed (ignoring): {e}")
 
             # 2. Construir Critérios do Asset
-            criteria = []
-            
+            #
+            # ============ GRUPO OR PRINCIPAL - BUSCA MULTI-CAMPO ============
+            # Busca com OR para máxima cobertura - não para ao encontrar parciais.
+            #
+            # @MX:WARN: o grupo de texto vai ANINHADO, não solto na lista.
+            # @MX:REASON: o GLPI avalia critérios da esquerda para a direita, sem
+            # precedência entre AND e OR. Com o OR solto, qualquer filtro AND
+            # posterior (fabricante, local, situação) era absorvido pela cadeia
+            # e ALARGAVA o resultado em vez de restringir. Aninhado, o grupo é
+            # avaliado como uma unidade e os filtros realmente filtram.
+            def _term_group(term: str) -> Dict[str, Any]:
+                """One OR group covering every column a term may appear in.
+
+                @MX:NOTE: built per term, not per query.
+                @MX:REASON: `contains` is a literal LIKE, so the whole phrase as
+                one value meant "Notebook Dell" matched nothing while each word
+                alone matched. One group per term, ANDed, asks the question the
+                caller actually meant.
+                """
+                group: List[Dict[str, Any]] = [
+                    # Name (Field 1) - Nome do Computador
+                    {
+                        "field": ASSET_FIELD["name"],
+                        "searchtype": "contains",
+                        "value": term,
+                    },
+                    # Serial (Field 5) - Número de Série
+                    {
+                        "link": "OR",
+                        "field": ASSET_FIELD["serial"],
+                        "searchtype": "contains",
+                        "value": term,
+                    },
+                    # Contact (Field 7) - Nome Alternativo do Usuário.
+                    # Campo de texto livre com o identificador do usuário; acha
+                    # o computador mesmo sem users_id vinculado.
+                    {
+                        "link": "OR",
+                        "field": 7,
+                        "searchtype": "contains",
+                        "value": term,
+                    },
+                    # Patrimônio (Field 6) - o número que a etiqueta mostra.
+                    {
+                        "link": "OR",
+                        "field": ASSET_FIELD["otherserial"],
+                        "searchtype": "contains",
+                        "value": term,
+                    },
+                    # Fabricante (23) e Modelo (40).
+                    #
+                    # @MX:WARN: sem estes dois, a pergunta mais comum sobre um
+                    # parque não tem resposta.
+                    # @MX:REASON: medido na instância de referência — 88 de 119
+                    # computadores são de um mesmo fabricante, e buscar por esse
+                    # fabricante devolvia ZERO, porque a busca cobria apenas
+                    # nome, série e contato. "Quais notebooks <marca> temos"
+                    # respondia "nenhum" com 88 no cadastro.
+                    {
+                        "link": "OR",
+                        "field": ASSET_FIELD["manufacturer"],
+                        "searchtype": "contains",
+                        "value": term,
+                    },
+                    {
+                        "link": "OR",
+                        "field": ASSET_FIELD["model"],
+                        "searchtype": "contains",
+                        "value": term,
+                    },
+                ]
+
+                # Se o termo for numérico, tentar ID do ativo
+                if term.isdigit():
+                    group.append({
+                        "link": "OR",
+                        "field": ASSET_FIELD["id"],
+                        "searchtype": "equals",
+                        "value": term,
+                    })
+
+                # ============ SMART LINK: IDs de Usuários Encontrados ============
+                # Busca por users_id (Field 70) para cada usuário encontrado.
+                # ADICIONAL ao campo contact - ambos são pesquisados.
+                #
+                # @MX:WARN: repetido em cada grupo de termo, o que alarga o
+                # resultado para ativos do usuário encontrado mesmo quando um
+                # termo não casa.
+                # @MX:REASON: os ids vêm de resolver a query INTEIRA contra a
+                # base de usuários, então não há a qual termo atribuí-los. Quem
+                # busca "notebook joao" quer as máquinas do João; devolver uma a
+                # mais dele é melhor que devolver nenhuma.
+                for uid in found_user_ids:
+                    group.append({
+                        "link": "OR",
+                        "field": ASSET_FIELD["user"],
+                        "searchtype": "equals",
+                        "value": uid,
+                    })
+
+                return {"criteria": group}
+
+            terms, _quoted = split_terms(query)
+            search_terms = significant_terms(terms) if len(terms) > 1 else [query]
+            criteria: List[Dict[str, Any]] = []
+            for position, term in enumerate(search_terms):
+                group = _term_group(term)
+                if position:
+                    group["link"] = "AND"
+                criteria.append(group)
+
+            # Índice do primeiro critério que NÃO é texto: a repescagem em OR
+            # troca só os grupos de texto e preserva todos os filtros.
+            text_group_count = len(criteria)
+
             # Filtro de entidade (AND mandatório)
             if entity_id:
                 criteria.append({
-                    "field": 80, # Entity
-                    "searchtype": "under", # Recursivo
+                    "link": "AND",
+                    "field": ASSET_FIELD["entity"],
+                    "searchtype": "under",  # Recursivo
                     "value": entity_id,
-                    "link": "AND"
                 })
 
-            # ============ GRUPO OR PRINCIPAL - BUSCA MULTI-CAMPO ============
-            # Busca com OR para máxima cobertura - não para ao encontrar parciais
+            # Demais filtros: os MESMOS aceitos pela listagem. Antes eram
+            # recebidos e descartados neste caminho.
+            for value, field, searchtype in (
+                (location_id, ASSET_FIELD["location"], "equals"),
+                (manufacturer_id, ASSET_FIELD["manufacturer"], "equals"),
+                (status, ASSET_FIELD["status"], "equals"),
+                (user_id, ASSET_FIELD["user"], "equals"),
+            ):
+                if value is not None:
+                    criteria.append({
+                        "link": "AND",
+                        "field": field,
+                        "searchtype": searchtype,
+                        "value": value,
+                    })
 
-            # Name (Field 1) - Nome do Computador
-            criteria.append({
-                "link": "AND" if entity_id else "",
-                "field": 1,
-                "searchtype": "contains",
-                "value": query
-            })
+            # Responsável aceita nome ou id, como na listagem.
+            if assigned_user not in (None, ""):
+                crit = _actor_criterion(ASSET_FIELD["user"], assigned_user)
+                crit["link"] = "AND"
+                criteria.append(crit)
 
-            # Serial (Field 5) - Número de Série
-            criteria.append({
-                "link": "OR",
-                "field": 5,
-                "searchtype": "contains",
-                "value": query
-            })
-
-            # ============ NOVO: Contact (Field 7) - Nome Alternativo do Usuário ============
-            # Campo de texto livre que pode conter: "joana.rodrigues@GRUPOWINK"
-            # CRÍTICO: Permite encontrar computadores mesmo sem users_id vinculado
-            criteria.append({
-                "link": "OR",
-                "field": 7,  # Contact = Nome Alternativo do Usuário (TEXTO)
-                "searchtype": "contains",
-                "value": query
-            })
-
-            # Se a query for numérica, tentar ID do ativo
-            if query.isdigit():
+            if username:
                 criteria.append({
-                    "link": "OR",
-                    "field": 2, # ID
-                    "searchtype": "equals",
-                    "value": query
-                })
-
-            # ============ SMART LINK: IDs de Usuários Encontrados ============
-            # Adiciona busca por users_id (Field 70) para cada usuário encontrado
-            # NOTA: Isso é ADICIONAL ao campo contact - ambos são pesquisados
-            for uid in found_user_ids:
-                criteria.append({
-                    "link": "OR",
-                    "field": 70, # User ID (SELECT/FK)
-                    "searchtype": "equals",
-                    "value": uid
+                    "link": "AND",
+                    "field": 7,  # Contact
+                    "searchtype": "contains",
+                    "value": username,
                 })
 
             # Executar busca final
             # forcedisplay inclui Field 7 (contact) e Field 8 (contact_num)
-            result = await self.client.search(
-                item_type=asset_type or "Computer",
-                search_text=None,
-                range_limit=limit,
-                range_offset=offset,
-                criteria=criteria,
-                forcedisplay=fields or [1, 2, 5, 6, 7, 8, 31, 3, 80, 70, 71, 23, 40, 19, 16, 4]
-                #                        ^name ^id ^serial ^other ^contact ^contact_num ...
-            )
+            sort_field, sort_order = _resolve_sort(sort_by, order)
+            display_fields = fields or [1, 2, 5, 6, 7, 8, 31, 3, 80, 70, 71, 23, 40, 19, 16, 4]
+            #                            ^name ^id ^serial ^other ^contact ^contact_num ...
+
+            async def _execute(crit, fetch_limit):
+                return await self.client.search(
+                    item_type=asset_type or "Computer",
+                    search_text=None,
+                    range_limit=fetch_limit,
+                    range_offset=offset,
+                    criteria=crit,
+                    forcedisplay=display_fields,
+                    sort=sort_field,
+                    order=sort_order,
+                )
+
+            result = await _execute(criteria, limit)
+
+            # Repescagem: exigir TODOS os termos não achou nada, então aceitar
+            # QUALQUER um e ordenar por quantos casam.
+            #
+            # @MX:NOTE: só dispara quando a busca estrita voltou vazia.
+            # @MX:REASON: "Notebook Dell" não casa um ativo chamado "Dell
+            # Latitude" em nenhum estágio estrito, e devolver zero afirma que a
+            # máquina não existe. A ordenação por cobertura evita que a
+            # repescagem responda com o que for mais recente.
+            search_notice = None
+            if len(search_terms) > 1:
+                empty = not (
+                    result.get("data") if isinstance(result, dict) else result
+                )
+                if empty:
+                    or_group: List[Dict[str, Any]] = []
+                    for term in search_terms:
+                        for crit in _term_group(term)["criteria"]:
+                            crit = dict(crit)
+                            if or_group:
+                                crit["link"] = "OR"
+                            else:
+                                crit.pop("link", None)
+                            or_group.append(crit)
+                    widened = [{"criteria": or_group}] + criteria[text_group_count:]
+                    result = await _execute(widened, min(limit * 3, 60))
+                    search_notice = describe_stage("any", search_terms)
+                else:
+                    search_notice = describe_stage("all", search_terms)
 
             # Processar resultados
             if isinstance(result, list):
@@ -949,9 +1278,27 @@ class AssetService:
             else:
                 return []
 
+            # A repescagem pediu mais linhas do que o limite para poder ordenar
+            # por cobertura; só agora o excedente é descartado.
+            if search_notice and len(search_terms) > 1 and len(assets) > limit:
+                assets = sorted(
+                    assets,
+                    key=lambda row: score_by_coverage(row, search_terms),
+                    reverse=True,
+                )[:limit]
+
             # Normalizar resultados
             normalized_assets = []
             for asset in assets:
+                # @MX:NOTE: uma linha sem id nao e um ativo.
+                # @MX:REASON: a normalizacao remove as chaves nulas, entao uma
+                # linha sem nada aproveitavel sobrevive como {"asset_type": ...}
+                # e vira "N/A | — | —" na tabela, somando +1 na contagem. Guarda
+                # preventiva: nenhuma resposta do GLPI observada produz isso
+                # hoje (a linha fantasma real vinha de um pseudo-item, ja
+                # corrigido), mas o custo de descartar e uma comparacao.
+                if not (asset.get("2") or asset.get("id")):
+                    continue
                 # Extrair valores com fallback para ambos os formatos (Field ID ou nome)
                 user_val = asset.get("70") or asset.get("users_id")
                 contact_val = asset.get("7") or asset.get("contact")
@@ -981,18 +1328,40 @@ class AssetService:
                 normalized = {k: v for k, v in normalized.items() if v is not None}
                 normalized_assets.append(normalized)
             
+            # Aviso de ampliação: o formatter renderiza pseudo-itens como nota,
+            # não como linha da tabela.
+            if search_notice:
+                normalized_assets.append({"search_notice": search_notice})
+
             # Hint de paginação
             if isinstance(result, dict) and "totalcount" in result and result["totalcount"] > limit:
                 normalized_assets.append({
                     "search_hint": f"Found {result['totalcount']} total results. Use pagination to get more."
                 })
 
-            # Adicionar aviso se a busca foi feita via usuário deletado
+            # Aviso de usuário deletado — só quando ele de fato contribuiu.
+            #
+            # @MX:WARN: a condição olha os ativos devolvidos, não a busca.
+            # @MX:REASON: bastava a sondagem de usuários deletados retornar
+            # alguém para o aviso ser emitido, ainda que nenhum ativo viesse
+            # por esse caminho. Medido: buscar por um fabricante casou 88
+            # máquinas por fabricante e ainda assim anunciou "encontrados via
+            # USUÁRIO DELETADO", porque existia um usuário removido cujo nome
+            # contém o mesmo texto — e esse usuário não possui ativo algum. Um
+            # aviso que descreve outra coisa que aconteceu é indistinguível de
+            # um fato sobre o resultado.
             if deleted_user_ids and normalized_assets:
-                normalized_assets.insert(0, {
-                    "smart_search_warning": f"Assets encontrados via USUÁRIO DELETADO (IDs: {deleted_user_ids}). O usuário foi removido do sistema (possivelmente sync LDAP).",
-                    "deleted_user_ids": deleted_user_ids
-                })
+                contributing = {str(uid) for uid in deleted_user_ids}
+                via_deleted = any(
+                    str(item.get("users_id")) in contributing
+                    for item in normalized_assets
+                    if isinstance(item, dict)
+                )
+                if via_deleted:
+                    normalized_assets.insert(0, {
+                        "smart_search_warning": f"Assets encontrados via USUÁRIO DELETADO (IDs: {deleted_user_ids}). O usuário foi removido do sistema (possivelmente sync LDAP).",
+                        "deleted_user_ids": deleted_user_ids
+                    })
 
             return normalized_assets
                 

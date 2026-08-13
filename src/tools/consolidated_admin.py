@@ -12,6 +12,7 @@ from typing import Any, Dict, Literal, Optional
 
 from src.formatters.markdown_helpers import remove_heavy_fields
 from src.tools.admin import admin_tools
+from src.utils.safety_guard import require_safety_confirmation
 from src.utils.validators import (
     create_mcp_error,
     validate_non_negative_int,
@@ -29,6 +30,8 @@ async def search_admin(
     entity_name: Optional[str] = None,
     limit: int = 10,
     offset: int = 0,
+    sort_by: Optional[str] = None,
+    order: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Search or list admin resources.
 
@@ -44,6 +47,11 @@ async def search_admin(
         entity_name: Filter by entity name (resolved automatically).
         limit: Max results to return (capped at 50).
         offset: Pagination offset.
+        sort_by: Column to sort by. Friendly name (name, id, email, firstname,
+            realname, comment, entity, location, date_mod, date_creation,
+            last_login) or a raw GLPI field id. A column the chosen resource
+            does not expose falls back to the name.
+        order: Sort direction, 'asc' or 'desc'.
 
     Returns:
         Dict with resource list and pagination metadata.
@@ -53,19 +61,23 @@ async def search_admin(
     if resource == "users":
         if query:
             # Delegate to search_users which uses /search/User endpoint.
-            # Use match_mode="any" so the same query across name/firstname/
-            # realname/email is combined with OR (not AND, which would be
-            # the intersection and never matches).
+            #
+            # @MX:NOTE: the phrase goes in as `text_query`, not copied into the
+            # four field parameters.
+            # @MX:REASON: copying it meant each field was tested against the
+            # WHOLE phrase and the results ORed, so "Adriano Fante" asked "is
+            # there a login called 'Adriano Fante'? a firstname called 'Adriano
+            # Fante'?" and every answer was no, because the first name and the
+            # surname live in different columns. `text_query` requires each word
+            # to appear in some column instead.
             result = await admin_tools.search_users(
-                name=query,
-                firstname=query,
-                realname=query,
-                email=query,
+                text_query=query,
                 entity_id=entity_id,
                 entity_name=entity_name,
                 limit=limit,
                 offset=offset,
-                match_mode="any",
+                sort_by=sort_by,
+                order=order,
             )
         else:
             # No query: reuse search_users on /search/User with an entity
@@ -76,6 +88,8 @@ async def search_admin(
                 entity_name=entity_name,
                 limit=limit,
                 offset=offset,
+                sort_by=sort_by,
+                order=order,
             )
 
     elif resource == "groups":
@@ -84,12 +98,16 @@ async def search_admin(
             entity_name=entity_name,
             limit=limit,
             offset=offset,
+            sort_by=sort_by,
+            order=order,
         )
 
     elif resource == "entities":
         result = await admin_tools.list_entities(
             limit=limit,
             offset=offset,
+            sort_by=sort_by,
+            order=order,
         )
 
     elif resource == "locations":
@@ -98,6 +116,8 @@ async def search_admin(
             entity_name=entity_name,
             limit=limit,
             offset=offset,
+            sort_by=sort_by,
+            order=order,
         )
 
     else:
@@ -386,6 +406,20 @@ async def _manage_group(
 
     if action == "delete":
         from src.services.admin_service import admin_service
+
+        # @MX:WARN: exclusão de grupo passava sem o safety guard.
+        # @MX:REASON: chamado, ativo, usuário e webhook exigem confirmação para
+        # excluir; grupo e localização não exigiam nada, embora um grupo em uso
+        # esteja referenciado por chamados e por regras de atribuição. A
+        # assimetria era acidental, não uma decisão.
+        require_safety_confirmation(
+            "delete_group",
+            confirmation_token=kwargs.get("confirmationToken"),
+            reason=kwargs.get("reason"),
+            target_id=resource_id,
+            target_type="Group",
+        )
+
         ok = await admin_service.delete_group(resource_id)
         return {"success": ok, "id": resource_id, "message": f"Group {resource_id} deleted"}
 
@@ -462,6 +496,17 @@ async def _manage_location(
 
     if action == "delete":
         from src.services.admin_service import admin_service
+
+        # Mesma assimetria corrigida em grupos: uma localização em uso é
+        # referenciada por ativos e chamados, então excluir não é local.
+        require_safety_confirmation(
+            "delete_location",
+            confirmation_token=kwargs.get("confirmationToken"),
+            reason=kwargs.get("reason"),
+            target_id=resource_id,
+            target_type="Location",
+        )
+
         ok = await admin_service.delete_location(resource_id)
         return {"success": ok, "id": resource_id, "message": f"Location {resource_id} deleted"}
 

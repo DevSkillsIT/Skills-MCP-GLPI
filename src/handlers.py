@@ -4,17 +4,14 @@ Integração das 48 tools MCP em handlers centralizados
 Roteamento JSON-RPC 2.0 para execução das tools
 """
 
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 import json
 from datetime import datetime
 
-from src.tools.tickets import ticket_tools
-from src.tools.assets import asset_tools
-from src.tools.admin import admin_tools
-from src.tools.webhooks import webhook_tools
-from src.tools.ai_tools import ai_tools
 # SPEC-GLPI-ENHANCE-001/F04: Consolidated tools
 from src.tools.consolidated_tickets import search_tickets, manage_tickets, manage_ai_analysis
+from src.tools.consolidated_itil import search_itil_records, manage_itil_records
+from src.tools.consolidated_search import search_records
 from src.tools.consolidated_assets import search_assets, manage_assets
 from src.tools.consolidated_admin import search_admin, manage_admin
 from src.tools.consolidated_webhooks import search_webhooks, manage_webhooks
@@ -29,8 +26,72 @@ from src.models.exceptions import (
     InvalidRequestError,
     HTTP_TO_JSONRPC,
 )
+from src.config.settings import settings
 from src.utils.helpers import logger
 from src.formatters.response_formatter import format_tool_response
+from src.security.idempotency import get_idempotency_store
+from src.security.write_policy import get_write_policy, resolve_operation
+
+
+# Names that mean the same parameter across sibling tools.
+#
+# @MX:ANCHOR: every tool answers to every spelling in these groups.
+# @MX:REASON: four sibling search tools each named the "what am I searching"
+# parameter differently -- `record_type` (ITIL), `resource` (admin),
+# `asset_type` (assets), `itemtype` (free criteria). A caller that learns one
+# from a successful call sends it to the next tool and gets
+# `search_admin() got an unexpected keyword argument 'record_type'` -- a
+# TypeError surfaced as a tool failure, which reads as "the GLPI service is
+# down" rather than "you spelled the parameter differently". Measured: that is
+# exactly the failure this cost us.
+#
+# `name` is deliberately absent from the free-text group: on the manage_* tools
+# it is the record's own name, a value being written, not a search term.
+_ARGUMENT_ALIASES: Tuple[frozenset, ...] = (
+    frozenset({"record_type", "resource", "asset_type", "itemtype", "item_type"}),
+    frozenset({"query", "search", "search_text", "text", "q"}),
+    frozenset({"limit", "max_results", "page_size"}),
+)
+
+
+def _normalize_argument_aliases(
+    tool_name: str,
+    arguments: Dict[str, Any],
+    schema: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Rename argument synonyms to the name this tool actually declares.
+
+    The canonical name is read from the tool's own schema rather than a table,
+    so a tool that renames a parameter keeps working without anyone maintaining
+    a second list. A group is only applied when the tool declares exactly one of
+    its names -- otherwise the caller's spelling is already unambiguous, or the
+    rename would have to guess between two real parameters.
+    """
+    if not isinstance(arguments, dict) or not arguments:
+        return arguments
+
+    properties = (schema or {}).get("properties") or {}
+    if not properties:
+        return arguments
+
+    normalized = dict(arguments)
+    for group in _ARGUMENT_ALIASES:
+        declared = [name for name in properties if name in group]
+        if len(declared) != 1:
+            continue
+        canonical = declared[0]
+        if canonical in normalized:
+            continue
+        for supplied in list(normalized):
+            if supplied in group and supplied != canonical:
+                normalized[canonical] = normalized.pop(supplied)
+                logger.info(
+                    f"{tool_name}: argumento '{supplied}' interpretado como "
+                    f"'{canonical}'"
+                )
+                break
+
+    return normalized
 
 
 class MCPHandler:
@@ -61,10 +122,11 @@ class MCPHandler:
                 "name": "glpi_search_helpdesk_tickets",  # 28 chars
                 "description": (
                     "Chamados, tickets, incidentes, requisicoes e solicitacoes de helpdesk no GLPI — listagem e busca textual "
-                    "com filtros por status, prioridade e periodo de criacao. Use para perguntas como 'chamados de hoje', "
-                    "'tickets abertos', 'incidentes em aberto'. IMPORTANTE: o token MCP ja fixa o cliente/tenant no GLPI, "
-                    "NAO preencha entity_id nem entity_name (so use para filtrar sub-entidade especifica). Sem parametros, "
-                    "retorna os 10 chamados mais recentes. Retorna tabela Markdown paginada. Consulta somente leitura."
+                    "com filtros por status, prioridade, urgencia, tecnico atribuido, grupo atribuido, solicitante, categoria "
+                    "e periodo. Use para 'chamados de hoje', 'tickets abertos', 'chamados do grupo Infraestrutura', 'chamados "
+                    "atribuidos ao Joao', 'urgentes da categoria Rede'. Aceita ordenacao via sort_by/order. IMPORTANTE: o token "
+                    "MCP ja fixa o cliente/tenant no GLPI, NAO preencha entity_id nem entity_name (so use para sub-entidade). "
+                    "Sem parametros, retorna os 10 chamados mais recentes. Retorna tabela Markdown paginada. Somente leitura."
                 ),
                 "input_schema": {
                     "type": "object",
@@ -74,6 +136,14 @@ class MCPHandler:
                         "query": {"type": "string", "description": "Texto para busca em titulo e conteudo (minimo 2 caracteres). Omita para listagem sem busca textual."},
                         "date_after": {"type": "string", "description": "Data de criacao a partir de. Aceita YYYY-MM-DD, DD/MM/YYYY, ISO com hora, ou palavras 'hoje'/'today'/'ontem'/'yesterday'/'amanha'/'tomorrow'. Para 'chamados de hoje' use 'hoje' (ou a data atual) em date_after E date_before."},
                         "date_before": {"type": "string", "description": "Data de criacao ate. Aceita YYYY-MM-DD, DD/MM/YYYY, ISO com hora, ou palavras 'hoje'/'today'/'ontem'/'yesterday'/'amanha'/'tomorrow'. Para 'chamados de hoje' use 'hoje' em date_after E date_before."},
+                        "urgency": {"type": "integer", "description": "Urgencia do chamado no GLPI — eixo DISTINTO de prioridade (no GLPI a prioridade e derivada de urgencia + impacto). Valores: 1 (muito baixa) a 5 (muito alta). Use para 'chamados urgentes'.", "minimum": 1, "maximum": 5},
+                        "assigned_tech": {"type": "string", "description": "Tecnico atribuido ao chamado no GLPI. Aceita o NOME (busca parcial, ex: 'Joao') ou o ID numerico do usuario. Use para 'chamados do fulano', 'o que esta atribuido ao X'."},
+                        "assigned_group": {"type": "string", "description": "Grupo tecnico atribuido ao chamado no GLPI. Aceita o NOME (busca parcial, ex: 'Infraestrutura') ou o ID numerico do grupo. Use para 'chamados do time X', 'fila do grupo Y'."},
+                        "requester": {"type": "string", "description": "Solicitante que abriu o chamado no GLPI. Aceita o NOME (busca parcial) ou o ID numerico do usuario. Use para 'chamados abertos pelo fulano'."},
+                        "category": {"type": "string", "description": "Categoria ITIL do chamado no GLPI. Aceita o NOME (busca parcial, ex: 'Rede') ou o ID numerico da categoria."},
+                        "open_only": {"type": "boolean", "description": "Se true, retorna apenas chamados em aberto (exclui solucionados e fechados). Ignorado quando status e informado, pois status e mais especifico.", "default": False},
+                        "sort_by": {"type": "string", "description": "Campo de ordenacao no GLPI. Padrao: date_mod (ultima atualizacao). Use date para ordenar por abertura ('chamados mais antigos primeiro' = sort_by=date + order=asc).", "enum": ["date", "date_mod", "priority", "urgency", "status", "name", "category", "solvedate", "closedate"]},
+                        "order": {"type": "string", "description": "Direcao da ordenacao. asc (crescente, mais antigos/menores primeiro) ou desc (decrescente, padrao).", "enum": ["asc", "desc"], "default": "desc"},
                         "entity_id": {"type": "integer", "description": "OPCIONAL — Token ja fixa tenant. So preencha para filtrar UMA sub-entidade especifica dentro do cliente. ID numerico da entidade no GLPI."},
                         "entity_name": {"type": "string", "description": "OPCIONAL — Token ja fixa tenant. So preencha para filtrar UMA sub-entidade pelo nome (ex: nome de uma filial). Nao use o nome do cliente principal."},
                         "limit": {"type": "integer", "description": "Quantidade maxima de resultados (padrao: 10, maximo: 50)", "minimum": 1, "maximum": 50, "default": 10},
@@ -87,32 +157,50 @@ class MCPHandler:
             {
                 "name": "glpi_manage_ticket_operations",  # 33 chars
                 "description": (
-                    "Chamados, tickets, incidentes e requisicoes no GLPI — operacoes sobre UM chamado especifico: criacao, "
-                    "consulta detalhada, atualizacao, atribuicao, resolucao, fechamento, comentarios e estatisticas. Use action "
-                    "no GLPI: get, get_by_number, create, update, delete, assign, close, resolve, add_followup, get_followups, "
-                    "get_history, get_stats, find_similar. Para LISTAR chamados use glpi_search_helpdesk_tickets. Token ja fixa "
-                    "tenant — nao passe entity em get/update/delete. Retorna Markdown."
+                    "Chamados, tickets, incidentes e requisicoes no GLPI — operacoes sobre UM chamado: abertura, consulta, "
+                    "atualizacao, atribuicao a tecnico ou a grupo, resolucao, fechamento, comentarios, tarefas, aprovacoes, "
+                    "anexos, vinculo entre chamados e linha do tempo completa. Use action no GLPI: get, get_by_number, create, "
+                    "update, delete, assign, assign_group, close, resolve, add_followup, add_task, add_document, link_tickets, "
+                    "request_validation, answer_validation, get_timeline, get_tasks, get_validations, get_followups, "
+                    "get_history, get_stats, find_similar. Para LISTAR use glpi_search_helpdesk_tickets. Retorna Markdown."
                 ),
                 "input_schema": {
                     "type": "object",
                     "properties": {
-                        "action": {"type": "string", "description": "Operacao a executar no GLPI. Valores: get (detalhe), get_by_number (busca por numero), create (criar), update (atualizar), delete (excluir), assign (atribuir tecnico), close (fechar), resolve (resolver), add_followup (comentar), get_followups (listar comentarios), get_history (historico), get_stats (estatisticas), find_similar (tickets similares)", "enum": ["get", "get_by_number", "create", "update", "delete", "assign", "close", "resolve", "add_followup", "get_followups", "get_history", "get_stats", "find_similar"]},
+                        "action": {"type": "string", "description": "Operacao a executar no GLPI. Consulta: get (detalhe), get_by_number (por numero), get_followups (comentarios), get_history (auditoria), get_stats (estatisticas), get_timeline (linha do tempo completa: comentarios + tarefas + solucoes + aprovacoes), get_tasks (tarefas), get_validations (aprovacoes), find_similar (chamados parecidos). Escrita: create, update, delete, assign (tecnico), assign_group (grupo/equipe), close, resolve, add_followup (comentar), add_task (tarefa), add_document (anexar arquivo), link_tickets (vincular chamados), request_validation (pedir aprovacao), answer_validation (aprovar ou recusar).", "enum": ["get", "get_by_number", "create", "update", "delete", "assign", "assign_group", "close", "resolve", "add_followup", "get_followups", "get_history", "get_stats", "find_similar", "get_timeline", "add_task", "get_tasks", "request_validation", "answer_validation", "get_validations", "link_tickets", "add_document"]},
                         "ticket_id": {"type": "integer", "description": "ID do chamado no GLPI (obrigatorio para get, update, delete, assign, close, resolve, add_followup, get_followups, get_history)"},
                         "title": {"type": "string", "description": "Titulo do chamado (obrigatorio para create)"},
-                        "description": {"type": "string", "description": "Descricao detalhada do problema (obrigatorio para create)"},
-                        "content": {"type": "string", "description": "Conteudo do acompanhamento (obrigatorio para add_followup)"},
+                        "description": {"type": "string", "description": "Descricao detalhada do problema (obrigatorio para create). Formatacao: o GLPI guarda este campo como HTML — use <br>, <p>, <strong>, <ul><li> para formatar. Markdown (**negrito**) NAO e interpretado e aparece literal. Aspas, & e acentos podem ser escritos normalmente."},
+                        "content": {"type": "string", "description": "Conteudo do acompanhamento (obrigatorio para add_followup). Formatacao: o GLPI guarda este campo como HTML — use <br>, <p>, <strong>, <ul><li> para formatar. Markdown (**negrito**) NAO e interpretado e aparece literal. Aspas, & e acentos podem ser escritos normalmente."},
                         "status": {"type": "string", "description": "Novo status. Valores: new (novo), assigned (atribuido), planned (planejado), pending (pendente), solved (solucionado), closed (fechado)", "enum": ["new", "assigned", "planned", "pending", "solved", "closed"]},
                         "priority": {"type": "integer", "description": "Prioridade. Valores: 1 (muito baixa) a 5 (muito alta), 6 (maior)", "minimum": 1, "maximum": 6},
                         "entity_id": {"type": "integer", "description": "OPCIONAL — Token ja fixa tenant. So preencha em create/get_stats para sub-entidade especifica. ID numerico no GLPI."},
                         "entity_name": {"type": "string", "description": "OPCIONAL — Token ja fixa tenant. So preencha em create/get_stats para sub-entidade especifica (resolvido automaticamente)."},
                         "user_id": {"type": "integer", "description": "ID do tecnico para atribuicao (obrigatorio para assign)"},
-                        "solution": {"type": "string", "description": "Texto da solucao tecnica (obrigatorio para resolve e close)"},
+                        "solution": {"type": "string", "description": "Texto da solucao tecnica (obrigatorio para resolve e close). Formatacao: o GLPI guarda este campo como HTML — use <br>, <p>, <strong>, <ul><li> para formatar. Markdown (**negrito**) NAO e interpretado e aparece literal. Aspas, & e acentos podem ser escritos normalmente."},
                         "ticket_number": {"type": "string", "description": "Numero do chamado como string (para get_by_number)"},
                         "threshold": {"type": "number", "description": "Limite de similaridade 0.0-1.0 para find_similar. Padrao: 0.3", "minimum": 0, "maximum": 1, "default": 0.3},
                         "max_results": {"type": "integer", "description": "Numero maximo de tickets similares retornados para find_similar. Padrao: 10", "minimum": 1, "maximum": 50, "default": 10},
                         "date_from": {"type": "string", "description": "Data inicial para get_stats. Aceita YYYY-MM-DD, DD/MM/YYYY ou palavras 'hoje'/'ontem'/'amanha'."},
                         "date_to": {"type": "string", "description": "Data final para get_stats. Aceita YYYY-MM-DD, DD/MM/YYYY ou palavras 'hoje'/'ontem'/'amanha'."},
-                        "is_private": {"type": "boolean", "description": "Se true, followup visivel apenas para tecnicos. Padrao: false", "default": False},
+                        "is_private": {"type": "boolean", "description": "Se true, o acompanhamento ou a tarefa fica visivel apenas para tecnicos, nao para o solicitante. Padrao: false", "default": False},
+                        "actiontime": {"type": "integer", "description": "Duracao prevista da tarefa em SEGUNDOS (para add_task). Ex: 3600 = 1 hora, 1800 = 30 minutos.", "minimum": 0},
+                        "task_category_id": {"type": "integer", "description": "ID da categoria da tarefa no GLPI (opcional em add_task)."},
+                        "approver": {"type": "string", "description": "Aprovador da validacao (obrigatorio em request_validation). Aceita NOME/login do usuario ou o ID numerico. Nome ambiguo e recusado com a lista de candidatos."},
+                        "validation_id": {"type": "integer", "description": "ID da aprovacao no GLPI (para answer_validation). Se omitido e houver apenas UMA aprovacao pendente no chamado, ela e resolvida automaticamente."},
+                        "validation_status": {"type": "string", "description": "Resposta da aprovacao (obrigatorio em answer_validation). Valores: aprovado ou recusado. Ao recusar, o campo comment e obrigatorio.", "enum": ["aprovado", "recusado"]},
+                        "comment": {"type": "string", "description": "Comentario da aprovacao. Obrigatorio ao recusar uma validacao."},
+                        "group": {"type": "string", "description": "Grupo/equipe a atribuir ao chamado (obrigatorio em assign_group). Aceita NOME (ex: 'Infraestrutura') ou ID numerico. Nome ambiguo e recusado com a lista de candidatos."},
+                        "group_type": {"type": "string", "description": "Papel do grupo no chamado do GLPI. Valores: assigned (atribuido, padrao), requester (solicitante), observer (observador).", "enum": ["assigned", "requester", "observer"], "default": "assigned"},
+                        "linked_ticket_id": {"type": "integer", "description": "ID do outro chamado a vincular (obrigatorio em link_tickets)."},
+                        "link_type": {"type": "string", "description": "Tipo do vinculo entre chamados no GLPI. Valores: link (relacionado, padrao), duplicate (duplicado), son (filho), parent (pai).", "enum": ["link", "duplicate", "son", "parent"], "default": "link"},
+                        "file_path": {"type": "string", "description": "Caminho do arquivo NO SERVIDOR a anexar ao chamado (para add_document). Alternativa: envie file_base64 + file_name. Limite de 25 MB."},
+                        "file_base64": {"type": "string", "description": "Conteudo do arquivo codificado em base64 (para add_document, quando nao houver caminho no servidor). Exige file_name."},
+                        "file_name": {"type": "string", "description": "Nome do arquivo com extensao (obrigatorio quando usar file_base64). A extensao define o tipo MIME enviado ao GLPI."},
+                        "document_title": {"type": "string", "description": "Titulo do documento no GLPI. Padrao: o proprio nome do arquivo."},
+                        "limit": {"type": "integer", "description": "Quantidade maxima de eventos retornados em get_timeline (padrao 100, mantem os mais recentes).", "minimum": 1, "maximum": 200, "default": 100},
+                        "confirmation_token": {"type": "string", "description": "Token de confirmacao exigido para operacoes destrutivas quando o safety guard esta ativo."},
+                        "reason": {"type": "string", "description": "Motivo da operacao destrutiva (minimo 10 caracteres) quando o safety guard esta ativo."},
                     },
                     "required": ["action"],
                 },
@@ -149,6 +237,7 @@ class MCPHandler:
                 "description": (
                     "Ativos, equipamentos, patrimonio e inventario de TI no GLPI — busca por computadores, monitores, impressoras, "
                     "software, dispositivos de rede, reservas e estatisticas. Use scope para filtrar tipo de busca no GLPI. "
+                    "Aceita filtro por responsavel (assigned_user, por nome ou id) e ordenacao via sort_by/order. "
                     "IMPORTANTE: o token MCP ja fixa o cliente/tenant — NAO preencha entity_id nem entity_name (so use para "
                     "filtrar sub-entidade especifica). Sem parametros, retorna inventario completo do cliente. Retorna tabela "
                     "Markdown paginada. Consulta somente leitura."
@@ -159,6 +248,13 @@ class MCPHandler:
                         "scope": {"type": "string", "description": "Escopo da busca no GLPI. Valores: all (todos os ativos), computers (computadores), monitors (monitores), software (programas), devices (dispositivos de rede/telefone), reservations (reservas ativas), reservable (itens reservaveis), stats (estatisticas)", "enum": ["all", "computers", "monitors", "software", "devices", "reservations", "reservable", "stats"], "default": "all"},
                         "asset_type": {"type": "string", "description": "Tipo de ativo no GLPI. Valores: Computer, Monitor, Printer, NetworkEquipment, Phone, Peripheral", "enum": ["Computer", "Monitor", "Printer", "NetworkEquipment", "Phone", "Peripheral"]},
                         "query": {"type": "string", "description": "Texto para busca por nome, serial ou usuario vinculado"},
+                        "assigned_user": {"type": "string", "description": "Responsavel pelo ativo no GLPI (usuario vinculado ao equipamento). Aceita o NOME (busca parcial, ex: 'Joao') ou o ID numerico do usuario. Use para 'quais equipamentos estao com o fulano', 'notebook do X'. Nao se aplica a scope=software."},
+                        "status": {"type": "string", "description": "Situacao do ativo no GLPI (states_id). Aceita o ID numerico do estado. Use para 'equipamentos em estoque', 'maquinas em uso', 'itens em manutencao'."},
+                        "location_id": {"type": "integer", "description": "ID da localizacao no GLPI. Use para 'equipamentos da filial X', 'maquinas do andar Y'."},
+                        "manufacturer_id": {"type": "integer", "description": "ID do fabricante no GLPI. Use para 'quantos equipamentos Dell temos', 'impressoras da marca X'."},
+                        "user_id": {"type": "integer", "description": "ID numerico do usuario vinculado ao ativo. Prefira assigned_user, que tambem aceita o nome."},
+                        "sort_by": {"type": "string", "description": "Campo de ordenacao no GLPI. Padrao do GLPI quando omitido. Use name para ordem alfabetica, date_mod para 'equipamentos alterados recentemente' (com order=desc), status para agrupar por situacao.", "enum": ["name", "id", "serial", "location", "manufacturer", "model", "status", "user", "date_mod"]},
+                        "order": {"type": "string", "description": "Direcao da ordenacao. asc (crescente, A-Z ou mais antigos primeiro) ou desc (decrescente, Z-A ou mais recentes primeiro). Sem sort_by, aplica a direcao ao nome do ativo.", "enum": ["asc", "desc"]},
                         "entity_id": {"type": "integer", "description": "OPCIONAL — Token ja fixa tenant. So preencha para filtrar UMA sub-entidade especifica. ID numerico no GLPI."},
                         "entity_name": {"type": "string", "description": "OPCIONAL — Token ja fixa tenant. So preencha para filtrar UMA sub-entidade pelo nome."},
                         "limit": {"type": "integer", "description": "Quantidade maxima de resultados (padrao: 10, maximo: 50)", "minimum": 1, "maximum": 50, "default": 10},
@@ -201,16 +297,19 @@ class MCPHandler:
             {
                 "name": "glpi_search_admin_resources",  # 31 chars
                 "description": (
-                    "Usuarios, colaboradores, tecnicos, grupos, entidades e localizacoes no GLPI — busca unificada de recursos "
-                    "administrativos com filtros por nome, email e entidade. Use resource para selecionar: users, groups, "
-                    "entities, locations. IMPORTANTE: o token MCP ja fixa o cliente/tenant — NAO preencha entity_id nem "
-                    "entity_name (so use para filtrar sub-entidade especifica). Retorna tabela Markdown. Consulta somente leitura."
+                    "Usuarios, colaboradores, tecnicos, grupos, equipes, entidades e localizacoes no GLPI — busca unificada de "
+                    "recursos administrativos com filtro por nome, login, email e entidade. Use resource para selecionar: users, "
+                    "groups, entities, locations. Aceita ordenacao via sort_by/order. Use para 'quem e o tecnico X', 'listar "
+                    "usuarios do cliente', 'quais grupos existem'. IMPORTANTE: o token MCP ja fixa o cliente/tenant no GLPI — NAO "
+                    "preencha entity_id nem entity_name (so use para sub-entidade). Retorna tabela Markdown. Somente leitura."
                 ),
                 "input_schema": {
                     "type": "object",
                     "properties": {
                         "resource": {"type": "string", "description": "Tipo de recurso administrativo no GLPI. Valores: users (usuarios/tecnicos), groups (grupos/equipes), entities (entidades/clientes), locations (localizacoes/escritorios)", "enum": ["users", "groups", "entities", "locations"], "default": "users"},
                         "query": {"type": "string", "description": "Texto para busca por nome, sobrenome, email ou login (aplica-se a users)"},
+                        "sort_by": {"type": "string", "description": "Campo de ordenacao no GLPI. Padrao do GLPI quando omitido. Use name para ordem alfabetica, date_creation com order=desc para 'usuarios cadastrados recentemente', last_login para 'quem entrou por ultimo' (so users). Campo que o recurso nao possui cai no nome.", "enum": ["name", "id", "email", "firstname", "realname", "comment", "entity", "location", "date_mod", "date_creation", "last_login"]},
+                        "order": {"type": "string", "description": "Direcao da ordenacao. asc (crescente, A-Z ou mais antigos primeiro) ou desc (decrescente, Z-A ou mais recentes primeiro). Sem sort_by, aplica a direcao ao nome do recurso.", "enum": ["asc", "desc"]},
                         "entity_id": {"type": "integer", "description": "OPCIONAL — Token ja fixa tenant. So preencha para filtrar usuarios/recursos de UMA sub-entidade especifica."},
                         "entity_name": {"type": "string", "description": "OPCIONAL — Token ja fixa tenant. So preencha para filtrar pelo nome de UMA sub-entidade."},
                         "limit": {"type": "integer", "description": "Quantidade maxima de resultados (padrao: 10, maximo: 50)", "minimum": 1, "maximum": 50, "default": 10},
@@ -256,7 +355,7 @@ class MCPHandler:
                     "type": "object",
                     "properties": {
                         "scope": {"type": "string", "description": "Escopo da consulta de webhooks no GLPI. Valores: list (listar todos), stats (estatisticas de entrega), deliveries (historico de tentativas por webhook)", "enum": ["list", "stats", "deliveries"], "default": "list"},
-                        "webhook_id": {"type": "string", "description": "ID do webhook no GLPI (hash alfanumerico, obrigatorio quando scope=deliveries)"},
+                        "webhook_id": {"type": "string", "description": "ID numerico do webhook no GLPI, o mesmo que aparece na coluna ID da listagem (obrigatorio quando scope=deliveries). Aceita 4 ou '4'."},
                         "limit": {"type": "integer", "description": "Quantidade maxima de resultados (padrao: 10, maximo: 50)", "minimum": 1, "maximum": 50, "default": 10},
                         "offset": {"type": "integer", "description": "Deslocamento para paginacao (padrao: 0)", "minimum": 0, "default": 0},
                     },
@@ -268,15 +367,17 @@ class MCPHandler:
             {
                 "name": "glpi_manage_webhook_integrations",  # 36 chars
                 "description": (
-                    "Webhooks, integracoes e notificacoes automaticas no GLPI — operacoes de cadastro, atualizacao, exclusao, "
-                    "teste de conectividade, disparo manual e controle de endpoints. Use action no GLPI: "
-                    "get, create, update, delete, test, trigger, enable, disable, retry. Retorna Markdown."
+                    "Webhooks, integracoes e notificacoes automaticas no GLPI — cadastro, atualizacao, exclusao, teste de "
+                    "conectividade, disparo manual e ativacao de endpoints que avisam sistemas externos quando algo muda. Use "
+                    "action no GLPI: get, create, update, delete, test, trigger, enable, disable, retry. Acione para integrar o "
+                    "GLPI a outra ferramenta, notificar um sistema a cada chamado novo ou diagnosticar entrega falhando. "
+                    "Retorna Markdown."
                 ),  # 330 chars
                 "input_schema": {
                     "type": "object",
                     "properties": {
                         "action": {"type": "string", "description": "Operacao sobre webhook no GLPI. Valores: get (detalhes), create (cadastrar), update (atualizar), delete (excluir), test (testar conectividade), trigger (disparo manual), enable (ativar), disable (desativar), retry (reenviar falhas)", "enum": ["get", "create", "update", "delete", "test", "trigger", "enable", "disable", "retry"]},
-                        "webhook_id": {"type": "string", "description": "ID do webhook no GLPI (hash alfanumerico, obrigatorio para get, update, delete, test, enable, disable, retry)"},
+                        "webhook_id": {"type": "string", "description": "ID numerico do webhook no GLPI, o mesmo que aparece na coluna ID da listagem (obrigatorio para get, update, delete, test, enable, disable, retry). Aceita 4 ou '4'."},
                         "name": {"type": "string", "description": "Nome do webhook (obrigatorio para create)"},
                         "url": {"type": "string", "description": "URL de destino do callback HTTP (obrigatorio para create)"},
                         "event_type": {"type": "string", "description": "Tipo de evento que dispara o webhook (obrigatorio para create e trigger). Valores aceitos: ticket.created, ticket.updated, ticket.deleted, ticket.assigned, asset.created, asset.updated, asset.deleted, asset.reserved, user.created, user.updated, user.deleted, group.created, group.updated, group.deleted", "enum": ["ticket.created", "ticket.updated", "ticket.deleted", "ticket.assigned", "asset.created", "asset.updated", "asset.deleted", "asset.reserved", "user.created", "user.updated", "user.deleted", "group.created", "group.updated", "group.deleted"]},
@@ -393,10 +494,146 @@ class MCPHandler:
                 "category": "knowledge",
                 "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
             },
+            # === ITIL ALEM DO INCIDENTE (2 tools) ===
+            {
+                "name": "glpi_search_itil_records",  # 24 chars
+                "description": (
+                    "Problemas, mudancas, projetos, contratos e fornecedores no GLPI — busca e listagem dos registros ITIL que "
+                    "ficam ALEM do chamado comum, com filtro por situacao, prioridade, urgencia, categoria, entidade e periodo. "
+                    "Use para 'problemas abertos', 'mudancas planejadas', 'RFC do mes', 'contratos vencendo', 'quais fornecedores "
+                    "temos', 'causa raiz recorrente'. Para chamados/incidentes use glpi_search_helpdesk_tickets. Aceita "
+                    "count_only para obter apenas o total do GLPI. Retorna tabela Markdown paginada. Somente leitura."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "record_type": {"type": "string", "description": "Tipo de registro ITIL no GLPI. Valores: problems (problemas/causa raiz), changes (mudancas/RFC), projects (projetos), contracts (contratos), suppliers (fornecedores).", "enum": ["problems", "changes", "projects", "contracts", "suppliers"]},
+                        "query": {"type": "string", "description": "Texto para busca no titulo/nome do registro (minimo 2 caracteres)."},
+                        "status": {"type": "string", "description": "Situacao do registro no GLPI. Para problemas e mudancas aceita o nome do status; para projetos e contratos, o estado; para fornecedores, ativo ou inativo."},
+                        "priority": {"type": "integer", "description": "Prioridade de 1 (muito baixa) a 6 (maior). Nao se aplica a contratos e fornecedores.", "minimum": 1, "maximum": 6},
+                        "urgency": {"type": "integer", "description": "Urgencia de 1 a 5. Aplica-se apenas a problemas e mudancas no GLPI.", "minimum": 1, "maximum": 5},
+                        "category": {"type": "string", "description": "Categoria ITIL (problemas/mudancas) ou tipo (projeto, contrato, fornecedor). Aceita nome ou ID numerico."},
+                        "entity_id": {"type": "integer", "description": "OPCIONAL — Token ja fixa tenant. So preencha para uma sub-entidade especifica."},
+                        "entity_name": {"type": "string", "description": "OPCIONAL — Token ja fixa tenant. Nome de UMA sub-entidade, resolvido automaticamente."},
+                        "date_from": {"type": "string", "description": "Inicio do periodo. Aceita AAAA-MM-DD, DD/MM/AAAA ou as palavras hoje e ontem."},
+                        "date_to": {"type": "string", "description": "Fim do periodo. Aceita AAAA-MM-DD, DD/MM/AAAA ou as palavras hoje e ontem."},
+                        "date_field": {"type": "string", "description": "Coluna de data usada no periodo. Padrao: data de abertura (problemas, mudancas, projetos), inicio de vigencia (contratos) e data de cadastro (fornecedores)."},
+                        "sort_by": {"type": "string", "description": "Campo de ordenacao (nome do campo ou ID numerico no GLPI). Campo desconhecido cai no padrao do tipo."},
+                        "order": {"type": "string", "description": "Direcao da ordenacao: asc (crescente) ou desc (decrescente, padrao).", "enum": ["asc", "desc"], "default": "desc"},
+                        "limit": {"type": "integer", "description": "Quantidade maxima de resultados (padrao 10, maximo 50).", "minimum": 1, "maximum": 50, "default": 10},
+                        "offset": {"type": "integer", "description": "Deslocamento para paginacao (padrao 0).", "minimum": 0, "default": 0},
+                        "count_only": {"type": "boolean", "description": "Se true, retorna APENAS a quantidade total no GLPI, sem trazer os registros. Consulta barata para perguntas de volume.", "default": False},
+                    },
+                    "required": ["record_type"],
+                },
+                "handler": search_itil_records,
+                "category": "itil",
+                "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+            },
+            {
+                "name": "glpi_manage_itil_records",  # 24 chars
+                "description": (
+                    "Problemas, mudancas, projetos, contratos e fornecedores no GLPI — operacoes sobre UM registro ITIL: consulta "
+                    "detalhada, cadastro, alteracao, exclusao, comentarios e vinculo com chamados. Use record_type + action no "
+                    "GLPI: get, create, update, delete, add_followup, get_followups, link_ticket. Acione para abrir um problema a "
+                    "partir de chamados repetidos, registrar uma mudanca, cadastrar contrato ou fornecedor. Para LISTAR use "
+                    "glpi_search_itil_records. Exclusao e destrutiva e pode exigir confirmacao. Retorna Markdown."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "record_type": {"type": "string", "description": "Tipo de registro ITIL no GLPI. Valores: problems, changes, projects, contracts, suppliers.", "enum": ["problems", "changes", "projects", "contracts", "suppliers"]},
+                        "action": {"type": "string", "description": "Operacao no GLPI. Valores: get (detalhe), create (cadastrar), update (alterar), delete (excluir), add_followup (comentar), get_followups (listar comentarios), link_ticket (vincular chamado ao problema ou mudanca).", "enum": ["get", "create", "update", "delete", "add_followup", "get_followups", "link_ticket"]},
+                        "record_id": {"type": "integer", "description": "ID do registro no GLPI (obrigatorio para get, update, delete, add_followup, get_followups e link_ticket)."},
+                        "name": {"type": "string", "description": "Titulo do problema/mudanca/projeto ou nome do contrato/fornecedor (obrigatorio em create)."},
+                        "content": {"type": "string", "description": "Descricao detalhada do registro. Formatacao: o GLPI guarda este campo como HTML — use <br>, <p>, <strong>, <ul><li> para formatar. Markdown (**negrito**) NAO e interpretado e aparece literal. Aspas, & e acentos podem ser escritos normalmente."},
+                        "comment": {"type": "string", "description": "Observacoes do registro (usado em projetos, contratos e fornecedores)."},
+                        "status": {"type": "string", "description": "Situacao do registro no GLPI."},
+                        "priority": {"type": "integer", "description": "Prioridade de 1 a 6.", "minimum": 1, "maximum": 6},
+                        "urgency": {"type": "integer", "description": "Urgencia de 1 a 5 (problemas e mudancas).", "minimum": 1, "maximum": 5},
+                        "impact": {"type": "integer", "description": "Impacto de 1 a 5 (problemas e mudancas).", "minimum": 1, "maximum": 5},
+                        "category_id": {"type": "integer", "description": "ID da categoria ITIL ou do tipo (projeto, contrato, fornecedor) no GLPI."},
+                        "state_id": {"type": "integer", "description": "ID do estado do projeto ou do contrato no GLPI."},
+                        "entity_id": {"type": "integer", "description": "OPCIONAL — Token ja fixa tenant. So preencha para sub-entidade especifica."},
+                        "entity_name": {"type": "string", "description": "OPCIONAL — Nome de sub-entidade, resolvido automaticamente."},
+                        "begin_date": {"type": "string", "description": "Inicio de vigencia do contrato ou inicio planejado do projeto (AAAA-MM-DD)."},
+                        "end_date": {"type": "string", "description": "Fim planejado do projeto (AAAA-MM-DD). Em contratos, o GLPI calcula o fim a partir do inicio mais a duracao."},
+                        "duration": {"type": "integer", "description": "Duracao do contrato em meses."},
+                        "periodicity": {"type": "integer", "description": "Periodicidade do contrato em meses."},
+                        "num": {"type": "string", "description": "Numero do contrato no GLPI."},
+                        "manager_id": {"type": "integer", "description": "ID do responsavel pelo projeto."},
+                        "percent_done": {"type": "integer", "description": "Percentual concluido do projeto (0 a 100).", "minimum": 0, "maximum": 100},
+                        "code": {"type": "string", "description": "Codigo do projeto."},
+                        "is_active": {"type": "boolean", "description": "Situacao ativa do fornecedor."},
+                        "email": {"type": "string", "description": "E-mail do fornecedor."},
+                        "phone": {"type": "string", "description": "Telefone do fornecedor."},
+                        "website": {"type": "string", "description": "Site do fornecedor."},
+                        "followup_content": {"type": "string", "description": "Texto do comentario (obrigatorio em add_followup)."},
+                        "is_private": {"type": "boolean", "description": "Se true, o comentario fica visivel apenas para tecnicos.", "default": False},
+                        "ticket_id": {"type": "integer", "description": "ID do chamado a vincular (obrigatorio em link_ticket, apenas para problemas e mudancas)."},
+                        "purge": {"type": "boolean", "description": "Se true, exclui definitivamente; se false (padrao), envia para a lixeira do GLPI.", "default": False},
+                        "confirmation_token": {"type": "string", "description": "Token de confirmacao exigido na exclusao quando o safety guard esta ativo."},
+                        "reason": {"type": "string", "description": "Motivo da exclusao (minimo 10 caracteres) quando o safety guard esta ativo."},
+                        "fields": {"type": "object", "description": "Campos adicionais do GLPI em formato chave-valor, para colunas nao cobertas pelos parametros acima."},
+                    },
+                    "required": ["record_type", "action"],
+                },
+                "handler": manage_itil_records,
+                "category": "itil",
+                "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": True},
+            },
+            # === BUSCA AVANCADA (1 tool) ===
+            {
+                "name": "glpi_search_records_by_criteria",  # 31 chars
+                "description": (
+                    "Registros de qualquer tipo no GLPI por criterios livres — monta filtros combinados com E/OU sobre "
+                    "chamados, ativos, usuarios, contratos ou qualquer itemtype, sem depender dos filtros prontos das outras "
+                    "tools. Use quando a pergunta nao couber nas buscas especificas do GLPI, para contar registros sem lista-los "
+                    "(scope=count) ou para descobrir quais campos existem (scope=fields). Campos podem ser informados por NOME. "
+                    "Ferramenta de apoio: prefira as tools especificas quando elas atenderem. Retorna Markdown."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "itemtype": {"type": "string", "description": "Tipo de registro no GLPI. Exemplos: Ticket (chamado), Computer (computador), User (usuario), Problem, Change, Contract, Supplier, Software, Monitor, Printer, KnowbaseItem."},
+                        "scope": {"type": "string", "description": "O que fazer no GLPI. Valores: search (traz os registros, padrao), count (traz apenas o total, consulta barata), fields (lista os campos disponiveis para filtrar e ordenar).", "enum": ["search", "count", "fields"], "default": "search"},
+                        "criteria": {"type": "array", "description": "Lista de condicoes. Cada item: field (nome do campo ou ID), searchtype (contains, equals, notequals, lessthan, morethan, under, empty), value e link (AND ou OR, aplicado a partir da segunda condicao). ATENCAO: 'morethan' e 'lessthan' so funcionam como comparacao em campos de DATA. Em campo numerico ou de enum eles colapsam para igualdade — varredura completa de 0 a 7 sobre a prioridade de chamados, que tem 6 valores reais distintos, deu morethan(N) = lessthan(N) = equals(N) em todos os pontos. Uma faixa numerica devolveria uma fatia exata parecendo um intervalo, sem erro. Estes dois operadores sao RECUSADOS fora de colunas de data; para conjuntos use varios criterios com link OR.", "items": {"type": "object"}},
+                        "fields": {"type": "array", "description": "Colunas a retornar, por nome ou ID. Campo desconhecido e ignorado com aviso.", "items": {"type": "string"}},
+                        "sort_by": {"type": "string", "description": "Campo de ordenacao, por nome ou ID numerico do GLPI."},
+                        "order": {"type": "string", "description": "Direcao da ordenacao: asc ou desc.", "enum": ["asc", "desc"]},
+                        "limit": {"type": "integer", "description": "Quantidade maxima de registros (padrao 10, maximo 50).", "minimum": 1, "maximum": 50, "default": 10},
+                        "offset": {"type": "integer", "description": "Deslocamento para paginacao (padrao 0).", "minimum": 0, "default": 0},
+                        "field_filter": {"type": "string", "description": "Usado com scope=fields: filtra os campos listados por um trecho do nome (ex: data, status)."},
+                    },
+                    "required": ["itemtype"],
+                },
+                "handler": search_records,
+                "category": "search",
+                "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+            },
         ]
 
+        # @MX:WARN: glpi_manage_ticket_ai_analysis stays out of tools/list while
+        # settings.enable_ai_analysis is False.
+        # @MX:REASON: AIIntegrationService is an in-memory job store that never
+        # calls GLPI, and configure_agents() has no caller, so _agents_configured
+        # is permanently False. In that state action=trigger answers "disparada
+        # com sucesso" for ANY ticket_id (even one that does not exist) and
+        # action=publish answers "realizada com sucesso" without writing a single
+        # byte to the ticket — a model reading that reports a published AI
+        # analysis to the user that does not exist anywhere. The handler and the
+        # service are kept intact so wiring a real agent is a one-flag change.
+        gated = {"glpi_manage_ticket_ai_analysis"} if not settings.enable_ai_analysis else set()
+
         for tool_def in CONSOLIDATED_TOOLS:
+            if tool_def["name"] in gated:
+                continue
             tools[tool_def["name"]] = tool_def
+
+        if gated:
+            logger.info(
+                f"AI analysis tool not registered (ENABLE_AI_ANALYSIS=false): {sorted(gated)}"
+            )
 
         logger.info(
             f"Registered {len(tools)} consolidated MCP tools (SPEC-GLPI-ENHANCE-001/F04)"
@@ -878,7 +1115,7 @@ class MCPHandler:
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Texto para buscar (Nome, Serial, Contact/Nome Alternativo, ou Nome de Usuário associado). Aceita caracteres especiais como '.' e '@' (ex: joana.rodrigues@DOMINIO)",
+                        "description": "Texto para buscar (Nome, Serial, Contact/Nome Alternativo, ou Nome de Usuário associado). Aceita caracteres especiais como '.' e '@' (ex: a.silva@DOMINIO)",
                     },
                     "asset_type": {
                         "type": "string",
@@ -934,7 +1171,7 @@ class MCPHandler:
                     },
                     "offset": {"type": "integer", "minimum": 0, "default": 0},
                 },
-                "description": "RETORNA DADOS ENRIQUECIDOS para cada computador: id, name, serial, memory_info (ex: '16.0 GB', '8.0 GB'), cpu_info (ex: '1x Intel Core i7-8550U'), anydesk_id, contact (Nome Alternativo), last_inventory_update, users_id, locations_id, manufacturers_id, models_id, types_id, states_id. NÃO USE get_computer_details para listar - esta tool já traz os dados necessários! Para filtrar por memória (ex: <8GB), processe o campo memory_info do resultado.",
+                "description": "RETORNA DADOS ENRIQUECIDOS para cada computador, incluindo o HARDWARE BASICO na propria tabela: Tipo (Notebook/Desktop), CPU, RAM com o tipo do pente (ex: '16 GB DDR4-2666'), Disco (capacidade total, SSD ou HDD, quantidade de discos) e Uso do volume principal (ex: '38% de 951 GB'). Alem de id, name, serial, memory_info, cpu_info, anydesk_id, contact, last_inventory_update, users_id, locations_id, manufacturers_id, models_id, types_id, states_id. NAO chame outra tool para saber memoria, disco ou se e notebook — ja esta aqui. Para filtrar por memoria (ex: <8GB), processe a coluna RAM do resultado.",
             },
             "glpi_get_computer_details": {
                 "type": "object",
@@ -1454,6 +1691,77 @@ class MCPHandler:
             logger.error(f"tools/list error: {e}", exc_info=True)
             raise GLPIError(500, f"Failed to list tools: {str(e)}") from None
 
+    # Domínio de escrita de cada tool consolidada, para o portão de política.
+    # Tools de leitura não aparecem: ausência aqui significa "sem portão".
+    _WRITE_DOMAINS = {
+        "glpi_manage_ticket_operations": "tickets",
+        "glpi_manage_asset_operations": "assets",
+        "glpi_manage_admin_resources": "admin",
+        "glpi_manage_webhook_integrations": "webhooks",
+        "glpi_manage_itil_records": "itil",
+    }
+
+    # Ações que criam registro novo e, portanto, duplicam se repetidas.
+    # Atualizar ou excluir duas vezes converge no mesmo estado; criar, não.
+    _CREATE_LIKE_ACTIONS = frozenset({
+        "create", "add_followup", "add_task", "add_document",
+        "link_tickets", "link_ticket", "request_validation", "create_reservation",
+    })
+
+    # Janela de proteção contra repetição. Curta de propósito: cobre o retry do
+    # cliente ou do modelo sem impedir que alguém registre, mais tarde, um
+    # comentário legitimamente idêntico.
+    _IDEMPOTENCY_TTL_SECONDS = 120
+
+    def _resolve_write_operation(self, tool_name: str, arguments: Dict[str, Any]):
+        """Descobre qual operação de escrita esta chamada representa.
+
+        @MX:ANCHOR: único ponto que liga as tools à política de escrita.
+        @MX:REASON: os módulos de política e idempotência existiam com testes
+        completos e não eram chamados por ninguém — protegiam no papel. Ligar
+        aqui, no despacho, cobre toda tool de uma vez e evita que a próxima
+        tool nasça desprotegida por esquecimento.
+        """
+        domain = self._WRITE_DOMAINS.get(tool_name)
+        if not domain:
+            return None
+        action = str(arguments.get("action") or "").strip().lower()
+        if not action:
+            return None
+        # O recurso vem com nomes diferentes conforme a tool: 'resource' no
+        # administrativo, 'record_type' no ITIL. Exclusão tem portão por tipo,
+        # então o nome precisa chegar até aqui.
+        resource = arguments.get("resource") or arguments.get("record_type")
+
+        # Tenta primeiro o portão específico do tipo; se não houver, cai no
+        # portão do domínio. Sem esse degrau, informar o tipo faria criar e
+        # alterar deixarem de resolver — e uma operação que não resolve passa
+        # sem portão nenhum.
+        if resource:
+            specific = resolve_operation(domain, action, resource)
+            if specific is not None:
+                return specific
+        return resolve_operation(domain, action)
+
+    async def _execute_guarded(self, operation, tool_name: str, arguments: Dict[str, Any], handler):
+        """Executa uma escrita, protegendo criações contra repetição."""
+        action = str(arguments.get("action") or "").strip().lower()
+        if action not in self._CREATE_LIKE_ACTIONS:
+            return await handler(**arguments)
+
+        store = get_idempotency_store()
+        # A chave é o próprio conteúdo da chamada: repetir a mesma criação com
+        # os mesmos argumentos é exatamente o caso que precisa ser detido.
+        key = json.dumps(arguments, sort_keys=True, default=str, ensure_ascii=False)
+
+        return await store.run(
+            operation.value,
+            key,
+            arguments,
+            lambda: handler(**arguments),
+            ttl_seconds=self._IDEMPOTENCY_TTL_SECONDS,
+        )
+
     async def handle_call_tool(
         self, tool_name: str, arguments: Dict[str, Any]
     ) -> Dict[str, Any]:
@@ -1478,12 +1786,26 @@ class MCPHandler:
             tool_info = self.tools[tool_name]
             handler = tool_info["handler"]
 
+            # Sinonimos do mesmo parametro, resolvidos ANTES da validacao.
+            arguments = _normalize_argument_aliases(
+                tool_name, arguments, tool_info["input_schema"]
+            )
+
             # Validar argumentos contra schema (básico)
             self._validate_arguments(tool_name, arguments, tool_info["input_schema"])
 
+            # Portao de escrita + protecao contra repeticao, aplicados no ponto
+            # de despacho para valerem para TODAS as tools de uma vez.
+            operation = self._resolve_write_operation(tool_name, arguments)
+            if operation is not None:
+                get_write_policy().check(operation)
+
             # Executar tool
             start_time = datetime.now()
-            result = await handler(**arguments)
+            if operation is not None:
+                result = await self._execute_guarded(operation, tool_name, arguments, handler)
+            else:
+                result = await handler(**arguments)
             execution_time = (datetime.now() - start_time).total_seconds()
 
             # SPEC-GLPI-ENHANCE-001/F01: Interceptor Markdown centralizado
@@ -1540,6 +1862,31 @@ class MCPHandler:
                     f"exige: {required}",
                     field,
                 )
+
+        # @MX:ANCHOR: coerce the scalar the model got the wrong way round before
+        # judging it, never after.
+        # @MX:REASON: glpi_search_webhook_integrations prints `| ID | 4 |` and
+        # glpi_manage_webhook_integrations declared webhook_id as a string, so
+        # the obvious follow-up call — webhook_id=4 — was rejected with a type
+        # error and the model concluded the webhook did not exist. The same trap
+        # fires in reverse whenever a model quotes an id (ticket_id="9449"). An
+        # unambiguous scalar in the wrong JSON type is a notation slip, not a
+        # different value; only genuinely ambiguous input still errors.
+        for name, value in list(arguments.items()):
+            spec = properties.get(name)
+            if not isinstance(spec, dict) or value is None:
+                continue
+            expected = spec.get("type")
+            if expected == "string" and isinstance(value, int) and not isinstance(value, bool):
+                arguments[name] = str(value)
+            elif expected == "integer" and isinstance(value, str):
+                stripped = value.strip()
+                if stripped.lstrip("-").isdigit():
+                    arguments[name] = int(stripped)
+            elif expected == "boolean" and isinstance(value, str):
+                lowered = value.strip().lower()
+                if lowered in ("true", "false"):
+                    arguments[name] = lowered == "true"
 
         # Per-property constraints
         for name, value in arguments.items():
@@ -1640,17 +1987,38 @@ class MCPHandler:
             # Roteamento para handlers específicos
             if method == "initialize":
                 # SPEC-GLPI-ENHANCE-001/F05: Server Instructions + capabilities
+                # @MX:NOTE: the instructions must describe the tools that were
+                # actually registered, never a fixed roster.
+                # @MX:REASON: announcing glpi_manage_ticket_ai_analysis while it
+                # is gated off makes the model call a tool that does not exist
+                # and then narrate the failure to the user as a GLPI problem.
+                n_tools = len(self.tools)
+                ai_on = "glpi_manage_ticket_ai_analysis" in self.tools
+                n_ticket_tools = 3 if ai_on else 2
+                ai_tool_line = (
+                    "- glpi_manage_ticket_ai_analysis: Analise IA em 3 passos sequenciais (trigger -> get_result -> publish).\n"
+                    if ai_on
+                    else ""
+                )
+                ai_example_block = (
+                    "- Analise IA de um ticket (fluxo obrigatorio em 3 passos):\n"
+                    "    1) glpi_manage_ticket_ai_analysis(action='trigger', ticket_id=1234)  # retorna job_id\n"
+                    "    2) glpi_manage_ticket_ai_analysis(action='get_result', job_id=<job>)  # retorna response\n"
+                    "    3) glpi_manage_ticket_ai_analysis(action='publish', job_id=<job>, response=<resp>)  # publica\n"
+                    if ai_on
+                    else ""
+                )
                 result = {
                     "protocolVersion": "2024-11-05",
                     "serverInfo": {"name": "mcp-glpi", "version": "2.0.0"},
                     "capabilities": {"tools": {}, "prompts": {}, "resources": {}},
                     "instructions": (
-                        "Servidor MCP GLPI - Gerenciamento de chamados, ativos, usuarios e webhooks (15 tools)\n\n"
+                        f"Servidor MCP GLPI - Gerenciamento de chamados, ativos, usuarios, ITIL e webhooks ({n_tools} tools)\n\n"
                         "=== CATEGORIAS DE TOOLS ===\n\n"
-                        "TICKETS (3 tools):\n"
-                        "- glpi_search_helpdesk_tickets: Listar/buscar chamados por status, prioridade, query textual e periodo (date_after/date_before). Sem filtros = 10 mais recentes.\n"
-                        "- glpi_manage_ticket_operations: Operacoes sobre UM chamado (action: get/get_by_number/create/update/delete/assign/close/resolve/add_followup/get_followups/get_history/get_stats/find_similar).\n"
-                        "- glpi_manage_ticket_ai_analysis: Analise IA em 3 passos sequenciais (trigger -> get_result -> publish).\n\n"
+                        f"TICKETS ({n_ticket_tools} tools):\n"
+                        "- glpi_search_helpdesk_tickets: Listar/buscar chamados por status, prioridade, urgencia, tecnico, grupo, solicitante, categoria, texto e periodo. Aceita open_only e ordenacao (sort_by/order). Sem filtros = 10 mais recentes.\n"
+                        "- glpi_manage_ticket_operations: Operacoes sobre UM chamado (action: get/get_by_number/create/update/delete/assign/assign_group/close/resolve/add_followup/add_task/add_document/link_tickets/request_validation/answer_validation/get_timeline/get_tasks/get_validations/get_followups/get_history/get_stats/find_similar).\n"
+                        f"{ai_tool_line}\n"
                         "ATIVOS (2 tools):\n"
                         "- glpi_search_asset_inventory: Buscar equipamentos, patrimonio (scope: all/computers/monitors/software/devices/reservations/stats).\n"
                         "- glpi_manage_asset_operations: Operacoes sobre UM ativo (action: get/get_details/create/update/delete/get_reservations/create_reservation/update_reservation).\n\n"
@@ -1665,6 +2033,11 @@ class MCPHandler:
                         "- glpi_read_resource_by_uri: Le uma URI especifica (glpi://entities, glpi://ticket-status, glpi://ticket-categories, glpi://priorities).\n"
                         "- glpi_list_available_prompts: Catalogo dos 15 relatorios pre-fabricados (SLA, tendencias, produtividade, ROI).\n"
                         "- glpi_get_prompt_template: EXECUTA um relatorio nomeado e retorna DADOS reais. NAO retorna template em branco.\n\n"
+                        "ITIL ALEM DO INCIDENTE (2 tools):\n"
+                        "- glpi_search_itil_records: Buscar problemas, mudancas, projetos, contratos e fornecedores (record_type). Aceita count_only para so o total.\n"
+                        "- glpi_manage_itil_records: Operacoes sobre UM registro ITIL (record_type + action: get/create/update/delete/add_followup/get_followups/link_ticket).\n\n"
+                        "BUSCA POR CRITERIOS LIVRES (1 tool):\n"
+                        "- glpi_search_records_by_criteria: Consulta livre em QUALQUER itemtype quando as tools acima nao atenderem (scope: search/count/fields). Campos por NOME; scope=fields descobre os campos disponiveis.\n\n"
                         "KNOWLEDGE (2 tools):\n"
                         "- glpi_search_knowledge_unified: PREFERIDA — busca semantica (pgvector + RRF) em chamados resolvidos + help oficial + comunidade. Use para duvidas, mensagens de erro, sintomas, how-to.\n"
                         "- glpi_search_knowledge_articles: Apenas artigos KB nativos via REST do GLPI. Use SOMENTE quando precisar especificamente da base nativa (raro). Default = unified.\n\n"
@@ -1699,10 +2072,7 @@ class MCPHandler:
                         "    glpi_search_knowledge_unified(query='ORA-00942 table does not exist')\n"
                         "- Rodar relatorio de SLA dos ultimos 30 dias:\n"
                         "    glpi_get_prompt_template(name='sla_dashboard', arguments={'period_days': 30})\n"
-                        "- Analise IA de um ticket (fluxo obrigatorio em 3 passos):\n"
-                        "    1) glpi_manage_ticket_ai_analysis(action='trigger', ticket_id=1234)  # retorna job_id\n"
-                        "    2) glpi_manage_ticket_ai_analysis(action='get_result', job_id=<job>)  # retorna response\n"
-                        "    3) glpi_manage_ticket_ai_analysis(action='publish', job_id=<job>, response=<resp>)  # publica\n\n"
+                        f"{ai_example_block}\n"
                         "=== WORKFLOWS COMUNS ===\n"
                         "- 'Quantos chamados abertos hoje?': search_helpdesk_tickets com date_after=hoje + date_before=hoje. Conte os retornados (campo 'total' do paginador).\n"
                         "- 'Encontrar solucao para erro X': PRIMEIRO tente search_knowledge_unified(query=erro). NAO use search_knowledge_articles direto.\n"
@@ -1717,7 +2087,7 @@ class MCPHandler:
                         "- Fluxo: 1) glpi_list_available_prompts para ver os 15 modelos e seus argumentos; "
                         "2) glpi_get_prompt_template(name=..., arguments={...}).\n"
                         "- period_days e min_occurrences sao INTEIROS em dias/ocorrencias (ex: 30, 90).\n"
-                        "- entity_name aqui e opcional. Para deployments single-tenant (Ramada, Skills), OMITA — relatorio sai automaticamente do escopo do token.\n"
+                        "- entity_name aqui e opcional. Para deployments single-tenant (uma por cliente), OMITA — relatorio sai automaticamente do escopo do token.\n"
                         "- Prompts que dependem de ticket_id/username/search_term exigem esse argumento.\n"
                         "- IMPORTANTE: os prompts retornam DADOS REAIS do GLPI. Quando uma metrica nao existe "
                         "nesta instancia (custo monetario, NPS/CSAT, ROI financeiro, tempo medio por tecnico), "

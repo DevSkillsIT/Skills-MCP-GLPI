@@ -9,7 +9,6 @@ import sys
 
 sys.path.insert(0, "/opt/mcp-servers/glpi/.base-code")
 
-import json
 
 import pytest
 
@@ -18,7 +17,7 @@ from src.formatters.glpi_formatters import (
     format_ticket_detail,
     format_tickets_list,
 )
-from src.formatters.response_formatter import TOOL_FORMATTERS, format_tool_response
+from src.formatters.response_formatter import format_tool_response
 
 
 # === Fixtures ===

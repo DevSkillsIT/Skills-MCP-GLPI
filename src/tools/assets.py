@@ -5,7 +5,6 @@ Wrappers para asset_service com validação e tratamento de erros
 """
 
 from typing import Dict, Any, List, Optional
-from datetime import datetime
 
 from src.services.asset_service import asset_service
 from src.models.exceptions import (
@@ -24,6 +23,125 @@ from src.utils.helpers import (
 from src.utils.safety_guard import require_safety_confirmation
 
 
+#: SoftwareVersion id -> software name, kept for the process lifetime.
+#
+# @MX:NOTE: um software instalado nao carrega o proprio nome.
+# @MX:REASON: `Item_SoftwareVersion` devolve apenas `softwareversions_id` (a
+# versao) mesmo com expand_dropdowns; o nome mora em SoftwareVersion.softwares_id,
+# um salto adiante. Sem resolver, a coluna "Software" saia inteira em branco e a
+# lista de programas instalados nao respondia a unica pergunta que se faz dela.
+# O cache evita repetir o salto: as mesmas versoes se repetem em todo o parque.
+_SOFTWARE_NAME_CACHE: Dict[str, str] = {}
+
+#: Teto de resolucoes por chamada. Uma maquina tem dezenas de programas e um
+#: GET por versao transformaria uma tela em dezenas de round-trips.
+_SOFTWARE_RESOLVE_CAP = 40
+
+
+def _subitem_link_id(item: Dict[str, Any], rel: str) -> Optional[str]:
+    """Extract a related record's id from the `links` array GLPI attaches."""
+    for link in item.get("links") or []:
+        if link.get("rel") == rel:
+            href = str(link.get("href") or "")
+            tail = href.rstrip("/").rsplit("/", 1)[-1]
+            if tail.isdigit():
+                return tail
+    return None
+
+
+async def _resolve_software_names(client, software: List[Dict[str, Any]]) -> None:
+    """Fill each installed-software row with the program's name, in place."""
+    if not software:
+        return
+
+    pending = []
+    for row in software:
+        version_id = _subitem_link_id(row, "SoftwareVersion")
+        if not version_id:
+            continue
+        row["_software_version_id"] = version_id
+        if version_id not in _SOFTWARE_NAME_CACHE and version_id not in pending:
+            pending.append(version_id)
+
+    import asyncio as _asyncio
+
+    async def _fetch(version_id: str):
+        try:
+            record = await client.get(
+                f"/apirest.php/SoftwareVersion/{int(version_id)}",
+                params={"expand_dropdowns": "true"},
+            )
+            if isinstance(record, dict):
+                name = record.get("softwares_id")
+                if name and not str(name).isdigit():
+                    _SOFTWARE_NAME_CACHE[version_id] = str(name)
+        except Exception as exc:  # noqa: BLE001 -- nome e enfeite, nao bloqueia
+            logger.warning(f"software name lookup failed for {version_id}: {exc}")
+
+    if pending:
+        await _asyncio.gather(*(_fetch(v) for v in pending[:_SOFTWARE_RESOLVE_CAP]))
+
+    for row in software:
+        name = _SOFTWARE_NAME_CACHE.get(row.get("_software_version_id") or "")
+        if name:
+            row["softwares_id"] = name
+
+
+#: Colunas que so a Search API resolve, com o id do campo em Computer.
+#
+# @MX:ANCHOR: o IP de uma maquina nao e coluna da tabela de computadores.
+# @MX:REASON: o endereco vive tres saltos adiante (NetworkPort -> NetworkName
+# -> IPAddress), entao o GET do ativo nunca o traz e "qual o IP dessa maquina"
+# ficava sem resposta em qualquer tela. A Search API ja resolve o join no campo
+# 126; uma consulta por id custa um round-trip e responde. O mesmo vale para o
+# tipo de disco (116) e o tipo de memoria (110), que o agente de inventario
+# preenche em algumas maquinas e o GET tambem nao alcanca.
+_SEARCH_ONLY_COLUMNS = {
+    "126": "ip_addresses",
+    "116": "harddrive_type",
+    "110": "memory_type",
+}
+
+
+async def _attach_search_only_columns(
+    client, asset_id: int, asset: Any, item_type: str = "Computer"
+) -> None:
+    """Add join-only columns to an asset fetched through the item endpoint.
+
+    @MX:NOTE: vale para qualquer tipo de ativo, nao so Computer.
+    @MX:REASON: o campo 126 (IP) existe identicamente em Monitor, Printer,
+    NetworkEquipment, Phone e Peripheral -- verificado no catalogo da
+    instancia. Fixar "Computer" aqui deixava o endereco de um switch ou de uma
+    impressora de rede inalcancavel, que e justamente onde alguem pergunta o IP.
+    """
+    if not isinstance(asset, dict):
+        return
+    try:
+        result = await client.search(
+            item_type=item_type,
+            criteria=[{"field": 2, "searchtype": "equals", "value": asset_id}],
+            forcedisplay=list(_SEARCH_ONLY_COLUMNS.keys()),
+            range_limit=1,
+            expand_dropdowns=True,
+        )
+    except Exception as exc:  # noqa: BLE001 -- enriquecimento nunca bloqueia
+        logger.warning(
+            f"search-only columns failed for {item_type} {asset_id}: {exc}"
+        )
+        return
+
+    rows = result.get("data", []) if isinstance(result, dict) else (result or [])
+    if not rows or not isinstance(rows[0], dict):
+        return
+    for field_id, key in _SEARCH_ONLY_COLUMNS.items():
+        value = rows[0].get(field_id)
+        if isinstance(value, list):
+            # Um equipamento com varias interfaces devolve uma lista.
+            value = ", ".join(str(v) for v in value if v)
+        if value not in (None, "", 0, "0", []):
+            asset[key] = value
+
+
 class AssetTools:
     """
     Collection de 12 tools MCP para gerenciamento de assets.
@@ -40,7 +158,10 @@ class AssetTools:
         model_id: Optional[int] = None,
         status: Optional[str] = None,
         limit: int = 250,
-        offset: int = 0
+        offset: int = 0,
+        assigned_user: Optional[Any] = None,
+        sort_by: Optional[Any] = None,
+        order: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Tool MCP: list_assets
@@ -56,6 +177,9 @@ class AssetTools:
             status: Filtrar por status
             limit: Número máximo de resultados (padrão: 50)
             offset: Deslocamento para paginação (padrão: 0)
+            assigned_user: Filtrar por responsável (NOME ou ID numérico)
+            sort_by: Coluna de ordenação (nome amigável ou ID do campo GLPI)
+            order: Direção da ordenação (asc/desc)
 
         Returns:
             Lista de assets com metadados de paginação
@@ -98,9 +222,12 @@ class AssetTools:
                 status=status,
                 limit=limit,
                 offset=offset,
-                use_cache=True
+                use_cache=True,
+                assigned_user=assigned_user,
+                sort_by=sort_by,
+                order=order
             )
-            
+
             # Truncar resposta se necessário
             if isinstance(assets, dict) and "assets" in assets:
                 assets["assets"] = response_truncator.truncate_json_response(assets["assets"])
@@ -164,7 +291,12 @@ class AssetTools:
             asset_type = input_sanitizer.sanitize_string(asset_type)
             
             asset = await asset_service.get_asset(asset_type, asset_id)
-            
+
+            # IP e demais colunas que so a Search API resolve, para QUALQUER
+            # tipo de ativo — impressora de rede e switch inclusive.
+            from src.services.glpi_client import glpi_client as _gc
+            await _attach_search_only_columns(_gc, asset_id, asset, asset_type)
+
             # Truncar resposta se necessário
             asset = response_truncator.truncate_json_response(asset)
             
@@ -248,7 +380,7 @@ class AssetTools:
                 serial_number = input_sanitizer.sanitize_string(serial_number)
             
             if comment:
-                comment = input_sanitizer.sanitize_string(comment)
+                comment = input_sanitizer.sanitize_string(comment, allow_html=True)
             
             # Criar asset
             asset = await asset_service.create_asset(
@@ -405,11 +537,19 @@ class AssetTools:
         entity_name: Optional[str] = None,
         fields: Optional[List[str]] = None,
         limit: int = 250,
-        offset: int = 0
+        offset: int = 0,
+        sort_by: Optional[Any] = None,
+        order: Optional[str] = None,
+        location_id: Optional[int] = None,
+        manufacturer_id: Optional[int] = None,
+        user_id: Optional[int] = None,
+        username: Optional[str] = None,
+        status: Optional[str] = None,
+        assigned_user: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """
         Tool MCP: search_assets
-        Busca assets por texto livre
+        Busca assets por texto livre, com os MESMOS filtros da listagem
 
         Args:
             query: Texto para buscar
@@ -419,6 +559,8 @@ class AssetTools:
             fields: Campos específicos para retornar
             limit: Limite de resultados
             offset: Offset para paginação
+            sort_by: Coluna de ordenação (nome amigável ou ID do campo GLPI)
+            order: Direção da ordenação (asc/desc)
 
         Returns:
             Assets que correspondem à busca
@@ -460,9 +602,17 @@ class AssetTools:
                 entity_id=entity_id,
                 fields=fields,
                 limit=limit,
-                offset=offset
+                offset=offset,
+                sort_by=sort_by,
+                order=order,
+                location_id=location_id,
+                manufacturer_id=manufacturer_id,
+                user_id=user_id,
+                username=username,
+                status=status,
+                assigned_user=assigned_user,
             )
-            
+
             # Truncar resposta se necessário
             assets = response_truncator.truncate_json_response(assets)
             
@@ -676,7 +826,7 @@ class AssetTools:
             asset_type = input_sanitizer.sanitize_string(asset_type)
             
             if comment:
-                comment = input_sanitizer.sanitize_string(comment)
+                comment = input_sanitizer.sanitize_string(comment, allow_html=True)
             
             # Criar reserva
             reservation = await asset_service.create_reservation(
@@ -759,7 +909,10 @@ class AssetTools:
         user_id: Optional[int] = None,
         username: Optional[str] = None,
         limit: int = 250,
-        offset: int = 0
+        offset: int = 0,
+        assigned_user: Optional[Any] = None,
+        sort_by: Optional[Any] = None,
+        order: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Tool MCP: list_computers
@@ -774,6 +927,9 @@ class AssetTools:
             username: Filtrar por nome do usuário (exige user_id preferencialmente)
             limit: Limite de resultados
             offset: Offset para paginação
+            assigned_user: Filtrar por responsável (NOME ou ID numérico)
+            sort_by: Coluna de ordenação (nome amigável ou ID do campo GLPI)
+            order: Direção da ordenação (asc/desc)
 
         Returns:
             Lista de computadores
@@ -810,9 +966,12 @@ class AssetTools:
                 username=username,
                 limit=limit,
                 offset=offset,
-                use_cache=True
+                use_cache=True,
+                assigned_user=assigned_user,
+                sort_by=sort_by,
+                order=order
             )
-            
+
             # Truncar resposta se necessário
             if isinstance(computers, dict) and "assets" in computers:
                 computers["assets"] = response_truncator.truncate_json_response(computers["assets"])
@@ -852,9 +1011,20 @@ class AssetTools:
             # does not abort the whole enrichment.
             from src.services.glpi_client import glpi_client as _gc
 
+            # @MX:WARN: expand_dropdowns e obrigatorio aqui, nao um detalhe.
+            # @MX:REASON: sem ele os sub-itens vinham como chaves estrangeiras
+            # cruas e a tela dizia "CPU ID 109", "Mem ID 98" e software com
+            # coluna de nome vazia. Um tecnico atendendo um chamado precisa do
+            # modelo do processador e do tipo da memoria (DDR3/DDR4, UDIMM/
+            # SODIMM) — um id nao responde nada, e a tela parecia preenchida.
             async def _safe_subitems(subtype: str):
                 try:
-                    return await _gc.get_subitems("Computer", computer_id, subtype)
+                    return await _gc.get_subitems(
+                        "Computer",
+                        computer_id,
+                        subtype,
+                        params={"expand_dropdowns": "true"},
+                    )
                 except Exception as e:
                     logger.warning(
                         f"get_computer_details: subitems {subtype} failed: {e}"
@@ -869,6 +1039,12 @@ class AssetTools:
                 memories,
                 networks,
                 software,
+                drives,
+                graphics,
+                batteries,
+                firmwares,
+                antivirus,
+                infocom,
             ) = await _asyncio.gather(
                 _safe_subitems("Item_OperatingSystem"),
                 _safe_subitems("Item_Disk"),
@@ -876,7 +1052,23 @@ class AssetTools:
                 _safe_subitems("Item_DeviceMemory"),
                 _safe_subitems("NetworkPort"),
                 _safe_subitems("Item_SoftwareVersion"),
+                # Disco FISICO: e aqui que mora SSD vs HDD e a capacidade real.
+                # Item_Disk sao volumes logicos (C:, D:) — outra pergunta.
+                _safe_subitems("Item_DeviceHardDrive"),
+                _safe_subitems("Item_DeviceGraphicCard"),
+                # Bateria: em notebook, "quanto tempo dura" e chamado recorrente.
+                _safe_subitems("Item_DeviceBattery"),
+                # Firmware/BIOS: versao de BIOS entra em diagnostico e em
+                # requisito de atualizacao.
+                _safe_subitems("Item_DeviceFirmware"),
+                _safe_subitems("ComputerAntivirus"),
+                # Infocom: garantia, data de compra, fornecedor — decide se o
+                # reparo e por contrato ou por conta da empresa.
+                _safe_subitems("Infocom"),
             )
+
+            await _resolve_software_names(_gc, software or [])
+            await _attach_search_only_columns(_gc, computer_id, computer)
 
             enriched = {
                 "asset": computer,
@@ -886,6 +1078,12 @@ class AssetTools:
                 "memories": memories or [],
                 "networks": networks or [],
                 "software": software or [],
+                "drives": drives or [],
+                "graphics": graphics or [],
+                "batteries": batteries or [],
+                "firmwares": firmwares or [],
+                "antivirus": antivirus or [],
+                "infocom": infocom or [],
             }
 
             # NOTE: Do NOT apply response_truncator.truncate_json_response here.
@@ -916,7 +1114,10 @@ class AssetTools:
         location_id: Optional[int] = None,
         manufacturer_id: Optional[int] = None,
         limit: int = 250,
-        offset: int = 0
+        offset: int = 0,
+        assigned_user: Optional[Any] = None,
+        sort_by: Optional[Any] = None,
+        order: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Tool MCP: list_monitors
@@ -929,6 +1130,9 @@ class AssetTools:
             manufacturer_id: Filtrar por fabricante
             limit: Limite de resultados
             offset: Offset para paginação
+            assigned_user: Filtrar por responsável (NOME ou ID numérico)
+            sort_by: Coluna de ordenação (nome amigável ou ID do campo GLPI)
+            order: Direção da ordenação (asc/desc)
 
         Returns:
             Lista de monitores
@@ -962,7 +1166,10 @@ class AssetTools:
                 manufacturer_id=manufacturer_id,
                 limit=limit,
                 offset=offset,
-                use_cache=True
+                use_cache=True,
+                assigned_user=assigned_user,
+                sort_by=sort_by,
+                order=order
             )
             
             # Truncar resposta se necessário

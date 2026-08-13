@@ -357,7 +357,8 @@ async def test_kb_search_real_query_returns_table():
     assert "result" in res, f"kb_search errored: {res.get('error')}"
     text = _text(res)
     # Markdown table header from the unified formatter, or a graceful empty.
-    assert ("Fonte" in text and "Oficial" in text and "Score" in text) or "Nenhum" in text
+    # The similarity column is labelled "Sim." — "Score" was its earlier name.
+    assert ("Fonte" in text and "Oficial" in text and "Sim." in text) or "Nenhum" in text
 
 
 @pytest.mark.asyncio

@@ -4,10 +4,8 @@ Valida rate limit com chave composta, cache e sessão.
 """
 
 import pytest
-import time
-from unittest.mock import AsyncMock, patch, MagicMock
 
-from src.auth.session_manager import SessionManager, session_manager
+from src.auth.session_manager import SessionManager
 
 
 class TestSessionManagerRateLimit:

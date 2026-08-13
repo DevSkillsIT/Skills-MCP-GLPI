@@ -68,7 +68,7 @@ Para gestores de TI, coordenadores e diretores.
 **Exemplo:**
 ```
 "Análise de ROI dos ativos da Skills IT"
-→ { "name": "glpi_asset_roi", "arguments": { "entity_name": "Skills IT" } }
+→ { "name": "glpi_asset_roi", "arguments": { "entity_name": "Acme Corp" } }
 ```
 
 **Retorna:** Custo total de aquisição, custo de manutenção (chamados relacionados), utilização média, idade média do parque, recomendações de substituição.
@@ -141,7 +141,7 @@ Para gestores de TI, coordenadores e diretores.
 **Exemplo:**
 ```
 "Satisfação da Skills IT no trimestre"
-→ { "name": "glpi_client_satisfaction", "arguments": { "entity_name": "Skills IT", "period_days": 90 } }
+→ { "name": "glpi_client_satisfaction", "arguments": { "entity_name": "Acme Corp", "period_days": 90 } }
 ```
 
 ---
@@ -210,7 +210,7 @@ Para analistas de suporte N1/N2/N3 e técnicos de campo.
 **Exemplo:**
 ```
 "Checklist de onboarding para Maria Souza na Skills IT"
-→ { "name": "glpi_onboarding_checklist", "arguments": { "username": "Maria Souza", "entity_name": "Skills IT" } }
+→ { "name": "glpi_onboarding_checklist", "arguments": { "username": "Maria Souza", "entity_name": "Acme Corp" } }
 ```
 
 **Retorna:** Checklist com: criação de conta, e-mail, VPN, estação de trabalho, acessos aos sistemas, treinamentos.

@@ -40,6 +40,11 @@ class SourceConfig(BaseModel):
     is_official: bool = False  # official docs vs community/forum (display + RRF)
     weight: float = 1.0  # RRF boost (official docs > forum)
     dedup: bool = False  # collapse repost-prone titles within the source
+    # True only for sources where every item is a solved case (a ticket KB), so
+    # an empty `solution` means "the fix was never written down". Documentation
+    # and forum sources have no solution field by nature — saying they are
+    # "solved without a description" would be false.
+    solutions_expected: bool = False
     description: str = ""  # human note: what this source contains (docs/routing)
     lang: str = ""  # default language hint (e.g. "pt-BR"); informational
 

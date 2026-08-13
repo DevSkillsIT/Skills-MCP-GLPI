@@ -5,7 +5,6 @@ Wrappers para ticket_service com validação e tratamento de erros
 """
 
 from typing import Dict, Any, List, Optional
-from datetime import datetime
 
 from src.services.ticket_service import ticket_service
 from src.models.exceptions import (
@@ -249,7 +248,7 @@ class TicketTools:
             
             # Sanitizar inputs
             title = input_sanitizer.sanitize_string(title)
-            description = input_sanitizer.sanitize_string(description)
+            description = input_sanitizer.sanitize_string(description, allow_html=True)
             
             # Converter tipo string para inteiro (GLPI usa 1=Incident, 2=Request)
             type_map = {"incident": 1, "request": 2, "change": 3}
@@ -320,9 +319,9 @@ class TicketTools:
             if title:
                 update_data["title"] = input_sanitizer.sanitize_string(title)
             if description:
-                update_data["description"] = input_sanitizer.sanitize_string(description)
+                update_data["description"] = input_sanitizer.sanitize_string(description, allow_html=True)
             if solution:
-                update_data["solution"] = input_sanitizer.sanitize_string(solution)
+                update_data["solution"] = input_sanitizer.sanitize_string(solution, allow_html=True)
             
             # Adicionar outros campos
             if status:
@@ -468,7 +467,7 @@ class TicketTools:
                 raise ValidationError("Ticket ID must be a positive integer", "ticket_id")
             
             # Sanitizar resolução
-            resolution = input_sanitizer.sanitize_string(resolution)
+            resolution = input_sanitizer.sanitize_string(resolution, allow_html=True)
             
             ticket = await ticket_service.close_ticket(ticket_id, resolution, solution_type=solution_type)
             
@@ -737,7 +736,7 @@ class TicketTools:
                 raise ValidationError("Ticket ID must be a positive integer", "ticket_id")
             
             # Sanitizar conteúdo
-            content = input_sanitizer.sanitize_string(content)
+            content = input_sanitizer.sanitize_string(content, allow_html=True)
             
             if not content or len(content) < 5:
                 raise ValidationError("Content must be at least 5 characters", "content")

@@ -3,11 +3,10 @@ Testes para o serviço GLPI.
 """
 
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock
 from src.glpi_service import GLPIService
 from src.models import (
-    Ticket, Asset, User, Group, Entity, Location,
-    NotFoundError, ValidationError, GLPIError
+    NotFoundError, ValidationError
 )
 
 

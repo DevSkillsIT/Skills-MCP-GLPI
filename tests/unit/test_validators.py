@@ -8,7 +8,6 @@ import sys
 
 sys.path.insert(0, "/opt/mcp-servers/glpi/.base-code")
 
-import pytest
 
 from src.utils.validators import create_mcp_error, validate_positive_int
 

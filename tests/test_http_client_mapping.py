@@ -6,7 +6,6 @@ import pytest
 import httpx
 
 from src.http_client import HTTPClient
-from src.utils.helpers import logger as app_logger
 
 
 class DummyLogger:

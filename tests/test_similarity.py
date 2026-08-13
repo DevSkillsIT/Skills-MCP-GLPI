@@ -4,9 +4,8 @@ Valida pesos, threshold, top_k e integração com TicketService.
 """
 
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
 
-from src.services.similarity_service import SimilarityService, TextSimilarity, similarity_service
+from src.services.similarity_service import SimilarityService, TextSimilarity
 
 
 class TestTextSimilarity:

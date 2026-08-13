@@ -47,9 +47,9 @@ class TestBuildSearchSql:
         assert "WITH semantic" not in sql and "vec" not in p
 
     def test_tenant_filter_bound_not_interpolated(self) -> None:
-        sql, p = _build(filters=SearchFilters(tenant="RAMADA"))
-        assert "tenant = %(tenant)s" in sql and p["tenant"] == "RAMADA"
-        assert "RAMADA" not in sql  # value bound, never interpolated
+        sql, p = _build(filters=SearchFilters(tenant="ACME"))
+        assert "tenant = %(tenant)s" in sql and p["tenant"] == "ACME"
+        assert "ACME" not in sql  # value bound, never interpolated
 
     def test_lang_filter_bound(self) -> None:
         sql, p = _build(filters=SearchFilters(lang="pt-BR"))

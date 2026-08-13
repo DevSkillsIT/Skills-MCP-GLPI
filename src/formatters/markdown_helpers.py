@@ -144,6 +144,16 @@ def page_info(count: int, limit: int, offset: int, total: Optional[int] = None) 
         page = (offset // limit) + 1 if limit > 0 else 1
         total_pages = (total + limit - 1) // limit if limit > 0 else 1
         parts.append(f"Pagina {page}/{total_pages} (total: {total}, limit: {limit})")
+    elif count >= limit > 0:
+        # @MX:WARN: nunca afirmar "Mostrando todos" sem saber o total.
+        # @MX:REASON: quando a pagina vem cheia, o total e desconhecido e o
+        # mais provavel e que exista mais. Dizer "Mostrando todos" fazia o
+        # modelo afirmar ao usuario que a lista estava completa — foram
+        # medidos 3 de 9270 chamados anunciados como "todos". Sem o total,
+        # o correto e declarar a incerteza.
+        parts.append(f"pagina cheia (limit: {limit}) — pode haver mais, use offset")
+    elif offset:
+        parts.append(f"fim da lista (offset: {offset})")
     else:
         parts.append("Mostrando todos")
     return " | ".join(parts)

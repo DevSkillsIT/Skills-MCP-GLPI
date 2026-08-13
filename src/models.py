@@ -5,7 +5,6 @@ Modelos Pydantic para validação de dados GLPI.
 from pydantic import BaseModel, Field, field_validator, ConfigDict
 from typing import Optional, List, Dict, Any
 from datetime import datetime
-from enum import Enum
 
 
 class MCPRequest(BaseModel):

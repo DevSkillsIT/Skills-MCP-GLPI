@@ -2,7 +2,7 @@
 Definição de todas as 48 tools do MCP GLPI.
 """
 
-from typing import List, Dict, Any
+from typing import List
 from src.models import Tool
 
 

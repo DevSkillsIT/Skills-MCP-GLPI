@@ -8,7 +8,6 @@ import sys
 
 sys.path.insert(0, "/opt/mcp-servers/glpi/.base-code")
 
-import pytest
 
 from src.formatters.glpi_formatters import (
     format_admin_detail,
@@ -75,10 +74,21 @@ class TestFormatTicketsList:
         tickets = [_make_ticket(tid=i, name=f"Ticket {i}") for i in range(1, 4)]
         result = format_tickets_list(tickets, DEFAULT_ARGS)
         assert "| ID | Titulo |" in result
-        assert "| 1 " in result
-        assert "| 2 " in result
-        assert "| 3 " in result
+        # The id cell renders as a clickable link to the ticket form.
+        for tid in (1, 2, 3):
+            assert f"ticket.form.php?id={tid}" in result
+            assert f"Ticket {tid}" in result
         assert "3 resultados" in result
+
+    def test_group_column_is_present(self) -> None:
+        """assigned_group is filterable, so the table must show the group."""
+        result = format_tickets_list([_make_ticket(tid=1, name="X")], DEFAULT_ARGS)
+        header = result.splitlines()[2]
+        assert "| Grupo |" in header
+        # Header and separator must keep the same column count, otherwise the
+        # Markdown table silently stops rendering.
+        separator = result.splitlines()[3]
+        assert header.count("|") == separator.count("|")
 
     def test_zero_tickets(self) -> None:
         assert format_tickets_list([], DEFAULT_ARGS) == "Nenhum ticket encontrado."

@@ -195,6 +195,7 @@ class TestToolFormattersRegistry:
         "glpi_read_resource_by_uri",
         "glpi_list_available_prompts",
         "glpi_get_prompt_template",
+        "glpi_search_records_by_criteria",
     ]
 
     @pytest.mark.parametrize("tool_name", EXPECTED_TOOLS)

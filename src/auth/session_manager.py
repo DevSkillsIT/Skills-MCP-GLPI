@@ -6,9 +6,9 @@ Baseado em http_client.py existente + código fonte Docker
 import asyncio
 import contextvars
 import hashlib
+import secrets
 import time
 from typing import Optional, Dict, Any, Tuple
-from datetime import datetime, timedelta
 import httpx
 from src.config import settings
 from src.logger import logger
@@ -164,6 +164,16 @@ class SessionManager:
         )
         
         # Inicializar sessão GLPI para este usuário
+        # @MX:ANCHOR: uma sessao so entra no pool se o GLPI a tiver aceitado.
+        # @MX:WARN: nunca devolver o client quando o initSession falhar.
+        # @MX:REASON: antes, a falha era apenas registrada em log e o client ia
+        # para o pool assim mesmo. Como e a resolucao da sessao que autentica o
+        # chamador, qualquer token — invalido, revogado, inventado — "passava"
+        # na validacao. Combinado com o cache de leitura, um token qualquer
+        # recebia dados ja carregados por outra pessoa, sem tocar o GLPI e sem
+        # erro nenhum. Reproduzido: token aleatorio recebeu a lista de grupos
+        # do cliente, servida do cache.
+        session_token = None
         try:
             response = await client.get("/apirest.php/initSession")
             if response.status_code == 200:
@@ -173,20 +183,26 @@ class SessionManager:
                     client.headers["Session-Token"] = session_token
                     logger.info(f"GLPI session created for user_token: {user_token[:10]}...")
             else:
-                # @MX:NOTE: surface real GLPI error (Bug Ramada — User-Token invalid)
                 logger.error(
                     f"initSession FAILED user={user_token[:10]}... "
                     f"status={response.status_code} body={response.text[:300]}"
                 )
         except Exception as e:
             logger.warning(f"Failed to init session for user_token: {e}", exc_info=True)
-        
+
+        if not session_token:
+            await client.aclose()
+            raise AuthenticationError(
+                "Token de usuario do GLPI invalido ou expirado. Verifique o header "
+                "X-GLPI-User-Token do cliente MCP."
+            )
+
         # Salvar no pool
         self._user_sessions[user_token] = {
             "client": client,
             "last_used": time.time()
         }
-        
+
         return client
     
     def _compose_user_key(self, headers: dict, client_ip: str) -> str:
@@ -257,8 +273,20 @@ class SessionManager:
         return True
     
     def _get_cache_key(self, endpoint: str, params: Dict[str, Any]) -> str:
-        """Gera chave de cache baseada em endpoint e parâmetros."""
-        cache_data = f"{endpoint}:{sorted(params.items())}"
+        """Gera chave de cache por endpoint, parametros E identidade.
+
+        @MX:ANCHOR: a identidade do chamador faz parte da chave de cache.
+        @MX:REASON: a chave era global (endpoint + parametros). Como o GLPI
+        aplica permissao e entidade por usuario, duas pessoas com escopos
+        diferentes pedindo o mesmo endpoint compartilhavam a MESMA entrada:
+        quem chegasse depois recebia o recorte de quem chegou antes, por ate
+        uma hora. Num servidor que atende varios clientes, isso e exposicao
+        entre clientes — e nao produz erro nenhum, so uma resposta plausivel.
+        O token entra como digest, nunca em claro.
+        """
+        identity = self.get_current_user_token() or self._current_user_key.get() or "anonymous"
+        identity_digest = hashlib.sha256(identity.encode()).hexdigest()[:16]
+        cache_data = f"{identity_digest}:{endpoint}:{sorted(params.items())}"
         return hashlib.md5(cache_data.encode()).hexdigest()
     
     def _get_from_cache(self, cache_key: str) -> Optional[Any]:
@@ -278,81 +306,227 @@ class SessionManager:
         self._session_cache[cache_key] = (data, time.time())
         logger.debug(f"Saved to cache: {cache_key}")
     
-    async def get(self, endpoint: str, params: Optional[Dict[str, Any]] = None, 
+    # ------------------------------------------------------------------
+    # Unified request path
+    # ------------------------------------------------------------------
+
+    async def _backoff(self, attempt: int, retry_after: Optional[float] = None) -> None:
+        """Wait before the next attempt.
+
+        Honours the server's Retry-After when it sent one; otherwise grows
+        exponentially with full jitter, so concurrent callers recovering from
+        the same outage do not resynchronise into a thundering herd.
+        """
+        if retry_after is not None and retry_after > 0:
+            delay = min(retry_after, settings.retry_backoff_cap)
+        else:
+            base = min(
+                settings.retry_backoff_base ** attempt, settings.retry_backoff_cap
+            )
+            delay = base + secrets.SystemRandom().uniform(0.0, base / 2)
+        await asyncio.sleep(delay)
+
+    @staticmethod
+    def _retry_after_seconds(response: httpx.Response) -> Optional[float]:
+        """Parse the Retry-After header when the server sends a delay in seconds."""
+        raw = response.headers.get("retry-after")
+        if not raw:
+            return None
+        try:
+            return float(raw.strip())
+        except (TypeError, ValueError):
+            # The header also allows an HTTP date. Falling back to our own
+            # backoff is safer than parsing a date format we cannot trust.
+            return None
+
+    async def _ensure_session(self, user_id: str) -> httpx.AsyncClient:
+        """Resolve the caller's session and charge the rate limit.
+
+        @MX:ANCHOR: every request path must pass through here before touching
+        data — including cache hits.
+        @MX:REASON: resolving the session is what validates the caller's token.
+        Serving a cached read without it would hand data to an unauthenticated
+        caller, and because the cache key is global that data can belong to a
+        different tenant.
+        """
+        user_token = self.get_current_user_token()
+        client = await self._get_session_for_user(user_token)
+
+        if client is None:
+            raise GLPIError(500, "Client not connected")
+
+        key = user_id if user_id != "default" else self._current_user_key.get()
+        self._check_rate_limit(key)
+        return client
+
+    async def _request(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        params: Optional[Dict[str, Any]] = None,
+        json_body: Optional[Dict[str, Any]] = None,
+        user_id: str = "default",
+        client: Optional[httpx.AsyncClient] = None,
+    ) -> httpx.Response:
+        """Execute one GLPI call, with retries, re-auth and error mapping.
+
+        @MX:ANCHOR: single execution point for every GLPI HTTP call.
+        @MX:REASON: the four verbs used to duplicate client resolution, rate
+        limiting, 401 handling and error mapping. Fixing any of them meant
+        fixing four places, and the 401 retry was the only recovery the client
+        had: a restarting GLPI or a rate-limit response surfaced to the user as
+        a hard failure.
+
+        @MX:WARN: writes are NOT retried once the server has answered.
+        @MX:REASON: GLPI may have applied the write before failing, so a retry
+        would create a second ticket or a duplicate followup. Only failures
+        that provably happened before the request left the client (connection
+        refused, connect timeout) and explicit throttling (429, which means the
+        server rejected without processing) are safe to repeat.
+        """
+        user_token = self.get_current_user_token()
+        if client is None:
+            client = await self._ensure_session(user_id)
+
+        is_read = method == "GET"
+        max_retries = max(int(settings.max_retries), 0)
+        attempt = 0
+        reauth_attempted = False
+
+        while True:
+            try:
+                response = await client.request(
+                    method, endpoint, params=params, json=json_body
+                )
+            except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+                # The request never reached GLPI, so repeating it is safe even
+                # for writes.
+                if attempt < max_retries:
+                    logger.warning(
+                        f"{method} {endpoint} connection failure ({exc}), "
+                        f"retrying (attempt {attempt + 1}/{max_retries})"
+                    )
+                    await self._backoff(attempt)
+                    attempt += 1
+                    continue
+                raise GLPIError(503, f"Nao foi possivel conectar ao GLPI: {exc}")
+            except httpx.TimeoutException:
+                # Read/write timeouts happen after the request was sent: GLPI
+                # may have processed it. Only reads may be repeated.
+                if is_read and attempt < max_retries:
+                    logger.warning(
+                        f"GET {endpoint} timed out, "
+                        f"retrying (attempt {attempt + 1}/{max_retries})"
+                    )
+                    await self._backoff(attempt)
+                    attempt += 1
+                    continue
+                raise GLPITimeoutError(f"Request timeout for {endpoint}")
+
+            status = response.status_code
+
+            # Expired session: refresh credentials once and replay.
+            if status == 401 and not reauth_attempted:
+                reauth_attempted = True
+                logger.warning(
+                    f"{method} {endpoint} returned 401 - reinitialising session"
+                )
+                if user_token:
+                    self._user_sessions.pop(user_token, None)
+                    client = await self._get_session_for_user(user_token)
+                    if client is None:
+                        raise AuthenticationError("Invalid credentials")
+                else:
+                    await self._init_session()
+                continue
+
+            # Throttled: the server refused without doing the work, so even a
+            # write can be replayed.
+            if status == 429 and attempt < max_retries:
+                retry_after = self._retry_after_seconds(response)
+                logger.warning(
+                    f"{method} {endpoint} rate-limited by GLPI, "
+                    f"retrying (attempt {attempt + 1}/{max_retries})"
+                )
+                await self._backoff(attempt, retry_after)
+                attempt += 1
+                continue
+
+            # Server-side failure: safe to repeat for reads only.
+            if status >= 500 and is_read and attempt < max_retries:
+                logger.warning(
+                    f"GET {endpoint} returned {status}, "
+                    f"retrying (attempt {attempt + 1}/{max_retries})"
+                )
+                await self._backoff(attempt)
+                attempt += 1
+                continue
+
+            if status >= 400:
+                raise self._map_error(status, endpoint, response)
+
+            return response
+
+    @staticmethod
+    def _map_error(status: int, endpoint: str, response: httpx.Response) -> Exception:
+        """Translate an HTTP failure into the project's exception vocabulary."""
+        if status == 401:
+            return AuthenticationError("Invalid credentials")
+        if status == 404:
+            resource = endpoint.replace("/apirest.php/", "").strip("/")
+            return GLPIError(404, f"Recurso nao encontrado no GLPI: {resource}")
+        if status == 429:
+            return RateLimitError(
+                "Limite de requisicoes do GLPI atingido. Tente novamente em instantes."
+            )
+        return GLPIError(status, f"HTTP error: {response.text}")
+
+    async def get(self, endpoint: str, params: Optional[Dict[str, Any]] = None,
                   use_cache: bool = True, user_id: str = "default") -> Any:
         """
         Requisição GET com cache e rate limiting.
         Usa sessão específica do user_token quando fornecido pelo cliente MCP.
-        
+
         Args:
             endpoint: Endpoint da API GLPI
             params: Parâmetros da requisição
             use_cache: Se deve usar cache (default: True)
             user_id: ID do usuário para rate limiting
-        
+
         Returns:
             Dados da resposta JSON
         """
-        # Obter cliente HTTP correto (por user_token ou padrão)
-        # SEMPRE chamar _get_session_for_user para validar autenticação
-        user_token = self.get_current_user_token()
-        client = await self._get_session_for_user(user_token)
-        
-        if client is None:
-            raise GLPIError(500, "Client not connected")
-        
         params = params or {}
-        
-        # Verificar rate limiting
-        key = user_id if user_id != "default" else self._current_user_key.get()
-        self._check_rate_limit(key)
-        
-        # Tentar cache primeiro (cache é global, independente do user)
+
+        # Validar a sessão ANTES de olhar o cache: é a resolução da sessão que
+        # autentica o chamador, e a chave de cache é global (não inclui o
+        # token). Servir um cache hit sem isso entregaria dados de um tenant a
+        # quem não deveria vê-los.
+        client = await self._ensure_session(user_id)
+
+        cache_key = None
         if use_cache:
             cache_key = self._get_cache_key(endpoint, params)
             cached_data = self._get_from_cache(cache_key)
             if cached_data is not None:
                 return cached_data
-        
+
+        logger.debug(f"GET {endpoint} with params: {params}")
+        response = await self._request(
+            "GET", endpoint, params=params, user_id=user_id, client=client
+        )
+
         try:
-            logger.debug(f"GET {endpoint} with params: {params}")
-            response = await client.get(endpoint, params=params)
-            
-            # Verificar autenticação
-            if response.status_code == 401:
-                logger.error("Authentication failed - attempting session reinit")
-                if user_token:
-                    # Remover sessão inválida e recriar
-                    if user_token in self._user_sessions:
-                        del self._user_sessions[user_token]
-                    client = await self._get_session_for_user(user_token)
-                else:
-                    await self._init_session()
-                # Tentar novamente uma vez
-                response = await client.get(endpoint, params=params)
-            
-            response.raise_for_status()
             data = response.json()
-            
-            # Salvar no cache se sucesso
-            if use_cache:
-                self._save_to_cache(cache_key, data)
-            
-            return data
-            
-        except httpx.TimeoutException:
-            raise GLPITimeoutError(f"Request timeout for {endpoint}")
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 401:
-                raise AuthenticationError("Invalid credentials")
-            elif e.response.status_code == 404:
-                raise GLPIError(404, f"Recurso nao encontrado no GLPI: {endpoint.replace('/apirest.php/', '').strip('/')}")
-            else:
-                raise GLPIError(e.response.status_code, f"HTTP error: {e.response.text}")
-        except Exception as e:
-            logger.error(f"GET request failed: {e}")
-            raise GLPIError(500, f"Request failed: {str(e)}")
-    
+        except ValueError as exc:
+            raise GLPIError(500, f"Resposta invalida do GLPI: {exc}")
+
+        if use_cache and cache_key is not None:
+            self._save_to_cache(cache_key, data)
+
+        return data
+
     async def post(self, endpoint: str, data: Dict[str, Any], 
                    user_id: str = "default") -> Any:
         """
@@ -367,55 +541,25 @@ class SessionManager:
         Returns:
             Dados da resposta JSON
         """
-        # Obter cliente HTTP correto (por user_token ou padrão)
-        # SEMPRE chamar _get_session_for_user para validar autenticação
-        user_token = self.get_current_user_token()
-        client = await self._get_session_for_user(user_token)
-        
-        if client is None:
-            raise GLPIError(500, "Client not connected")
-        
-        # Verificar rate limiting
-        key = user_id if user_id != "default" else self._current_user_key.get()
-        self._check_rate_limit(key)
-        
         # GLPI API espera dados no formato {"input": {...}}
         payload = {"input": data} if data else {}
-        
-        try:
-            logger.debug(f"POST {endpoint} with data: {list(data.keys())}")
-            response = await client.post(endpoint, json=payload)
-            
-            # Verificar autenticação
-            if response.status_code == 401:
-                logger.error("Authentication failed - attempting session reinit")
-                if user_token and user_token in self._user_sessions:
-                    del self._user_sessions[user_token]
-                    client = await self._get_session_for_user(user_token)
-                else:
-                    await self._init_session()
-                response = await client.post(endpoint, json=payload)
 
-            response.raise_for_status()
-            # @MX:NOTE: invalida o cache de leitura apos qualquer escrita bem-sucedida.
-            # @MX:REASON: GET tem TTL longo; sem isto, get_followups/get_history/listas
-            # retornam dados pre-escrita e o LLM duplica acoes (ex: followups repetidos).
-            self.clear_cache()
-            return response.json()
-            
-        except httpx.TimeoutException:
-            raise GLPITimeoutError(f"Request timeout for {endpoint}")
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 401:
-                raise AuthenticationError("Invalid credentials")
-            elif e.response.status_code == 404:
-                raise GLPIError(404, f"Recurso nao encontrado no GLPI: {endpoint.replace('/apirest.php/', '').strip('/')}")
-            else:
-                raise GLPIError(e.response.status_code, f"HTTP error: {e.response.text}")
-        except Exception as e:
-            logger.error(f"POST request failed: {e}")
-            raise GLPIError(500, f"Request failed: {str(e)}")
-    
+        logger.debug(f"POST {endpoint} with data: {list(data.keys())}")
+        response = await self._request(
+            "POST", endpoint, json_body=payload, user_id=user_id
+        )
+
+        # @MX:NOTE: invalida o cache de leitura apos qualquer escrita bem-sucedida.
+        # @MX:REASON: GET tem TTL longo; sem isto, get_followups/get_history/listas
+        # retornam dados pre-escrita e o LLM duplica acoes (ex: followups repetidos).
+        self.clear_cache()
+
+        text = response.text.strip()
+        if not text:
+            return {"success": True}
+        return response.json()
+
+
     async def put(self, endpoint: str, data: Dict[str, Any], 
                   user_id: str = "default") -> Any:
         """
@@ -430,58 +574,24 @@ class SessionManager:
         Returns:
             Dados da resposta JSON
         """
-        # Obter cliente HTTP correto (por user_token ou padrão)
-        # SEMPRE chamar _get_session_for_user para validar autenticação
-        user_token = self.get_current_user_token()
-        client = await self._get_session_for_user(user_token)
-        
-        if client is None:
-            raise GLPIError(500, "Client not connected")
-        
-        # Verificar rate limiting
-        key = user_id if user_id != "default" else self._current_user_key.get()
-        self._check_rate_limit(key)
-        
         # GLPI API espera dados no formato {"input": {...}}
         payload = {"input": data} if data else {}
-        
-        try:
-            logger.debug(f"PUT {endpoint} with data: {list(data.keys())}")
-            response = await client.put(endpoint, json=payload)
-            
-            # Verificar autenticação
-            if response.status_code == 401:
-                logger.error("Authentication failed - attempting session reinit")
-                if user_token and user_token in self._user_sessions:
-                    del self._user_sessions[user_token]
-                    client = await self._get_session_for_user(user_token)
-                else:
-                    await self._init_session()
-                response = await client.put(endpoint, json=payload)
 
-            response.raise_for_status()
-            # @MX:NOTE: invalida cache de leitura apos escrita (ver post()).
-            self.clear_cache()
+        logger.debug(f"PUT {endpoint} with data: {list(data.keys())}")
+        response = await self._request(
+            "PUT", endpoint, json_body=payload, user_id=user_id
+        )
 
-            # GLPI API pode retornar 200 OK com body vazio para updates
-            text = response.text.strip()
-            if not text:
-                return {"success": True}
-            return response.json()
-            
-        except httpx.TimeoutException:
-            raise GLPITimeoutError(f"Request timeout for {endpoint}")
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 401:
-                raise AuthenticationError("Invalid credentials")
-            elif e.response.status_code == 404:
-                raise GLPIError(404, f"Recurso nao encontrado no GLPI: {endpoint.replace('/apirest.php/', '').strip('/')}")
-            else:
-                raise GLPIError(e.response.status_code, f"HTTP error: {e.response.text}")
-        except Exception as e:
-            logger.error(f"PUT request failed: {e}")
-            raise GLPIError(500, f"Request failed: {str(e)}")
-    
+        # @MX:NOTE: invalida cache de leitura apos escrita (ver post()).
+        self.clear_cache()
+
+        # GLPI API pode retornar 200 OK com body vazio para updates
+        text = response.text.strip()
+        if not text:
+            return {"success": True}
+        return response.json()
+
+
     async def delete(self, endpoint: str, user_id: str = "default") -> Any:
         """
         Requisição DELETE com rate limiting.
@@ -494,50 +604,18 @@ class SessionManager:
         Returns:
             Dados da resposta JSON
         """
-        # Obter cliente HTTP correto (por user_token ou padrão)
-        # SEMPRE chamar _get_session_for_user para validar autenticação
-        user_token = self.get_current_user_token()
-        client = await self._get_session_for_user(user_token)
-        
-        if client is None:
-            raise GLPIError(500, "Client not connected")
-        
-        # Verificar rate limiting
-        key = user_id if user_id != "default" else self._current_user_key.get()
-        self._check_rate_limit(key)
-        
-        try:
-            logger.debug(f"DELETE {endpoint}")
-            response = await client.delete(endpoint)
-            
-            # Verificar autenticação
-            if response.status_code == 401:
-                logger.error("Authentication failed - attempting session reinit")
-                if user_token and user_token in self._user_sessions:
-                    del self._user_sessions[user_token]
-                    client = await self._get_session_for_user(user_token)
-                else:
-                    await self._init_session()
-                response = await client.delete(endpoint)
+        logger.debug(f"DELETE {endpoint}")
+        response = await self._request("DELETE", endpoint, user_id=user_id)
 
-            response.raise_for_status()
-            # @MX:NOTE: invalida cache de leitura apos escrita (ver post()).
-            self.clear_cache()
-            return response.json()
-            
-        except httpx.TimeoutException:
-            raise GLPITimeoutError(f"Request timeout for {endpoint}")
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 401:
-                raise AuthenticationError("Invalid credentials")
-            elif e.response.status_code == 404:
-                raise GLPIError(404, f"Recurso nao encontrado no GLPI: {endpoint.replace('/apirest.php/', '').strip('/')}")
-            else:
-                raise GLPIError(e.response.status_code, f"HTTP error: {e.response.text}")
-        except Exception as e:
-            logger.error(f"DELETE request failed: {e}")
-            raise GLPIError(500, f"Request failed: {str(e)}")
-    
+        # @MX:NOTE: invalida cache de leitura apos escrita (ver post()).
+        self.clear_cache()
+
+        text = response.text.strip()
+        if not text:
+            return {"success": True}
+        return response.json()
+
+
     def clear_cache(self):
         """Limpa todo o cache de sessão."""
         self._session_cache.clear()

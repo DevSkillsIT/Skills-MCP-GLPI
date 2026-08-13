@@ -1,6 +1,7 @@
 # GLPI MCP Server — Guia de Testes
 
-> Testes via curl e pytest para as 14 tools consolidadas (v2.0)
+> Testes via curl e pytest para as 17 tools consolidadas ativas (v2.2)
+> (18 com `ENABLE_AI_ANALYSIS=true`)
 
 ## Pre-requisitos
 
@@ -333,7 +334,7 @@ curl -s -X POST $GLPI_MCP_URL/mcp \
       "name": "glpi_get_prompt_template",
       "arguments": {
         "name": "glpi_sla_performance",
-        "arguments": {"entity_name": "Skills IT", "period_days": 30}
+        "arguments": {"entity_name": "Acme Corp", "period_days": 30}
       }
     }
   }' | jq .
@@ -442,7 +443,7 @@ curl -s -X POST $GLPI_MCP_URL/mcp \
 ## 10. Testes com pytest
 
 ```bash
-cd /opt/mcp-servers/glpi/.base-code
+cd <raiz do repositorio>
 
 # Todos os testes
 PYTHONPATH=. pytest tests/ -v
@@ -482,8 +483,8 @@ O ID do recurso (ticket, ativo, usuario) nao existe no GLPI.
 ### "Tool not found"
 ```bash
 # Reiniciar servidor e verificar logs
-pm2 restart mcp-glpi-skills
-pm2 logs mcp-glpi-skills --lines 50
+pm2 restart <nome-do-processo>
+pm2 logs <nome-do-processo> --lines 50
 ```
 
 ### Verificar tools registradas
@@ -499,14 +500,33 @@ curl -s -X POST $GLPI_MCP_URL/mcp \
 ## Checklist de Validacao
 
 - [ ] Health check responde 200 com `status: healthy`
-- [ ] `tools/list` retorna 14 ferramentas (todas com prefixo `glpi_`)
+- [ ] `tools/list` retorna 17 ferramentas (todas com prefixo `glpi_`); 18 se `ENABLE_AI_ANALYSIS=true`
 - [ ] Requisicao sem User Token retorna erro claro
 - [ ] Requisicao com User Token valido funciona
-- [ ] 3 tools de tickets funcionam (search, manage, ai_analysis)
+- [ ] 2 tools de tickets funcionam (search, manage) — `ai_analysis` so aparece com `ENABLE_AI_ANALYSIS=true`
 - [ ] 2 tools de ativos funcionam (search, manage)
 - [ ] 2 tools de admin funcionam (search, manage)
 - [ ] 2 tools de webhooks funcionam (search, manage)
 - [ ] 4 tools de bridge funcionam (list_resources, read_resource, list_prompts, get_prompt)
-- [ ] 1 tool de conhecimento funciona (search_knowledge)
+- [ ] 2 tools de conhecimento funcionam (search_knowledge_articles, search_knowledge_unified)
+- [ ] 2 tools de ITIL funcionam (search_itil_records, manage_itil_records)
+- [ ] 1 tool de consulta livre funciona (search_records_by_criteria: search/count/fields)
+
+### Teste de fumaca contra instancia real
+
+A suite acima usa respostas simuladas do GLPI e nao enxerga as semanticas da API.
+Rode tambem o smoke test contra uma instancia de verdade:
+
+```bash
+# Somente leitura (padrao). A porta e o primeiro argumento (padrao: 8826).
+GLPI_TOKEN=<user token> ./scripts/smoke_live.sh 8826
+
+# Incluindo o ciclo de escrita, contra um chamado de teste descartavel
+GLPI_TOKEN=<token> SMOKE_WRITE=1 SMOKE_TICKET_ID=<id> ./scripts/smoke_live.sh 8826
+```
+
+O token vem SEMPRE do ambiente. Nunca grave o token no script nem o adicione ao `.env`
+do servidor: ali ele viraria fallback, e o servidor passaria a aceitar chamadas sem
+identificacao usando essa identidade, quebrando o isolamento entre clientes.
 - [ ] Mensagens de erro seguem JSON-RPC 2.0
 - [ ] PM2 gerencia o servico corretamente

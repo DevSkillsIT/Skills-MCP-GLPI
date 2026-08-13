@@ -25,6 +25,10 @@ RRF_K = 60
 _CTE_LIMIT = 50
 _TSCONFIG = "portuguese_unaccent"
 _BODY_SNIPPET = 240
+# The resolution is the answer the caller actually needs. Kept just above the
+# formatter's cap (service._SOLUTION_MAX) so truncation happens once, in the
+# formatter, where it can add an ellipsis — fetching less would silently cut.
+SOLUTION_SNIPPET = 640
 
 
 @dataclass(slots=True)
@@ -81,6 +85,7 @@ def build_search_sql(
         sql = f"""
             SELECT id, title, context, url, canonical_id,
                    left(body, {_BODY_SNIPPET}) AS body,
+                   left(solution, {SOLUTION_SNIPPET}) AS solution,
                    ts_rank_cd(fts, plainto_tsquery('{_TSCONFIG}', %(q)s)) AS score,
                    NULL::float8 AS similarity
             FROM {r}
@@ -93,6 +98,7 @@ def build_search_sql(
         sql = f"""
             SELECT id, title, context, url, canonical_id,
                    left(body, {_BODY_SNIPPET}) AS body,
+                   left(solution, {SOLUTION_SNIPPET}) AS solution,
                    1.0 - (embedding <=> %(vec)s::halfvec) AS score,
                    1.0 - (embedding <=> %(vec)s::halfvec) AS similarity
             FROM {r}
@@ -127,6 +133,7 @@ def build_search_sql(
             )
             SELECT t.id, t.title, t.context, t.url, t.canonical_id,
                    left(t.body, {_BODY_SNIPPET}) AS body,
+                   left(t.solution, {SOLUTION_SNIPPET}) AS solution,
                    f.rrf_score AS score,
                    1.0 - (t.embedding <=> %(vec)s::halfvec) AS similarity
             FROM fused f
@@ -168,6 +175,7 @@ async def hybrid_search(
             similarity=(float(row["similarity"]) if row["similarity"] is not None else None),
             canonical_id=row.get("canonical_id"),
             body=row.get("body") or "",
+            solution=row.get("solution") or "",
         )
         for row in rows
     ]

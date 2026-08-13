@@ -33,9 +33,65 @@ from .embedder import (
     build_embedding_client,
 )
 from .settings import Provider, Settings, get_settings
-from .ticket_document import TicketDocument, build_document
+from .ticket_document import (
+    DEFAULT_DESCRIPTION_LABELS,
+    TicketDocument,
+    build_document,
+    harvest_secrets,
+    to_text,
+)
 
 log = structlog.get_logger(__name__)
+
+# A resolution line repeating verbatim across at least this many tickets is
+# almost certainly boilerplate rather than a real fix (for scale: the known
+# offender "Solução aprovada" occurred 292 times, a genuine short fix ~5).
+_BOILERPLATE_SUSPECT_MIN = 20
+
+
+def _corpus_secrets(rows: list[dict], configured: list[str]) -> list[str]:
+    """Every credential VALUE the corpus reveals anywhere, for removal everywhere.
+
+    A password is written with a label in one ticket and bare on its own line in
+    another; per-ticket rules only catch the first. Harvesting over the whole
+    batch first, then redacting with the union, closes that gap — the corpus
+    becomes its own literal list.
+    """
+    found: set[str] = set(v for v in configured if v)
+    for row in rows:
+        texts = [row.get("descricao_html")]
+        texts += [a.get("texto_html") for a in row.get("acompanhamentos") or []]
+        texts += [s.get("texto_html") for s in row.get("solucoes") or []]
+        for html_text in texts:
+            if html_text:
+                found |= harvest_secrets(to_text(html_text))
+    log.info(
+        "redact.harvested",
+        configured=len(configured),
+        discovered=len(found) - len([v for v in configured if v]),
+    )
+    return sorted(found)
+
+
+def _log_repeated_resolution_text(docs: list[TicketDocument]) -> None:
+    """Report resolution lines that repeat across many tickets, so boilerplate
+    the denylist does not know about is visible instead of silently diluting."""
+    from collections import Counter
+
+    counts = Counter(
+        line.strip()
+        for doc in docs
+        for line in doc.solution_text.split("\n")
+        if 0 < len(line.strip()) <= 60
+    )
+    suspects = [(t, n) for t, n in counts.most_common(5) if n >= _BOILERPLATE_SUSPECT_MIN]
+    if suspects:
+        log.warning(
+            "normalize.repeated_resolution_text",
+            hint="candidates for the follow-up denylist in ticket_document",
+            samples=[{"texto": t[:60], "ocorrencias": n} for t, n in suspects],
+        )
+
 
 _SQL_FILE = Path(__file__).with_name("extract_tickets.sql")
 
@@ -121,17 +177,27 @@ async def _index_one(
     """Hash gate + embed + upsert one ticket. Returns the mode taken."""
     existing = await store.get_ticket_hash(doc.source, doc.id)
     if existing == doc.body_hash:
-        await store.upsert_metadata(doc)
-        return "unchanged"
+        # Same content — but a row can be up to date and still carry no vector
+        # (indexed while provider=none, or after an embedding failure). The hash
+        # will never change on its own, so without this it would stay vectorless
+        # forever, silently invisible to semantic search.
+        needs_vector = (
+            embeddings_enabled
+            and doc.embed_text.strip()
+            and not await store.has_embedding(doc.source, doc.id)
+        )
+        if not needs_vector:
+            await store.upsert_metadata(doc)
+            return "unchanged"
 
-    if not embeddings_enabled or not doc.body_text.strip():
+    if not embeddings_enabled or not doc.embed_text.strip():
         # Embeddings off (provider=none) or no problem text to embed. Keep the
         # row (solution + FTS still useful); skip the vector.
         await store.upsert_full(doc, embedding=None, embedding_model=None)
         return "no-embed"
 
     try:
-        vector = await embedder.embed(doc.body_text)
+        vector = await embedder.embed(doc.embed_text)
     except EmbeddingTooLongError as exc:
         # Keep the text (FTS still finds it); skip the vector.
         log.warning("index.too_long", id=doc.id, error=str(exc)[:160])
@@ -166,10 +232,31 @@ async def run(
 
     sql = _render_sql(max_age_months, statuses)
     rows = extract_remote(settings.kb.ssh_host, settings.kb.remote_db_config, sql)
+
+    labels = settings.kb.description_labels or DEFAULT_DESCRIPTION_LABELS
+    # Harvest over the FULL extraction, before any --limit slice: a partial run
+    # would otherwise learn fewer literals and redact the same ticket differently
+    # than a full run — churning hashes, and re-leaking a value whose only
+    # labelled occurrence sits outside the subset.
+    literals = _corpus_secrets(rows, settings.kb.redact_literals)
     if limit:
         rows = rows[:limit]
-
-    docs = [build_document(r, source=source, embed_strategy=strategy) for r in rows]
+    docs = [
+        build_document(
+            r,
+            source=source,
+            embed_strategy=strategy,
+            description_labels=labels,
+            include_followups=settings.kb.include_followups,
+            redact_literals=literals,
+        )
+        for r in rows
+    ]
+    # A denylist only knows the boilerplate we have already seen. When GLPI (or a
+    # new workflow) starts emitting a fresh auto-message, it would silently
+    # dilute every vector again. Surfacing whatever repeats verbatim across many
+    # tickets turns that from a silent regression into a log line to act on.
+    _log_repeated_resolution_text(docs)
     log.info(
         "normalize.done",
         tickets=len(docs),

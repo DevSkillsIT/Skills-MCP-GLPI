@@ -109,6 +109,12 @@ EXPECTED_ANNOTATIONS = {
         "idempotentHint": True,
         "openWorldHint": True,
     },
+    "glpi_search_records_by_criteria": {
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
 }
 
 ANNOTATION_PROPERTIES = [

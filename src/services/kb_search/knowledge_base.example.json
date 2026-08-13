@@ -17,8 +17,9 @@
       "relation": "kb_search",
       "weight": 1.0,
       "dedup": false,
+      "solutions_expected": true,
       "lang": "pt-BR",
-      "description": "Chamados resolvidos do proprio GLPI (problema + solucao)."
+      "description": "Chamados resolvidos do proprio GLPI (problema + solucao). solutions_expected=true: todo item ja esta resolvido, entao solucao vazia significa que o conserto nao foi registrado."
     },
     {
       "name": "help",
@@ -56,6 +57,10 @@
     "remote_db_config": "/etc/glpi/config_db.php",
     "ticket_statuses": "5,6",
     "max_age_months": 18,
-    "embed_strategy": "full"
+    "embed_strategy": "full",
+    "_comment_form": "Instancias com Formcreator: use embed_strategy=problem_solution e informe o rotulo do campo de texto livre. description_labels vazio = lista embutida.",
+    "description_labels": [],
+    "include_followups": true,
+    "redact_literals": []
   }
 }

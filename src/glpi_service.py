@@ -10,7 +10,7 @@ com ERROR_SESSION_TOKEN_MISSING porque http_client nao chama initSession
 nem usa o user_token do header X-GLPI-User-Token.
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
 from src.services.glpi_client import glpi_client as http_client
 from src.models import (
     Ticket, Asset, User, Group, Entity, Location,

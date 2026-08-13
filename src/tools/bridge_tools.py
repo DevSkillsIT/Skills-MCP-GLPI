@@ -10,8 +10,29 @@ from typing import Any, Dict, Optional
 from src.resources import GLPI_RESOURCES, list_resources, read_resource
 from src.formatters.glpi_formatters import format_resources_list, format_prompts_list
 from src.prompts_handlers.prompts import PROMPTS_CATALOG, prompt_handler
+from src.formatters.markdown_helpers import strip_html
 from src.services.glpi_client import glpi_client
 from src.utils.helpers import logger
+from src.utils.text_search import describe_stage, run_text_search
+
+#: Longest answer excerpt carried in a search row.
+#
+# @MX:NOTE: an excerpt, not the article.
+# @MX:REASON: enough to tell relevant from irrelevant without opening the
+# article, while a full KB answer in every row of a 50-hit page is exactly the
+# token explosion this server exists to avoid.
+_KB_SNIPPET_MAX = 300
+
+
+def _kb_snippet(answer: Any) -> str:
+    """Reduce a KB answer to a plain-text excerpt.
+
+    GLPI stores the answer as TinyMCE HTML; rendered raw it is mostly markup.
+    """
+    text = strip_html(str(answer or "")).strip()
+    if len(text) <= _KB_SNIPPET_MAX:
+        return text
+    return text[:_KB_SNIPPET_MAX].rstrip() + "..."
 
 
 class BridgeTools:
@@ -85,20 +106,35 @@ class BridgeTools:
             return {"error": "Parametro 'query' obrigatorio (minimo 2 caracteres)."}
         limit = min(max(limit, 1), 50)
 
-        try:
+        # @MX:NOTE: field 7 (answer) is fetched, not only filtered on.
+        # @MX:REASON: the result carried title, category, views and date but no
+        # trace of the answer, so deciding whether an article was relevant meant
+        # opening every hit -- one round-trip each, to learn what the search was
+        # asked to find.
+        _KB_TEXT_FIELDS = [1, 7]  # assunto, conteudo
+
+        async def _run(text_groups, fetch_limit):
             result = await glpi_client.search(
                 "KnowbaseItem",
-                criteria=[
-                    {"field": 1, "searchtype": "contains", "value": query, "link": "OR"},
-                    {"field": 7, "searchtype": "contains", "value": query, "link": "OR"},
-                ],
-                forcedisplay=["2", "1", "79", "9", "19"],  # id, name, category, views, last_update
-                range_limit=limit,
+                criteria=list(text_groups or []),
+                # id, name, category, views, last_update, answer
+                forcedisplay=["2", "1", "79", "9", "19", "7"],
+                range_limit=fetch_limit,
                 range_offset=0,
+            )
+            data = result.get("data", []) if isinstance(result, dict) else (result or [])
+            count = result.get("totalcount") if isinstance(result, dict) else None
+            return data, count
+
+        try:
+            rows, total, stage, terms = await run_text_search(
+                query, _KB_TEXT_FIELDS, _run, limit
             )
         except Exception as e:
             logger.error(f"search_knowledge GLPI error: {e}")
             return {"articles": [], "query": query, "error": str(e)}
+
+        result = {"data": rows, "totalcount": total if total is not None else len(rows)}
 
         articles = []
         if isinstance(result, dict) and isinstance(result.get("data"), list):
@@ -110,6 +146,7 @@ class BridgeTools:
                         "category": item.get("79") or item.get("knowbaseitemcategories_id", ""),
                         "views": item.get("9") or item.get("view", 0),
                         "last_update": item.get("19") or item.get("date_mod", ""),
+                        "answer": _kb_snippet(item.get("7") or item.get("answer", "")),
                     }
                 )
 
@@ -119,6 +156,7 @@ class BridgeTools:
             "query": query,
             "count": len(articles),
             "total": total,
+            "search_notice": describe_stage(stage, terms, found=bool(articles)),
         }
 
 

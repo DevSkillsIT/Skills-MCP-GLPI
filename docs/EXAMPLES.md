@@ -2,7 +2,7 @@
 
 > Cenários completos do dia a dia de suporte com as tools e prompts do MCP GLPI
 >
-> **Versão:** 2.1.0 (April 2026) · **Cobertura:** 14 tools × todas as actions
+> **Versão:** 2.2.0 (Agosto 2026) · **Cobertura:** 17 tools ativas + 1 opcional (analise IA) × todas as actions
 
 ---
 
@@ -56,7 +56,7 @@ Params: {
   "title": "Sem acesso ao e-mail - Maria Santos",
   "description": "Usuária Maria Santos (Financeiro) não consegue acessar o Outlook desde 8h. Erro: 'Não foi possível conectar ao servidor'. Outros usuários do setor estão normais.",
   "priority": 3,
-  "entity_name": "Skills IT"
+  "entity_name": "Acme Corp"
 }
 ```
 
@@ -74,6 +74,38 @@ Params: {
 > (não aceita mais `query`).
 
 ### Passo 3 — Consultar base de conhecimento
+
+Prefira a busca **unificada**: ela cruza os chamados já resolvidos com os artigos
+de ajuda e a comunidade, e devolve a solução aplicada junto do resultado.
+
+```
+Tool: glpi_search_knowledge_unified
+Params: { "query": "Outlook não conecta servidor", "limit": 3 }
+```
+
+Saída (ilustrativa):
+
+```markdown
+| # | Fonte | Oficial | ID | Titulo | Solucao | Contexto | Sim. | URL |
+|---|---|---|---|---|---|---|---|---|
+| 1 | CHAMADOS | Nao | 481 | Formulario de Suporte — Outlook parou de receber apos troca de senha… | Perfil do Outlook corrompido. Removido o perfil antigo, criado outro e reconfigurada a conta. | E-mail | 0.782 | /front/ticket.form.php?id=481 |
+| 2 | CHAMADOS | Nao | 512 | Formulario de Suporte — nao consigo abrir o e-mail no notebook… | (resolvido, sem descricao da solucao) | E-mail | 0.744 | /front/ticket.form.php?id=512 |
+| 3 | HELP | Sim | 87 | Reconfigurar conta Exchange no Outlook | — | Correio | 0.701 | https://… |
+```
+
+Como ler a tabela:
+
+- **`#` é a ordem que vale** (ranking RRF). `Sim.` é informativa e não é comparável
+  entre fontes — por isso pode não cair de forma monotônica linha a linha.
+- **Títulos repetidos vêm com um trecho do problema.** Em instâncias com
+  formulário o título é o nome do formulário, então dezenas de chamados sem
+  relação compartilham o mesmo título; o trecho é o que diferencia as linhas.
+- **`(resolvido, sem descricao da solucao)`** significa que o chamado *foi*
+  resolvido, mas ninguém registrou o que foi feito — não que esteja em aberto.
+  Fontes que não são de chamados (documentação, fórum) exibem `—`.
+
+Para consultar **apenas** os artigos nativos do GLPI via REST:
+
 ```
 Tool: glpi_search_knowledge_articles
 Params: { "query": "Outlook não conecta servidor" }
@@ -151,7 +183,7 @@ Params: { "name": "glpi_asset_roi", "arguments": { "entity_name": "Acme Corp" } 
 Tool: glpi_get_prompt_template
 Params: {
   "name": "glpi_sla_performance",
-  "arguments": { "entity_name": "Skills IT", "period_days": 30 }
+  "arguments": { "entity_name": "Acme Corp", "period_days": 30 }
 }
 ```
 
@@ -202,7 +234,7 @@ Params: {
 Tool: glpi_get_prompt_template
 Params: {
   "name": "glpi_onboarding_checklist",
-  "arguments": { "username": "Ana Oliveira", "entity_name": "Skills IT" }
+  "arguments": { "username": "Ana Oliveira", "entity_name": "Acme Corp" }
 }
 ```
 
@@ -223,7 +255,7 @@ Params: {
   "title": "Onboarding TI - Ana Oliveira (Marketing) - Início 31/03",
   "description": "Preparação de estação de trabalho para nova colaboradora:\n- Notebook Dell Latitude 5540\n- Monitor 24 polegadas\n- Conta AD + email\n- Acesso VPN\n- Licenças: Office 365, Adobe Creative Cloud\n- Treinamento de segurança",
   "priority": 3,
-  "entity_name": "Skills IT"
+  "entity_name": "Acme Corp"
 }
 ```
 
@@ -411,7 +443,7 @@ Params: { "action": "get_history", "ticket_id": 542 }
 Tool: glpi_manage_ticket_operations
 Params: {
   "action": "get_stats",
-  "entity_name": "Skills IT",
+  "entity_name": "Acme Corp",
   "date_from": "2026-04-01",
   "date_to": "2026-04-30"
 }
@@ -429,6 +461,12 @@ Params: { "action": "delete", "ticket_id": 9999 }
 ---
 
 ## Cenário 12: IA — Análise assíncrona de chamados
+
+> ⚠️ **Tool desativada por padrão** (`ENABLE_AI_ANALYSIS=false`). O cenário abaixo
+> descreve o CONTRATO da tool, não um fluxo que funcione hoje: por trás dela há um
+> job store em memória que nunca chama o GLPI. Enquanto não houver um agente real,
+> `trigger` e `publish` responderiam sucesso sem nada acontecer. Auditoria de
+> 12/08/2026.
 
 **Situação:** Automatizar triagem inicial com recomendações IA.
 
@@ -692,9 +730,9 @@ Params: { "action": "retry", "webhook_id": "<hash>" }
 # 12. Remover definitivamente
 Params: { "action": "delete", "webhook_id": "<hash>" }
 ```
-> ℹ️ **Nota arquitetural:** o armazenamento de webhooks é in-memory no servidor
-> MCP e não persiste após restart. Integração nativa com `glpi_webhooks`
-> (GLPI 11) está na roadmap.
+> ℹ️ **Nota arquitetural:** os webhooks são gravados no backend nativo do GLPI 11
+> (`/apirest.php/Webhook`). Eles persistem a reinícios do servidor MCP e aparecem
+> na própria interface do GLPI.
 
 ---
 
@@ -729,22 +767,346 @@ Params: { "query": "configuração VPN", "limit": 5 }
 
 ---
 
-## Matriz de Validação — 14 tools × todas as actions
+## Cenário 17: Linha do tempo — o chamado inteiro em uma chamada
+
+**Situação:** Um chamado arrastado chega ao técnico de plantão. Ele precisa saber o que
+já foi feito, por quem, e se alguém está esperando aprovação.
+
+### Antes: quatro chamadas e a ordem montada na mão
+```
+get_followups + get_tasks + get_validations + get_history
+→ quatro respostas separadas, cada uma com sua própria ordenação.
+```
+
+### Agora: uma chamada, tudo intercalado em ordem cronológica
+```
+Usuário: "O que já aconteceu no chamado 542?"
+
+Tool: glpi_manage_ticket_operations
+Params: { "action": "get_timeline", "ticket_id": 542, "limit": 100 }
+
+→ Acompanhamentos, tarefas, soluções e aprovações em uma única linha do tempo.
+→ limit mantém os eventos MAIS RECENTES quando o chamado é longo.
+```
+
+### Passo seguinte — registrar a tarefa executada
+```
+Tool: glpi_manage_ticket_operations
+Params: {
+  "action": "add_task",
+  "ticket_id": 542,
+  "content": "Troca do cabo de rede e recertificação do ponto.",
+  "actiontime": 3600,
+  "is_private": false
+}
+→ actiontime é em SEGUNDOS (3600 = 1 hora).
+```
+
+---
+
+## Cenário 18: Atribuir a um grupo, não a uma pessoa
+
+**Situação:** O chamado é de infraestrutura. Não importa qual técnico pega — importa que
+caia na fila do time certo.
+
+```
+# Antes só existia atribuição a técnico (assign + user_id).
+# Agora dá para atribuir ao GRUPO, pelo nome:
+
+Tool: glpi_manage_ticket_operations
+Params: {
+  "action": "assign_group",
+  "ticket_id": 542,
+  "group": "Infraestrutura"
+}
+
+# O papel do grupo é configurável:
+Params: { "action": "assign_group", "ticket_id": 542,
+          "group": "Segurança", "group_type": "observer" }
+```
+
+> Nome ambíguo **não** é resolvido por chute: a tool recusa e devolve a lista de
+> candidatos, para que a escolha seja explícita.
+
+### E depois, ver a fila do time
+```
+Tool: glpi_search_helpdesk_tickets
+Params: { "assigned_group": "Infraestrutura", "open_only": true }
+```
+
+---
+
+## Cenário 19: Fluxo de aprovação (validação)
+
+**Situação:** Uma mudança precisa do aval da gerência antes da janela de manutenção.
+
+```
+# 1. Pedir a aprovação (aprovador por NOME ou login)
+Tool: glpi_manage_ticket_operations
+Params: {
+  "action": "request_validation",
+  "ticket_id": 542,
+  "approver": "Maria"
+}
+
+# 2. Consultar o que está pendente
+Params: { "action": "get_validations", "ticket_id": 542 }
+
+# 3a. Aprovar
+Params: {
+  "action": "answer_validation",
+  "ticket_id": 542,
+  "validation_status": "aprovado"
+}
+
+# 3b. Ou recusar — comentário é OBRIGATÓRIO ao recusar
+Params: {
+  "action": "answer_validation",
+  "ticket_id": 542,
+  "validation_status": "recusado",
+  "comment": "Janela não aprovada: coincide com o fechamento contábil."
+}
+```
+
+> Com **uma única** aprovação pendente no chamado, `validation_id` pode ser omitido.
+
+---
+
+## Cenário 20: ITIL — problemas, mudanças e causa raiz
+
+**Situação:** O mesmo sintoma voltou cinco vezes. Não é um incidente — é um problema.
+
+```
+# 1. Ver se já existe problema aberto sobre isso
+Tool: glpi_search_itil_records
+Params: { "record_type": "problems", "status": "new", "query": "lentidão" }
+
+# 2. Abrir o problema
+Tool: glpi_manage_itil_records
+Params: {
+  "record_type": "problems",
+  "action": "create",
+  "name": "Lentidão recorrente na rede do 2º andar",
+  "content": "5 chamados em 2 semanas com o mesmo sintoma. Suspeita: switch de borda.",
+  "priority": 4,
+  "urgency": 4,
+  "impact": 4
+}
+→ Retorna o record_id do problema criado.
+
+# 3. Vincular os chamados que originaram o problema
+Params: { "record_type": "problems", "action": "link_ticket",
+          "record_id": 8, "ticket_id": 542 }
+Params: { "record_type": "problems", "action": "link_ticket",
+          "record_id": 8, "ticket_id": 549 }
+
+# 4. Registrar o andamento da investigação
+Params: {
+  "record_type": "problems",
+  "action": "add_followup",
+  "record_id": 8,
+  "followup_content": "Coleta de contadores no switch confirma descarte de pacotes."
+}
+
+# 5. Abrir a mudança que corrige a causa raiz
+Params: {
+  "record_type": "changes",
+  "action": "create",
+  "name": "Substituição do switch de borda do 2º andar",
+  "content": "Troca do equipamento identificado como causa raiz do problema 8.",
+  "priority": 4
+}
+
+# 6. Mudanças planejadas para o mês
+Tool: glpi_search_itil_records
+Params: { "record_type": "changes", "date_from": "2026-08-01",
+          "date_to": "2026-08-31", "sort_by": "date", "order": "asc" }
+```
+
+---
+
+## Cenário 21: Contratos e fornecedores
+
+**Situação:** Reunião de renovação. Quais contratos vencem, e com quem falamos.
+
+```
+# 1. Contratos ordenados pelo fim da vigência
+Tool: glpi_search_itil_records
+Params: { "record_type": "contracts", "sort_by": "end_date", "order": "asc",
+          "limit": 20 }
+
+# 2. Contratos por período de início de vigência
+Params: { "record_type": "contracts", "date_from": "2026-01-01",
+          "date_to": "2026-12-31" }
+→ date_field escolhe outra coluna de data quando o padrão não serve.
+
+# 3. Detalhe de um contrato
+Tool: glpi_manage_itil_records
+Params: { "record_type": "contracts", "action": "get", "record_id": 14 }
+
+# 4. Cadastrar a renovação
+Params: {
+  "record_type": "contracts",
+  "action": "create",
+  "name": "Suporte Anual - Acme Corp",
+  "num": "CT-2027-001",
+  "begin_date": "2027-01-01",
+  "duration": 12,
+  "periodicity": 12
+}
+→ O GLPI calcula o fim a partir do início + duração (em meses).
+
+# 5. Quais fornecedores temos?
+Tool: glpi_search_itil_records
+Params: { "record_type": "suppliers", "limit": 50 }
+
+# 6. Cadastrar fornecedor
+Tool: glpi_manage_itil_records
+Params: {
+  "record_type": "suppliers",
+  "action": "create",
+  "name": "Acme Distribuidora",
+  "email": "contato@exemplo.com",
+  "phone": "+55 00 0000-0000",
+  "website": "https://exemplo.com"
+}
+```
+
+---
+
+## Cenário 22: Contar sem paginar
+
+**Situação:** A pergunta é "quantos", não "quais". Trazer 500 linhas para contá-las
+gasta contexto à toa.
+
+```
+# ITIL — count_only devolve só o total
+Tool: glpi_search_itil_records
+Params: { "record_type": "suppliers", "count_only": true }
+→ "Total: 37" — nenhuma linha trafega.
+
+# Qualquer itemtype — scope=count
+Tool: glpi_search_records_by_criteria
+Params: { "itemtype": "Computer", "scope": "count" }
+
+# Contagem COM filtro
+Params: {
+  "itemtype": "Ticket",
+  "scope": "count",
+  "criteria": [
+    { "field": "status", "searchtype": "equals", "value": "1" }
+  ]
+}
+```
+
+> Use a contagem como **sonda barata** antes de decidir paginar: se o total for
+> pequeno, uma única busca resolve; se for grande, vale estreitar o filtro primeiro.
+
+---
+
+## Cenário 23: Descobrir os campos da instância
+
+**Situação:** A pergunta precisa de um filtro que nenhuma tool específica expõe. Antes
+de montar o critério, é preciso saber como **esta** instância nomeia o campo.
+
+```
+# 1. Quais campos existem para filtrar/ordenar?
+Tool: glpi_search_records_by_criteria
+Params: { "itemtype": "Ticket", "scope": "fields" }
+
+# 2. Filtrar a lista de campos por um trecho do nome
+Params: { "itemtype": "Ticket", "scope": "fields", "field_filter": "data" }
+
+→ Rótulos repetidos são desambiguados pela tabela de origem — o "Nome" do próprio
+  chamado mantém o rótulo simples, e o homônimo vindo de outra tabela aparece
+  qualificado. Assim o id anunciado é exatamente o que a busca vai usar.
+```
+
+### Passo seguinte — usar o campo descoberto
+```
+Params: {
+  "itemtype": "Ticket",
+  "scope": "search",
+  "criteria": [
+    { "field": "name", "searchtype": "contains", "value": "backup" },
+    { "field": "date", "searchtype": "morethan", "value": "2026-07-01", "link": "AND" }
+  ],
+  "fields": ["id", "name", "status", "date"],
+  "sort_by": "date",
+  "order": "desc",
+  "limit": 20
+}
+```
+
+> **Campos por NOME, não por id.** O nome é resolvido contra o catálogo da sua
+> instância, então o mesmo parâmetro funciona onde os campos estão numerados de forma
+> diferente. IDs numéricos continuam válidos.
+
+---
+
+## Cenário 24: Filtros de chamado que antes não existiam
+
+**Situação:** As perguntas do dia a dia que exigiam descobrir IDs antes de perguntar.
+
+```
+# "O que está atribuído ao João?" — por NOME, sem buscar o id do usuário
+Tool: glpi_search_helpdesk_tickets
+Params: { "assigned_tech": "João", "open_only": true }
+
+# "Fila do grupo Infraestrutura"
+Params: { "assigned_group": "Infraestrutura", "open_only": true }
+
+# "Chamados abertos pela Maria"
+Params: { "requester": "Maria" }
+
+# "Urgentes da categoria Rede" — urgência é eixo DISTINTO de prioridade
+Params: { "urgency": 5, "category": "Rede" }
+
+# "Chamados mais antigos primeiro"
+Params: { "sort_by": "date", "order": "asc", "open_only": true }
+
+# Busca textual COMBINADA com filtros (o texto não anula o resto)
+Params: { "query": "impressora", "open_only": true, "urgency": 4 }
+
+# Ativos: "quais equipamentos estão com o João?"
+Tool: glpi_search_asset_inventory
+Params: { "assigned_user": "João" }
+
+# Ativos ordenados
+Params: { "scope": "computers", "sort_by": "date_mod", "order": "desc" }
+```
+
+> `open_only` enumera os códigos de status em aberto — ele **não** depende de um
+> operador de ordem sobre o status, então chamados atribuídos não somem da resposta.
+
+---
+
+## Matriz de Validação — 17 tools ativas (+ analise IA, se habilitada) × todas as actions
 
 Use esta matriz para testar 100 % da superfície do MCP após mudanças:
 
 | Tool | Action / Scope | Cenário |
 |------|----------------|---------|
 | `glpi_search_helpdesk_tickets` | — (status/priority/query/entity) | 1, 6 |
+| `glpi_search_helpdesk_tickets` | `assigned_tech`/`assigned_group`/`requester`/`category`/`urgency`/`open_only`/`sort_by` | 24 |
 | `glpi_manage_ticket_operations` | `get` | 1 |
 | `glpi_manage_ticket_operations` | `get_by_number` | 11 |
 | `glpi_manage_ticket_operations` | `create` | 2, 5, 7 |
 | `glpi_manage_ticket_operations` | `update` | — (ajuste via examples) |
 | `glpi_manage_ticket_operations` | `delete` | 11 |
 | `glpi_manage_ticket_operations` | `assign` | 1 |
+| `glpi_manage_ticket_operations` | `assign_group` | 18 |
 | `glpi_manage_ticket_operations` | `close` | — (veja TOOLS-REFERENCE) |
 | `glpi_manage_ticket_operations` | `resolve` | 2 |
 | `glpi_manage_ticket_operations` | `add_followup` | 2 |
+| `glpi_manage_ticket_operations` | `add_task` | 17 |
+| `glpi_manage_ticket_operations` | `add_document` | — (veja TOOLS-REFERENCE) |
+| `glpi_manage_ticket_operations` | `link_tickets` | — (veja TOOLS-REFERENCE) |
+| `glpi_manage_ticket_operations` | `request_validation` | 19 |
+| `glpi_manage_ticket_operations` | `answer_validation` | 19 |
+| `glpi_manage_ticket_operations` | `get_validations` | 19 |
+| `glpi_manage_ticket_operations` | `get_timeline` | 17 |
+| `glpi_manage_ticket_operations` | `get_tasks` | — (veja TOOLS-REFERENCE) |
 | `glpi_manage_ticket_operations` | `get_followups` | 11 |
 | `glpi_manage_ticket_operations` | `get_history` | 11 |
 | `glpi_manage_ticket_operations` | `get_stats` | 11 |
@@ -753,6 +1115,7 @@ Use esta matriz para testar 100 % da superfície do MCP após mudanças:
 | `glpi_manage_ticket_ai_analysis` | `get_result` | 12 |
 | `glpi_manage_ticket_ai_analysis` | `publish` | 12 |
 | `glpi_search_asset_inventory` | `all` / `stats` / `computers` / `reservations` / `reservable` / `software` / `monitors` / `devices` | 3 |
+| `glpi_search_asset_inventory` | `assigned_user`/`status`/`location_id`/`manufacturer_id`/`sort_by` | 24 |
 | `glpi_manage_asset_operations` | `get` | 3 |
 | `glpi_manage_asset_operations` | `get_details` (enriched) | 13 |
 | `glpi_manage_asset_operations` | `create` | 3 |
@@ -762,6 +1125,7 @@ Use esta matriz para testar 100 % da superfície do MCP após mudanças:
 | `glpi_manage_asset_operations` | `create_reservation` | 13 |
 | `glpi_manage_asset_operations` | `update_reservation` | 13 |
 | `glpi_search_admin_resources` | `users`/`groups`/`entities`/`locations` | 14 |
+| `glpi_search_admin_resources` | `sort_by`/`order` | 24 |
 | `glpi_manage_admin_resources` | users `get`/`create`/`update`/`delete` | 14 |
 | `glpi_manage_admin_resources` | groups `get`/`create`/`update`/`delete` | 14 |
 | `glpi_manage_admin_resources` | entities `get` (id=0 aceito) | 14 |
@@ -773,6 +1137,18 @@ Use esta matriz para testar 100 % da superfície do MCP após mudanças:
 | `glpi_list_available_prompts` | — | 16 |
 | `glpi_get_prompt_template` | 15 prompts | 3 (ROI), 4 (SLA, Trends, Productivity, Recurring, Satisfaction), 5 (Onboarding, Hardware), 6 (Change), 7 (Incident), 10 (UserHistory, AssetLookup, Summary) |
 | `glpi_search_knowledge_articles` | — | 2, 10, 16 |
+| `glpi_search_knowledge_unified` | `all`/`chamados`/`help`/`comunidade` | 2, 10 |
+| `glpi_search_itil_records` | `problems` / `changes` | 20 |
+| `glpi_search_itil_records` | `contracts` / `suppliers` | 21 |
+| `glpi_search_itil_records` | `projects` | — (veja TOOLS-REFERENCE) |
+| `glpi_search_itil_records` | `count_only` | 22 |
+| `glpi_manage_itil_records` | `create`/`add_followup`/`link_ticket` | 20 |
+| `glpi_manage_itil_records` | `get`/`create` (contracts, suppliers) | 21 |
+| `glpi_manage_itil_records` | `update`/`delete`/`get_followups` | — (veja TOOLS-REFERENCE) |
+| `glpi_search_records_by_criteria` | `scope=count` | 22 |
+| `glpi_search_records_by_criteria` | `scope=fields` | 23 |
+| `glpi_search_records_by_criteria` | `scope=search` | 23 |
 
-> ✅ **Cobertura total:** todas as 14 tools e todas as actions/scopes estão
-> exemplificadas em pelo menos um cenário acima.
+> ✅ **Cobertura total:** todas as tools registradas e todas as actions/scopes estão
+> exemplificadas em pelo menos um cenário acima ou na
+> [Referência de Tools](./TOOLS-REFERENCE.md).

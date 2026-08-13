@@ -7,7 +7,6 @@ import json
 import logging
 import logging.handlers
 import re
-import html
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 from datetime import datetime, timedelta, date
@@ -15,7 +14,7 @@ from datetime import datetime, timedelta, date
 from dateutil import parser as _date_parser
 
 from src.config import settings
-from src.models.exceptions import GLPIError, ValidationError
+from src.models.exceptions import ValidationError
 
 
 class LoggerService:
@@ -231,12 +230,43 @@ class InputSanitizer:
     Conforme SPEC.md: validação e limpeza de dados de entrada
     """
     
+    #: Teto de um campo de texto CURTO (nome, status, tipo de ativo, URL).
+    SHORT_TEXT_MAX = 10_000
+
+    #: Teto de um campo de TEXTO RICO (descricao do chamado, acompanhamento,
+    #: solucao). O `content` do GLPI e LONGTEXT; cortar em 10.000 caracteres
+    #: mutilava laudo tecnico e log colado no chamado.
+    RICH_TEXT_MAX = 200_000
+
     def __init__(self):
         """Inicializa sanitizador."""
         # Padrões de limpeza
         self.html_pattern = re.compile(r'<[^<]+?>')
         self.script_pattern = re.compile(r'<script[^>]*>.*?</script>', re.IGNORECASE | re.DOTALL)
         self.sql_pattern = re.compile(r'(\b(SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|EXEC|UNION)\b)', re.IGNORECASE)
+
+        # Construcoes que executam codigo no navegador de quem abrir o chamado.
+        # Sao removidas SEMPRE, inclusive em texto rico — ao contrario de <p> e
+        # <strong>, que sao formatacao legitima do editor do GLPI.
+        self.dangerous_html_patterns = [
+            re.compile(r'<(script|style|iframe|object|embed|applet|form)[^>]*>.*?</\1>',
+                       re.IGNORECASE | re.DOTALL),
+            re.compile(r'<(script|style|iframe|object|embed|applet|form|meta|link|base)[^>]*/?>',
+                       re.IGNORECASE),
+            # on*= handlers: onerror=, onload=, onclick=...
+            re.compile(r'\son\w+\s*=\s*(?:"[^"]*"|\'[^\']*\'|[^\s>]+)', re.IGNORECASE),
+        ]
+
+        # javascript:/vbscript:/data: em href|src. Substituido por um alvo
+        # inerte em vez de removido: apagar o atributo inteiro deixava `<a ">`
+        # no texto, uma tag quebrada no meio da nota do chamado.
+        self.dangerous_url_pattern = re.compile(
+            r'(href|src)\s*=\s*(?:"[^"]*"|\'[^\']*\'|[^\s>]+)',
+            re.IGNORECASE,
+        )
+        self.dangerous_scheme_pattern = re.compile(
+            r'^\s*["\']?\s*(?:javascript|vbscript|data)\s*:', re.IGNORECASE
+        )
         
         # Lista de palavras suspeitas para SQL injection
         self.suspicious_words = [
@@ -245,37 +275,77 @@ class InputSanitizer:
             'alert(', 'confirm(', 'prompt(', 'eval(', 'expression('
         ]
     
-    def sanitize_string(self, text: str, allow_html: bool = False) -> str:
+    def sanitize_string(
+        self,
+        text: str,
+        allow_html: bool = False,
+        max_length: Optional[int] = None,
+    ) -> str:
         """
-        Sanitiza string de entrada.
-        
+        Sanitiza string de entrada ANTES de enviar ao GLPI.
+
+        @MX:ANCHOR: este metodo NUNCA aplica html.escape.
+        @MX:REASON: escapar e uma responsabilidade de QUEM RENDERIZA, nunca de
+        quem grava. Escapando aqui, o texto chegava ao GLPI ja com entidades e o
+        GLPI escapava de novo ao salvar: uma nota com `"copia de 3"` era exibida
+        no chamado como `&quot;copia de 3&quot;`, literal, para o cliente ler.
+        Escape duplo nao e um detalhe cosmetico — corrompe a nota gravada, e nao
+        ha instrucao de prompt que conserte, porque o dano acontece depois do
+        modelo. Aspas, & e acentos vao para o GLPI exatamente como foram
+        escritos; o que sai daqui e o conteudo, nao a sua representacao em HTML.
+
         Args:
-            text: Texto para sanitizar
-            allow_html: Se permite HTML (default: False)
-        
+            text: Texto para sanitizar.
+            allow_html: True em campo de TEXTO RICO do GLPI (descricao,
+                acompanhamento, solucao, comentario), onde <p>/<strong>/<br> sao
+                formatacao legitima do editor. False em campo escalar (nome,
+                status, tipo), onde tag nenhuma faz sentido.
+            max_length: Teto do campo. Default: RICH_TEXT_MAX quando
+                allow_html, SHORT_TEXT_MAX caso contrario.
+
         Returns:
-            Texto sanitizado
+            Texto sanitizado.
         """
         if not text:
             return ""
-        
-        # Remover scripts maliciosos
-        text = self.script_pattern.sub('', text)
-        
-        # Remover HTML se não permitido
+
+        # Construcoes executaveis saem sempre — em texto rico tambem.
+        for pattern in self.dangerous_html_patterns:
+            text = pattern.sub('', text)
+
+        def _neutralise_url(match: "re.Match") -> str:
+            attribute, value = match.group(1), match.group(0).split("=", 1)[1]
+            if self.dangerous_scheme_pattern.search(value):
+                return f'{attribute}="#"'
+            return match.group(0)
+
+        text = self.dangerous_url_pattern.sub(_neutralise_url, text)
+
+        # Em campo escalar, qualquer tag remanescente e ruido.
         if not allow_html:
             text = self.html_pattern.sub('', text)
-        
-        # Escapar HTML para segurança
-        text = html.escape(text)
-        
+
         # Remover caracteres de controle
         text = ''.join(char for char in text if ord(char) >= 32 or char in '\n\r\t')
-        
+
         # Limitar tamanho para evitar DoS
-        if len(text) > 10000:
-            text = text[:10000] + "... [truncated]"
-        
+        limit = max_length or (self.RICH_TEXT_MAX if allow_html else self.SHORT_TEXT_MAX)
+        if len(text) > limit:
+            # @MX:WARN: o corte precisa dizer QUANTO foi perdido.
+            # @MX:REASON: "... [truncated]" no fim de uma nota nao diz se
+            # faltaram 10 caracteres ou 40 mil, e quem le a nota no GLPI nao tem
+            # como saber o que ficou de fora.
+            dropped = len(text) - limit
+            logger.warning(
+                f"sanitize_string: texto cortado em {limit} caracteres "
+                f"({dropped} descartados)"
+            )
+            text = (
+                text[:limit]
+                + f"\n\n[TEXTO CORTADO PELO MCP: {dropped} caracteres alem do "
+                f"limite de {limit} nao foram enviados ao GLPI]"
+            )
+
         return text.strip()
     
     def sanitize_filename(self, filename: str) -> str:
@@ -359,7 +429,7 @@ class InputSanitizer:
         
         # Permitir caracteres especiais de busca mas remover perigosos
         # NOTA: Incluímos '.' e '@' para permitir buscas por email/contact
-        # Ex: "joana.rodrigues@GRUPOWINK" (campo contact/Nome Alternativo do Usuário)
+        # Ex: "a.silva@DOMINIO" (campo contact/Nome Alternativo do Usuário)
         allowed_special = ['*', '?', '[', ']', '{', '}', '(', ')', '-', '+', '"', '.', '@', '_']
         query = ''.join(
             char for char in query

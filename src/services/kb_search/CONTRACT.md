@@ -9,7 +9,7 @@ source-specific SQL lives in the MCP.
 |--------|------|---------|
 | `id` | `text` | Stable id within the source. |
 | `title` | `text` | Display title. |
-| `body` | `text` | The embedded / full-text searchable text. |
+| `body` | `text` | The problem text: displayed, full-text searchable, and the basis of the vector. A source MAY embed more than it exposes here (the GLPI tickets ETL can vectorize problem + resolution while `body` stays the problem alone, so a result row does not print the resolution twice). |
 | `solution` | `text` NULL | Resolution/answer, for ticket/Q&A sources. NULL if N/A. For structured/multi-part solutions, flatten to text or use `metadata`. |
 | `url` | `text` NULL | Link back to the canonical item. |
 | `context` | `text` NULL | Human context (breadcrumb, category, space). |
@@ -51,7 +51,8 @@ env (JSON string) for the `.env` fallback. Validated by Pydantic at load.
 Shape: `{"embedding": {provider,base_url,api_key,model,dimensions}, "sources": [...]}`.
 Per source — required: `name`, `label`, `relation`, `dsn`. Optional: `enabled`
 (default `true`; set `false` to disable a source without removing it),
-`is_official`, `weight` (RRF boost), `dedup`, `lang`, `description`.
+`is_official`, `weight` (RRF boost), `dedup`, `solutions_expected`, `lang`,
+`description`.
 Full example: `knowledge_base.example.json`.
 - `weight` boosts a source in cross-source RRF (`rrf = weight / (k + rank)`).
   **RRF scores are compressed** (rank-1 ≈ 0.0164, rank-10 ≈ 0.0143), so even a
@@ -59,4 +60,15 @@ Full example: `knowledge_base.example.json`.
   another source's #1. Defaults: official docs `1.1`, tickets `1.0`, forum `0.95`.
   Tune to taste; `1.0` everywhere = neutral RRF.
 - `dedup` collapses repost-prone titles within the source (forum), off for tickets.
+- `solutions_expected` (default `false`) declares that **every** item in this source
+  is a solved case, i.e. a ticket KB. It changes only how an empty `solution` is
+  rendered: such a source shows "(resolvido, sem descricao da solucao)" — the fix
+  was never written down — while documentation and forum sources show `—`, because
+  for them having no solution field is normal, not a gap. Set it on ticket sources.
+
+## What the search reads
+The engine SELECTs `solution` alongside `body` in all three query shapes (keyword,
+semantic, hybrid), truncated to `SOLUTION_SNIPPET` (640 chars) — just above the
+formatter's display cap, so truncation happens once, where an ellipsis can mark it.
+A source that has no resolution concept simply exposes `solution` as NULL.
 

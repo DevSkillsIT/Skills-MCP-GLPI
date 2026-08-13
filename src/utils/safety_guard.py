@@ -50,12 +50,28 @@ class SafetyGuard:
     """
     
     # Operações que requerem confirmação
+    # @MX:WARN: toda operação destrutiva exposta pelas tools precisa constar aqui.
+    # @MX:REASON: 'delete_location' era destrutiva e estava fora desta lista — a
+    # exclusão de uma localização passava sem qualquer confirmação, ao contrário
+    # das outras exclusões. Uma localização em uso é referenciada por ativos e
+    # chamados, então a remoção não é local nem trivialmente reversível.
     PROTECTED_OPERATIONS = {
         "delete_ticket": "Deletar ticket permanentemente",
-        "delete_asset": "Deletar asset permanentemente", 
+        "delete_asset": "Deletar asset permanentemente",
         "delete_user": "Deletar usuário permanentemente",
         "delete_group": "Deletar grupo permanentemente",
-        "delete_webhook": "Deletar webhook permanentemente"
+        "delete_location": "Deletar localizacao permanentemente",
+        "delete_webhook": "Deletar webhook permanentemente",
+        # Registros ITIL. Estavam sendo inscritos aqui em tempo de execucao,
+        # por um registro temporario que sumia depois da chamada — solucao de
+        # transicao enquanto duas frentes mexiam no arquivo. Promovidos a
+        # permanentes: uma operacao destrutiva nao deve depender de alguem
+        # lembrar de registra-la no momento certo.
+        "delete_problem": "Deletar problema permanentemente",
+        "delete_change": "Deletar mudanca permanentemente",
+        "delete_project": "Deletar projeto permanentemente",
+        "delete_contract": "Deletar contrato permanentemente",
+        "delete_supplier": "Deletar fornecedor permanentemente",
     }
     
     MIN_TOKEN_LENGTH = 8

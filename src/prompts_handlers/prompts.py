@@ -6,7 +6,7 @@ Skills IT - Soluções em Tecnologia
 Desenvolvido para MSPs brasileiros com foco em produtividade.
 """
 
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 from datetime import datetime, timedelta
 import logging
 
@@ -14,6 +14,7 @@ from src.glpi_service import GLPIService
 from src.models import NotFoundError, ValidationError, GLPIError
 from src.formatters.markdown_helpers import fmt_status, fmt_priority, strip_html
 from src.services.dropdown_cache import dropdown_cache
+from src.services.ticket_service import TICKET_FIELD
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,13 @@ PROMPTS_CATALOG = [
     # ===== GESTOR DE TI (7 prompts) =====
     {
         "name": "glpi_sla_performance",
-        "description": "Gera relatório de desempenho de SLA mensal com tempo médio de resposta e resolução",
+        "description": (
+            "SLA, prazos e acordo de nível de serviço no GLPI — mede tempo de resposta, tempo de "
+            "resolução e volume de chamados atrasados no período. Use quando pedirem desempenho do "
+            "atendimento, aderência ao SLA, chamados fora do prazo ou relatório mensal de suporte. "
+            "Retorna Markdown com números reais do GLPI; indicador sem dado cadastrado aparece como "
+            "não disponível, nunca estimado."
+        ),
         "category": "gestao",
         "audience": "Gestor de TI",
         "arguments": [
@@ -63,7 +70,13 @@ PROMPTS_CATALOG = [
     },
     {
         "name": "glpi_ticket_trends",
-        "description": "Analisa tendências de tickets por categoria (aumento/redução de demandas)",
+        "description": (
+            "Tendências e volume de chamados por categoria no GLPI — compara a demanda no período e "
+            "aponta categorias em alta ou em queda (equipamentos, sistemas, telefonia, impressora, "
+            "acessos). Use quando pedirem evolução da demanda, sazonalidade, o que mais gera ticket "
+            "ou onde a operação está sofrendo. Retorna ranking em Markdown com contagem real de "
+            "chamados do GLPI."
+        ),
         "category": "gestao",
         "audience": "Gestor de TI",
         "arguments": [
@@ -84,7 +97,13 @@ PROMPTS_CATALOG = [
     },
     {
         "name": "glpi_asset_roi",
-        "description": "Inventário de ativos por cliente (contagem real por tipo). ROI/custo monetário só aparece se o GLPI tiver valor de compra/depreciação cadastrados; caso contrário é reportado como não disponível.",
+        "description": (
+            "Inventário e patrimônio de TI no GLPI — contagem real de ativos por tipo (computadores, "
+            "monitores, impressoras, equipamentos de rede) na entidade escolhida. Use quando pedirem "
+            "parque instalado, quantos equipamentos o cliente tem ou base para retorno do "
+            "investimento. Custo e ROI só aparecem com valor de compra cadastrado no GLPI; sem isso, "
+            "reporta como não disponível em vez de estimar."
+        ),
         "category": "gestao",
         "audience": "Gestor de TI",
         "arguments": [
@@ -98,7 +117,13 @@ PROMPTS_CATALOG = [
     },
     {
         "name": "glpi_technician_productivity",
-        "description": "Ranking real de técnicos por tickets resolvidos/fechados no período. Tempo médio e satisfação por técnico não são expostos pela REST API do GLPI 11 e aparecem como não disponíveis.",
+        "description": (
+            "Produtividade e ranking de técnicos no GLPI — quantidade real de chamados resolvidos e "
+            "fechados por atendente no período. Use quando pedirem desempenho da equipe, quem mais "
+            "atendeu, distribuição de carga entre analistas ou avaliação individual de suporte. "
+            "Tempo médio e satisfação por técnico não são expostos pela API REST do GLPI 11 e "
+            "aparecem como não disponíveis."
+        ),
         "category": "gestao",
         "audience": "Gestor de TI",
         "arguments": [
@@ -113,7 +138,13 @@ PROMPTS_CATALOG = [
     },
     {
         "name": "glpi_cost_per_ticket",
-        "description": "Volume real de tickets no período. Custo monetário por ticket exige valor-hora do técnico e tempo apontado no GLPI; sem isso é reportado como não disponível (nenhum valor é estimado).",
+        "description": (
+            "Custo por chamado e volume de atendimento no GLPI — total real de tickets abertos no "
+            "período pela entidade. Use quando pedirem custo do suporte, quanto custa atender um "
+            "cliente, esforço por contrato ou base para precificação. Valor monetário exige "
+            "valor-hora do técnico e tempo apontado no GLPI; sem esses dados, reporta como não "
+            "disponível e não estima nenhum número."
+        ),
         "category": "gestao",
         "audience": "Gestor de TI",
         "arguments": [
@@ -134,7 +165,13 @@ PROMPTS_CATALOG = [
     },
     {
         "name": "glpi_recurring_problems",
-        "description": "Identifica problemas recorrentes para ação preventiva",
+        "description": (
+            "Problemas recorrentes e reincidência no GLPI — agrupa chamados repetidos por assunto e "
+            "categoria para revelar causa raiz e alvo de ação preventiva. Use quando perguntarem o "
+            "que mais se repete, onde atacar para reduzir volume, quais falhas voltam sempre ou "
+            "quais casos viram problema ITIL. Retorna Markdown com as ocorrências reais do GLPI "
+            "acima do mínimo informado."
+        ),
         "category": "gestao",
         "audience": "Gestor de TI",
         "arguments": [
@@ -155,7 +192,13 @@ PROMPTS_CATALOG = [
     },
     {
         "name": "glpi_client_satisfaction",
-        "description": "Lê a pesquisa de satisfação real do GLPI (TicketSatisfaction). Se o módulo não estiver configurado ou sem respostas, reporta como não disponível em vez de inventar NPS/CSAT.",
+        "description": (
+            "Pesquisa de satisfação e avaliação do atendimento no GLPI — lê as respostas reais "
+            "registradas na enquete de chamados (TicketSatisfaction) por entidade e período. Use "
+            "quando pedirem nota do cliente, CSAT, feedback do usuário ou qualidade percebida do "
+            "suporte. Se a enquete do GLPI não estiver configurada ou não houver resposta, reporta "
+            "como não disponível em vez de inventar índice."
+        ),
         "category": "gestao",
         "audience": "Gestor de TI",
         "arguments": [
@@ -178,7 +221,13 @@ PROMPTS_CATALOG = [
     # ===== ANALISTA DE SUPORTE (8 prompts) =====
     {
         "name": "glpi_ticket_summary",
-        "description": "Resumo rápido de ticket para WhatsApp/Teams (10 linhas max)",
+        "description": (
+            "Resumo curto de um chamado do GLPI para repasse rápido — condensa situação atual, "
+            "solicitante, técnico responsável e último andamento em poucas linhas. Use para passar o "
+            "caso adiante por WhatsApp, Teams ou e-mail, dar posição ao cliente ou registrar "
+            "passagem de plantão. Retorna Markdown enxuto; para o histórico completo do chamado no "
+            "GLPI use a tool de operações de chamado."
+        ),
         "category": "suporte",
         "audience": "Analista de Suporte",
         "arguments": [
@@ -192,7 +241,13 @@ PROMPTS_CATALOG = [
     },
     {
         "name": "glpi_user_ticket_history",
-        "description": "Histórico completo de tickets do usuário",
+        "description": (
+            "Histórico de chamados de um usuário no GLPI — todos os tickets abertos por um "
+            "solicitante, com situação, categoria, técnico e datas. Use quando perguntarem o que "
+            "determinada pessoa já abriu, se o problema é reincidente para aquele colaborador, "
+            "contexto antes de atender ou levantamento individual. Retorna Markdown em ordem "
+            "cronológica com dados reais do GLPI."
+        ),
         "category": "suporte",
         "audience": "Analista de Suporte",
         "arguments": [
@@ -206,7 +261,13 @@ PROMPTS_CATALOG = [
     },
     {
         "name": "glpi_asset_lookup",
-        "description": "Busca rápida de ativo (computador, serial, usuário)",
+        "description": (
+            "Ativo, equipamento e patrimônio no GLPI — localiza computador, monitor, "
+            "impressora ou periférico por nome, número de série, patrimônio ou usuário responsável. "
+            "Use para identificar a máquina de alguém, conferir o serial durante o atendimento ou "
+            "achar o equipamento citado no chamado. Retorna ficha resumida em Markdown com os dados "
+            "do inventário do GLPI."
+        ),
         "category": "suporte",
         "audience": "Analista de Suporte",
         "arguments": [
@@ -220,7 +281,13 @@ PROMPTS_CATALOG = [
     },
     {
         "name": "glpi_onboarding_checklist",
-        "description": "Checklist de onboarding para novo usuário",
+        "description": (
+            "Checklist de admissão e entrada de colaborador no GLPI — roteiro do que provisionar "
+            "para um usuário novo: conta de acesso, e-mail, equipamento, grupos e permissões. Use na "
+            "chegada de funcionário, mudança de setor, terceiro que precisa de acesso ou quando a "
+            "entrega inicial de TI precisar ser padronizada. Retorna Markdown com o checklist e o "
+            "contexto do usuário já cadastrado no GLPI."
+        ),
         "category": "suporte",
         "audience": "Analista de Suporte",
         "arguments": [
@@ -240,7 +307,13 @@ PROMPTS_CATALOG = [
     },
     {
         "name": "glpi_incident_investigation",
-        "description": "Template de investigação de incidente (RCA - Root Cause Analysis)",
+        "description": (
+            "Investigação de incidente e análise de causa raiz no GLPI — estrutura o RCA de um "
+            "chamado com sintoma, impacto, linha do tempo, causa provável e ação corretiva. Use em "
+            "incidente grave, parada de serviço, falha reincidente ou quando o gestor exigir "
+            "explicação formal do ocorrido. Retorna Markdown usando os dados reais do chamado no "
+            "GLPI como base da apuração."
+        ),
         "category": "suporte",
         "audience": "Analista de Suporte",
         "arguments": [
@@ -254,7 +327,13 @@ PROMPTS_CATALOG = [
     },
     {
         "name": "glpi_change_management",
-        "description": "Checklist de gestão de mudança (RFC - Request for Change)",
+        "description": (
+            "Gestão de mudança e RFC no GLPI — checklist de planejamento com justificativa, risco, "
+            "impacto, plano de retorno e janela de execução. Use antes de alterar ambiente de "
+            "produção, aplicar atualização, trocar equipamento crítico ou quando a alteração exigir "
+            "aprovação formal e registro rastreável. Retorna Markdown pronto para anexar ao registro "
+            "de mudança do GLPI."
+        ),
         "category": "suporte",
         "audience": "Analista de Suporte",
         "arguments": [
@@ -268,7 +347,13 @@ PROMPTS_CATALOG = [
     },
     {
         "name": "glpi_hardware_request",
-        "description": "Template de solicitação de hardware padronizado",
+        "description": (
+            "Solicitação de equipamento e compra de hardware no GLPI — formulário padronizado com "
+            "justificativa, especificação, destinatário e prazo. Use quando pedirem notebook, "
+            "monitor, impressora, celular ou periférico novo, e quando a aquisição precisar passar "
+            "por aprovação com registro rastreável. Retorna Markdown padronizado para abrir a "
+            "requisição no GLPI."
+        ),
         "category": "suporte",
         "audience": "Analista de Suporte",
         "arguments": [
@@ -288,7 +373,13 @@ PROMPTS_CATALOG = [
     },
     {
         "name": "glpi_knowledge_base_search",
-        "description": "Busca REAL na base de conhecimento unificada (pgvector + RRF: chamados resolvidos, artigos de ajuda e comunidade). Para filtrar por fonte/tenant use a tool glpi_search_knowledge_unified.",
+        "description": (
+            "Base de conhecimento e soluções já aplicadas no GLPI — busca unificada em chamados "
+            "resolvidos, artigos de ajuda e posts de comunidade, com ranking híbrido semântico e "
+            "textual. Use para mensagem de erro, sintoma, dúvida de procedimento ou how-to, antes de "
+            "escalar o atendimento. Para filtrar por fonte ou por cliente use a tool "
+            "glpi_search_knowledge_unified do GLPI."
+        ),
         "category": "suporte",
         "audience": "Analista de Suporte",
         "arguments": [
@@ -516,7 +607,7 @@ class PromptHandler:
         date_from = (datetime.now() - timedelta(days=_days)).strftime("%Y-%m-%d 00:00:00")
         params: Dict[str, Any] = {
             "range": "0-499",
-            "criteria[0][field]": 15,
+            "criteria[0][field]": TICKET_FIELD["date"],
             "criteria[0][searchtype]": "morethan",
             "criteria[0][value]": date_from,
         }
@@ -693,7 +784,7 @@ para não gerar valores fictícios.
         date_from = (datetime.now() - timedelta(days=_days)).strftime("%Y-%m-%d 00:00:00")
         params: Dict[str, Any] = {
             "range": "0-999",
-            "criteria[0][field]": 15,
+            "criteria[0][field]": TICKET_FIELD["date"],
             "criteria[0][searchtype]": "morethan",
             "criteria[0][value]": date_from,
             "forcedisplay[0]": 2,
@@ -1116,7 +1207,7 @@ Min. {min_occurrences} ocorrências
             "range": "0-49",
             "sort": 2,
             "order": "DESC",
-            "criteria[0][field]": 4,
+            "criteria[0][field]": TICKET_FIELD["requester"],
             "criteria[0][searchtype]": "equals",
             "criteria[0][value]": user_id,
         }

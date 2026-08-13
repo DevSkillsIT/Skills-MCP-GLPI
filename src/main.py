@@ -3,25 +3,30 @@ MCP GLPI - Servidor FastAPI principal.
 Suporta Streamable HTTP Transport (Claude + Gemini).
 """
 
-from fastapi import FastAPI, HTTPException, Request, Depends, Response
+from fastapi import FastAPI, Request, Depends, Response
 from fastapi.responses import StreamingResponse
 from contextlib import asynccontextmanager
 from datetime import datetime
-import time
 import asyncio
+import logging
+import re
 import uuid
 import uvicorn
 
 from src.config import settings
 from src.logger import logger
 from src.utils.helpers import response_truncator
-from src.models import MCPRequest, MCPResponse, ToolsListResponse
+from src.models import MCPRequest, MCPResponse
 from src.handlers import mcp_handler  # exportar mcp_handler no módulo handlers
 from src.http_client import http_client
-from src.models import GLPIError
 from src.middleware.webhook_auth import verify_webhook_signature
 from src.services.ai_integration import ai_integration
 from src.auth.session_manager import session_manager
+
+# Header names whose value must never be logged in full.
+_SENSITIVE_HEADER = re.compile(
+    r"token|authorization|api[-_]?key|cookie|secret|password", re.IGNORECASE
+)
 
 # ============= STREAMABLE HTTP SESSION MANAGEMENT =============
 # Armazena sessões ativas para Streamable HTTP (Gemini requirement)
@@ -90,7 +95,7 @@ async def mcp_sse_endpoint(request: Request):
         """Gera eventos SSE para o cliente."""
         try:
             # Enviar evento inicial de endpoint
-            yield f"event: endpoint\ndata: /mcp\n\n"
+            yield "event: endpoint\ndata: /mcp\n\n"
 
             # Keepalive loop
             while True:
@@ -155,16 +160,19 @@ async def mcp_handler_http(request: Request, mcp_request: MCPRequest) -> MCPResp
     client_ip = request.scope.get("client")[0] if request.scope.get("client") else "0.0.0.0"
     headers_dict = dict(request.headers)
     
-    # DEBUG: Log TODOS os headers recebidos para investigação
-    logger.warning("=" * 80)
-    logger.warning("HEADERS RECEBIDOS DO CLIENTE MCP:")
-    for key, value in headers_dict.items():
-        # Mascarar tokens para segurança
-        if "token" in key.lower():
-            logger.warning(f"  {key}: {value[:10]}..." if len(value) > 10 else f"  {key}: {value}")
-        else:
-            logger.warning(f"  {key}: {value}")
-    logger.warning("=" * 80)
+    # Diagnostic header dump. DEBUG level: this fires on every request (including
+    # the token-less `initialize` handshake), so higher levels flood the log and
+    # bury real errors.
+    if logger.get_logger().isEnabledFor(logging.DEBUG):
+        logger.debug("=" * 80)
+        logger.debug("HEADERS RECEBIDOS DO CLIENTE MCP:")
+        for key, value in headers_dict.items():
+            # Mask any credential-bearing header, not just *token* ones.
+            if _SENSITIVE_HEADER.search(key):
+                logger.debug(f"  {key}: {value[:10]}..." if len(value) > 10 else f"  {key}: {value}")
+            else:
+                logger.debug(f"  {key}: {value}")
+        logger.debug("=" * 80)
     
     user_key = session_manager._compose_user_key(headers_dict, client_ip)
     session_manager.set_current_user_key(user_key)
@@ -174,9 +182,11 @@ async def mcp_handler_http(request: Request, mcp_request: MCPRequest) -> MCPResp
     user_token = headers_dict.get("x-glpi-user-token", "")
     session_manager.set_current_user_token(user_token)
     if user_token:
-        logger.warning(f"✅ USER TOKEN ENCONTRADO: {user_token[:10]}...")
+        logger.debug(f"USER TOKEN ENCONTRADO: {user_token[:10]}...")
     else:
-        logger.error("❌ USER TOKEN NÃO ENCONTRADO NOS HEADERS!")
+        # Not an error: `initialize` / `notifications/initialized` legitimately
+        # carry no user token. Calls that actually need it fail later, explicitly.
+        logger.debug("USER TOKEN ausente nos headers (esperado no handshake MCP)")
 
     # Streamable HTTP: Manage session ID per MCP protocol spec
     session_id = request.headers.get("mcp-session-id") or str(uuid.uuid4())

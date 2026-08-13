@@ -4,21 +4,79 @@ Cliente HTTP otimizado para comunicação com GLPI API
 Baseado em http_client.py existente + melhorias SPEC
 """
 
-import asyncio
-import httpx
 from typing import Optional, Dict, Any, List, Union
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from src.config import settings
 from src.logger import logger
 from src.models.exceptions import (
-    AuthenticationError,
-    TimeoutError as GLPITimeoutError,
-    GLPIError,
-    NotFoundError,
-    ValidationError
+    NotFoundError
 )
 from src.auth.session_manager import session_manager
+
+
+def emit_criteria(
+    params: Dict[str, Any],
+    criteria: List[Dict[str, Any]],
+    prefix: str = "criteria",
+    start_index: int = 0,
+) -> int:
+    """Public entry point for callers that build their own request params.
+
+    @MX:NOTE: the count probes assemble `range=0-0` requests by hand and used to
+    serialise criteria themselves, reading `criterion["field"]` directly.
+    @MX:REASON: that copy cannot express a group — a group carries `criteria`
+    and no `field`, so the hand-rolled loop raises KeyError the moment any
+    filter nests. Counting must serialise exactly like listing, or the count
+    stops describing the list it is supposed to summarise.
+    """
+    return _emit_criteria(params, criteria, prefix, start_index)
+
+
+def _emit_criteria(
+    params: Dict[str, Any],
+    criteria: List[Dict[str, Any]],
+    prefix: str,
+    start_index: int = 0,
+) -> int:
+    """Flatten a criteria tree into the parameter names the Search API expects.
+
+    @MX:ANCHOR: the only place that serialises search criteria.
+    @MX:REASON: GLPI evaluates a flat criteria list left to right, with no
+    precedence between AND and OR. So "manufacturer AND (name OR serial)"
+    cannot be expressed as a flat list — appending the AND after an OR chain
+    silently widens the result instead of narrowing it. The API's answer is
+    nesting: a criterion carrying its own `criteria` list becomes a group, and
+    the group as a whole is joined by its `link`.
+
+    A criterion is a group when it has a `criteria` key; otherwise it must
+    carry `field` and `value`.
+
+    Returns the next free index, so callers can keep appending.
+    """
+    index = start_index
+    for position, crit in enumerate(criteria):
+        base = f"{prefix}[{index}]"
+
+        # The first criterion of a list has nothing to join to.
+        link = crit.get("link")
+        if index > 0 and position >= 0 and link:
+            params[f"{base}[link]"] = link
+        elif index > 0 and not link:
+            params[f"{base}[link]"] = "AND"
+
+        nested = crit.get("criteria")
+        if nested:
+            _emit_criteria(params, nested, f"{base}[criteria]", 0)
+            index += 1
+            continue
+
+        params[f"{base}[field]"] = crit["field"]
+        params[f"{base}[searchtype]"] = crit.get("searchtype", "equals")
+        params[f"{base}[value]"] = crit["value"]
+        index += 1
+
+    return index
 
 
 class GLPIClient:
@@ -41,39 +99,13 @@ class GLPIClient:
         
         logger.info(f"GLPIClient initialized: {self.base_url}")
     
-    async def _handle_response(self, response: httpx.Response, endpoint: str) -> Any:
-        """
-        Tratamento padronizado de respostas HTTP.
-        Conforme SPEC.md RNF02: mapeamento HTTP <-> JSON-RPC
-        """
-        try:
-            response.raise_for_status()
-            
-            # Verificar se há conteúdo JSON
-            if response.status_code == 204:
-                return {"success": True}
-            
-            return response.json()
-            
-        except httpx.HTTPStatusError as e:
-            status_code = e.response.status_code
-            
-            # Mapeamento de erros conforme SPEC.md RNF02
-            if status_code == 400:
-                raise ValidationError(f"Invalid request: {e.response.text}")
-            elif status_code == 401:
-                raise AuthenticationError("Invalid GLPI credentials")
-            elif status_code == 403:
-                raise GLPIError(403, "Permission denied")
-            elif status_code == 404:
-                raise NotFoundError("Resource", endpoint)
-            elif status_code == 429:
-                raise GLPIError(429, "Rate limit exceeded")
-            elif status_code >= 500:
-                raise GLPIError(status_code, f"GLPI server error: {e.response.text}")
-            else:
-                raise GLPIError(status_code, f"HTTP error: {e.response.text}")
-    
+    # @MX:NOTE: response handling and HTTP error mapping live in the session
+    # manager's single request path, not here.
+    # @MX:REASON: this class used to carry its own _handle_response with a full
+    # status mapping that was never called. Reading it suggested that rate
+    # limiting was handled at this layer when nothing here ever ran, which cost
+    # real time during a diagnosis. Removed rather than kept as documentation.
+
     async def get(
         self,
         endpoint: str,
@@ -297,13 +329,7 @@ class GLPIClient:
 
         # Adicionar critérios avançados (formato completo GLPI)
         if criteria:
-            for crit in criteria:
-                if criteria_idx > 0:
-                    params[f"criteria[{criteria_idx}][link]"] = crit.get("link", "AND")
-                params[f"criteria[{criteria_idx}][field]"] = crit["field"]
-                params[f"criteria[{criteria_idx}][searchtype]"] = crit.get("searchtype", "equals")
-                params[f"criteria[{criteria_idx}][value]"] = crit["value"]
-                criteria_idx += 1
+            criteria_idx = _emit_criteria(params, criteria, "criteria", criteria_idx)
 
         # Campos para exibir
         if forcedisplay:

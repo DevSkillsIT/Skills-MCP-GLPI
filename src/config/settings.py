@@ -68,6 +68,11 @@ class Settings(BaseSettings):
     max_keepalive_connections: int = Field(
         default=10, alias="MAX_KEEPALIVE_CONNECTIONS"
     )
+    # Retry policy for transient GLPI failures. Attempts counts the retries
+    # only: 2 means up to 3 calls in total.
+    max_retries: int = Field(default=2, alias="GLPI_MAX_RETRIES")
+    retry_backoff_base: float = Field(default=1.5, alias="GLPI_RETRY_BACKOFF_BASE")
+    retry_backoff_cap: float = Field(default=20.0, alias="GLPI_RETRY_BACKOFF_CAP")
 
     # ============= Cache (RNF01) =============
     cache_ttl_seconds: int = Field(default=300, alias="CACHE_TTL_SECONDS")  # 5 minutos
@@ -119,6 +124,12 @@ class Settings(BaseSettings):
     webhook_secret: str = Field(
         default="default-webhook-secret", alias="WEBHOOK_SECRET"
     )
+
+    # ============= AI Analysis (RF-AI) =============
+    # The AI analysis tool is an in-memory orchestrator with no GLPI-side agent
+    # behind it yet: trigger/publish would report success without anything
+    # reaching the GLPI ticket. Keep it OFF until a real agent is wired in.
+    enable_ai_analysis: bool = Field(default=False, alias="ENABLE_AI_ANALYSIS")
 
     # ============= Session Management (RF01) =============
     session_timeout: int = Field(default=3600, alias="SESSION_TIMEOUT")  # 1 hora

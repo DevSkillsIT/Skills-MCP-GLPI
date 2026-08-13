@@ -5,7 +5,7 @@ Implementa AIJobStore com TTL e interfaces para integração IA.
 
 import time
 import uuid
-from typing import Dict, Any, Optional
+from typing import Dict, Optional
 from src.logger import logger
 
 

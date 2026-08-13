@@ -9,11 +9,8 @@ import sys
 
 sys.path.insert(0, "/opt/mcp-servers/glpi/.base-code")
 
-import pytest
 
 from src.formatters.markdown_helpers import (
-    REMOVE_ALWAYS,
-    REMOVE_LIST_ONLY,
     check_response_size,
     esc,
     fmt_date,

@@ -41,16 +41,21 @@ async def test_list_tickets_with_status_uses_search_api_and_maps_status():
 
 
 @pytest.mark.asyncio
-async def test_list_tickets_no_filters_uses_getallitems():
-    """Sem filtros, mantem o endpoint leve getAllItems."""
-    get_mock = AsyncMock(return_value={"data": [{"id": 1, "name": "X", "status": 1}]})
-    search_mock = AsyncMock()
-    with patch("src.services.ticket_service.glpi_client.get", get_mock), \
-         patch("src.services.ticket_service.glpi_client.search", search_mock):
+async def test_list_tickets_no_filters_still_uses_search_api():
+    """Sem filtros, continua na Search API — de proposito.
+
+    O endpoint leve getAllItems devolve IDs crus para solicitante e categoria,
+    o que produzia listagens "podadas". A Search API com expand_dropdowns
+    resolve esses nomes na mesma chamada, entao ela e usada mesmo sem criteria.
+    """
+    search_mock = AsyncMock(return_value={"data": [
+        {"2": "1", "1": "X", "12": 1}
+    ]})
+    with patch("src.services.ticket_service.glpi_client.search", search_mock):
         rows = await ticket_service.list_tickets(limit=5)
 
-    search_mock.assert_not_awaited()
-    get_mock.assert_awaited_once()
+    search_mock.assert_awaited_once()
+    assert search_mock.await_args.kwargs["criteria"] == []
     assert rows[0]["name"] == "X"
 
 

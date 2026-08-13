@@ -1,0 +1,20 @@
+[Unit]
+# Templated per GLPI instance: %i is the instance directory name, e.g.
+#   systemctl enable --now glpi-kb-ingest@ramada-lindacor.timer
+Description=GLPI tickets knowledge-base incremental ingest (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/mcp-servers/glpi/.base-code
+# Central per-instance config (knowledge_base.ingestion section). Without it,
+# the pipeline falls back to the single root .env.
+Environment=GLPI_MCP_CONFIG=/opt/mcp-servers/glpi/%i/glpi-config/glpi-config.json
+# Shared lock with the Sankhya ETLs: they contend for the same embedding
+# endpoint and Postgres. -n means the loser skips this run rather than queueing;
+# ingest is incremental, so the next run self-heals.
+ExecStart=/usr/bin/flock -n /var/lock/sankhya_ajuda_etl.lock \
+    /opt/mcp-servers/glpi/.base-code/venv/bin/python -m knowledge_base.ingest_tickets
+Nice=10
+TimeoutStartSec=1800
