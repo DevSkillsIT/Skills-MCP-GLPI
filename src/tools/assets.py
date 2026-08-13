@@ -37,6 +37,12 @@ _SOFTWARE_NAME_CACHE: Dict[str, str] = {}
 #: GET por versao transformaria uma tela em dezenas de round-trips.
 _SOFTWARE_RESOLVE_CAP = 40
 
+#: Requisicoes em voo ao resolver os nomes. O teto acima limita QUANTAS versoes
+#: sao resolvidas, nao quantas ao mesmo tempo: sem isto, um parque com 40 versoes
+#: novas abria 40 conexoes simultaneas contra o GLPI de uma vez so.
+#: Credito: PR #1 de @meric5488, que trouxe o limite de concorrencia.
+_SOFTWARE_RESOLVE_CONCURRENCY = 5
+
 
 def _subitem_link_id(item: Dict[str, Any], rel: str) -> Optional[str]:
     """Extract a related record's id from the `links` array GLPI attaches."""
@@ -65,18 +71,21 @@ async def _resolve_software_names(client, software: List[Dict[str, Any]]) -> Non
 
     import asyncio as _asyncio
 
+    semaphore = _asyncio.Semaphore(_SOFTWARE_RESOLVE_CONCURRENCY)
+
     async def _fetch(version_id: str):
-        try:
-            record = await client.get(
-                f"/apirest.php/SoftwareVersion/{int(version_id)}",
-                params={"expand_dropdowns": "true"},
-            )
-            if isinstance(record, dict):
-                name = record.get("softwares_id")
-                if name and not str(name).isdigit():
-                    _SOFTWARE_NAME_CACHE[version_id] = str(name)
-        except Exception as exc:  # noqa: BLE001 -- nome e enfeite, nao bloqueia
-            logger.warning(f"software name lookup failed for {version_id}: {exc}")
+        async with semaphore:
+            try:
+                record = await client.get(
+                    f"/apirest.php/SoftwareVersion/{int(version_id)}",
+                    params={"expand_dropdowns": "true"},
+                )
+                if isinstance(record, dict):
+                    name = record.get("softwares_id")
+                    if name and not str(name).isdigit():
+                        _SOFTWARE_NAME_CACHE[version_id] = str(name)
+            except Exception as exc:  # noqa: BLE001 -- nome e enfeite, nao bloqueia
+                logger.warning(f"software name lookup failed for {version_id}: {exc}")
 
     if pending:
         await _asyncio.gather(*(_fetch(v) for v in pending[:_SOFTWARE_RESOLVE_CAP]))
