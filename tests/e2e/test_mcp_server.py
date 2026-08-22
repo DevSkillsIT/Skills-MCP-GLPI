@@ -6,7 +6,7 @@ SPEC-GLPI-ENHANCE-001/F10 — Section 5.6
 
 Run (against a running instance; GET tools that hit the GLPI API are skipped
 unless a user token is provided):
-    # Ramada (3 KB sources)
+    # tenant com 3 fontes de KB
     GLPI_MCP_E2E_URL=http://localhost:8826 \
       GLPI_MCP_E2E_USER_TOKEN=<glpi user token> \
       .venv/bin/python -m pytest tests/e2e/ -v -o asyncio_mode=auto
@@ -24,7 +24,7 @@ import pytest
 import httpx
 
 # Target instance is configurable so the same suite runs against any deployment:
-#   GLPI_MCP_E2E_URL=http://localhost:8826 pytest tests/e2e/ -v   # Ramada
+#   GLPI_MCP_E2E_URL=http://localhost:8826 pytest tests/e2e/ -v   # outro tenant
 #   GLPI_MCP_E2E_URL=http://localhost:8824 pytest tests/e2e/ -v   # Skills (default)
 BASE_URL = os.environ.get("GLPI_MCP_E2E_URL", "http://localhost:8824")
 MCP_URL = f"{BASE_URL}/mcp"
