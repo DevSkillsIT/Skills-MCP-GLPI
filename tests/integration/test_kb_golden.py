@@ -3,7 +3,7 @@ SPEC-SANKHYA-COMMUNITY-001 v1.1.0 golden-eval), adapted to the GLPI MCP's
 sources (CHAMADOS + HELP + COMUNIDADE).
 
 GUARDED: skipped unless RUN_GOLDEN=1 (needs the live pgvector DBs + embeddings).
-    RUN_GOLDEN=1 GLPI_MCP_CONFIG=/opt/mcp-servers/glpi/ramada-lindacor/glpi-config/glpi-config.json \
+    RUN_GOLDEN=1 GLPI_MCP_CONFIG=/opt/mcp-servers/glpi/your-tenant/glpi-config/glpi-config.json \
       .venv/bin/python -m pytest tests/integration/test_kb_golden.py -v -o asyncio_mode=auto
 
 Regression guard for the two v1.1.0 ranking changes:
@@ -30,7 +30,7 @@ sys.path.insert(0, "/opt/mcp-servers/glpi/.base-code")
 from src.services.kb_search.service import KbSearchService  # noqa: E402
 
 RUN_GOLDEN = os.environ.get("RUN_GOLDEN") == "1"
-_DEFAULT_CONFIG = "/opt/mcp-servers/glpi/ramada-lindacor/glpi-config/glpi-config.json"
+_DEFAULT_CONFIG = "/opt/mcp-servers/glpi/your-tenant/glpi-config/glpi-config.json"
 
 pytestmark = pytest.mark.skipif(not RUN_GOLDEN, reason="set RUN_GOLDEN=1 (needs live DB)")
 

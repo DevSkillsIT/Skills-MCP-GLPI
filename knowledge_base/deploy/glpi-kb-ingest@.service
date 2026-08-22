@@ -1,6 +1,6 @@
 [Unit]
 # Templated per GLPI instance: %i is the instance directory name, e.g.
-#   systemctl enable --now glpi-kb-ingest@ramada-lindacor.timer
+#   systemctl enable --now glpi-kb-ingest@your-tenant.timer
 Description=GLPI tickets knowledge-base incremental ingest (%i)
 After=network-online.target
 Wants=network-online.target

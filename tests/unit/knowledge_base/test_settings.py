@@ -14,10 +14,10 @@ def _central() -> dict:
             },
             "sources": [{"name": "x", "label": "X"}],  # search-side, ignored by ETL
             "ingestion": {
-                "pg": {"host": "h", "port": 5433, "db": "glpi_ramada_kb",
+                "pg": {"host": "h", "port": 5433, "db": "glpi_acme_kb",
                        "user": "u", "password": "p"},
-                "source_label": "ramada",
-                "ssh_host": "glpi-ramada",
+                "source_label": "acme",
+                "ssh_host": "glpi-acme",
                 "remote_db_config": "/etc/glpi/config_db.php",
                 "ticket_statuses": "5,6",
                 "max_age_months": 12,
@@ -37,9 +37,9 @@ class TestFromCentral:
 
     def test_parses_ingestion_pg_and_knobs(self) -> None:
         s = Settings.from_central(_central())
-        assert s.pg.host == "h" and s.pg.port == 5433 and s.pg.db == "glpi_ramada_kb"
+        assert s.pg.host == "h" and s.pg.port == 5433 and s.pg.db == "glpi_acme_kb"
         assert s.pg.password.get_secret_value() == "p"
-        assert s.kb.source_label == "ramada" and s.kb.ssh_host == "glpi-ramada"
+        assert s.kb.source_label == "acme" and s.kb.ssh_host == "glpi-acme"
         assert s.kb.max_age_months == 12 and s.kb.embed_strategy == "form_description"
         assert s.kb.status_list == [5, 6]
 
