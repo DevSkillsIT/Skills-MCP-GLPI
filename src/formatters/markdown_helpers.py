@@ -80,7 +80,8 @@ def glpi_url(itemtype: str, item_id) -> str:
         return ""
     try:
         from src.config.settings import settings
-        base = str(settings.glpi_base_url or "").rstrip("/")
+        from src.auth.session_manager import session_manager as _sm  # POC Nango: instância do request
+        base = str(_sm.get_current_tenant()[0] or settings.glpi_base_url or "").rstrip("/")
     except Exception:  # noqa: BLE001 — sem base, sem link
         return ""
     if base.endswith("/apirest.php"):

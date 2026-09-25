@@ -46,6 +46,13 @@ class SessionManager:
         )
         # Pool de sessões por user_token: {user_token: {client, session_token, last_used}}
         self._user_sessions: Dict[str, Dict[str, Any]] = {}
+        # POC Nango: instância GLPI do request atual (base_url, app_token).
+        # Default = config do processo (GLPI_MCP_CONFIG) -> compatível com os processos atuais.
+        self._current_tenant: contextvars.ContextVar[Tuple[str, str]] = contextvars.ContextVar(
+            "current_tenant",
+            default=(str(settings.glpi_base_url or "").rstrip("/"), settings.glpi_app_token or ""),
+        )
+        self._session_idle_ttl: int = int(getattr(settings, "session_timeout", 3600) or 3600)
         # ContextVar para user_token do request atual
         self._current_user_token: contextvars.ContextVar[str] = contextvars.ContextVar(
             "current_user_token", default=""
@@ -114,6 +121,37 @@ class SessionManager:
             logger.error(f"Failed to initialize GLPI session: {e}")
             # Continuar com app token se falhar sessão
 
+    # ---------------- tenant por requisição (POC Nango) ----------------
+    def set_current_tenant(self, base_url: str = "", app_token: str = "") -> None:
+        """Define a instância GLPI do request. Vazio = config do processo."""
+        base_url = str(base_url or settings.glpi_base_url or "").rstrip("/")
+        app_token = app_token or settings.glpi_app_token or ""
+        self._current_tenant.set((base_url, app_token))
+
+    def get_current_tenant(self) -> Tuple[str, str]:
+        return self._current_tenant.get()
+
+    def tenant_scope(self) -> str:
+        """Digest de (instância, app-token, user-token): partição de todos os caches."""
+        base_url, app_token = self.get_current_tenant()
+        ident = f"{base_url}|{app_token}|{self.get_current_user_token()}"
+        return hashlib.sha256(ident.encode()).hexdigest()[:16]
+
+    def _pool_key(self, user_token: str) -> str:
+        base_url, app_token = self.get_current_tenant()
+        return hashlib.sha256(f"{base_url}|{app_token}|{user_token}".encode()).hexdigest()
+
+    async def _evict_idle_sessions(self) -> None:
+        now = time.time()
+        for key, info in list(self._user_sessions.items()):
+            if now - info["last_used"] > self._session_idle_ttl:
+                self._user_sessions.pop(key, None)
+                try:
+                    await info["client"].get("/apirest.php/killSession")
+                except Exception:  # noqa: BLE001 — melhor esforço
+                    pass
+                await info["client"].aclose()
+
     async def _get_session_for_user(self, user_token: str) -> httpx.AsyncClient:
         """
         Obtém ou cria uma sessão GLPI para o user_token específico.
@@ -136,9 +174,12 @@ class SessionManager:
                     "Get your token from GLPI: Administration > Users > [your user] > Remote access keys"
                 )
         
-        # Verificar se já existe sessão para este user_token
-        if user_token in self._user_sessions:
-            session_info = self._user_sessions[user_token]
+        # Pool chaveado por (instância, app-token, user-token) — nunca só pelo token
+        base_url, app_token = self.get_current_tenant()
+        pool_key = self._pool_key(user_token)
+        await self._evict_idle_sessions()
+        if pool_key in self._user_sessions:
+            session_info = self._user_sessions[pool_key]
             session_info["last_used"] = time.time()
             return session_info["client"]
         
@@ -148,13 +189,13 @@ class SessionManager:
         # Headers específicos para este usuário
         user_headers = {
             "Content-Type": "application/json",
-            "App-Token": settings.glpi_app_token,
+            "App-Token": app_token,
             "Authorization": f"user_token {user_token}"
         }
         
         # Criar cliente HTTP
         client = httpx.AsyncClient(
-            base_url=settings.glpi_base_url,
+            base_url=base_url,
             headers=user_headers,
             timeout=httpx.Timeout(settings.request_timeout),
             limits=httpx.Limits(
@@ -198,7 +239,7 @@ class SessionManager:
             )
 
         # Salvar no pool
-        self._user_sessions[user_token] = {
+        self._user_sessions[pool_key] = {
             "client": client,
             "last_used": time.time()
         }
@@ -210,7 +251,10 @@ class SessionManager:
         Compose composite user key for rate limiting.
         Conforme auditoria: URL + app_token + user_token + IP
         """
-        return f"{headers.get('X-GLPI-URL','')}:{headers.get('X-GLPI-App-Token','')}:{headers.get('X-GLPI-User-Token','')}:{client_ip}"
+        # dict(request.headers) tem chaves em MINÚSCULAS (Starlette); token entra como digest.
+        tok = headers.get('x-glpi-user-token', '')
+        tok_d = hashlib.sha256(tok.encode()).hexdigest()[:12] if tok else ''
+        return f"{headers.get('x-glpi-url','')}:{headers.get('x-glpi-app-token','')[-4:]}:{tok_d}:{client_ip}"
 
     def set_current_user_key(self, user_key: str):
         """Define a chave composta do usuário para uso em chamadas subsequentes."""
@@ -284,8 +328,8 @@ class SessionManager:
         entre clientes — e nao produz erro nenhum, so uma resposta plausivel.
         O token entra como digest, nunca em claro.
         """
-        identity = self.get_current_user_token() or self._current_user_key.get() or "anonymous"
-        identity_digest = hashlib.sha256(identity.encode()).hexdigest()[:16]
+        identity_digest = self.tenant_scope() if self.get_current_user_token() else hashlib.sha256(
+            (self._current_user_key.get() or "anonymous").encode()).hexdigest()[:16]
         cache_data = f"{identity_digest}:{endpoint}:{sorted(params.items())}"
         return hashlib.md5(cache_data.encode()).hexdigest()
     
@@ -433,7 +477,7 @@ class SessionManager:
                     f"{method} {endpoint} returned 401 - reinitialising session"
                 )
                 if user_token:
-                    self._user_sessions.pop(user_token, None)
+                    self._user_sessions.pop(self._pool_key(user_token), None)
                     client = await self._get_session_for_user(user_token)
                     if client is None:
                         raise AuthenticationError("Invalid credentials")

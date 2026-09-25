@@ -28,6 +28,17 @@ _SENSITIVE_HEADER = re.compile(
     r"token|authorization|api[-_]?key|cookie|secret|password", re.IGNORECASE
 )
 
+# ============= TENANT POR REQUISIÇÃO (POC Nango) =============
+def _tenant_url_allowed(url: str) -> bool:
+    """X-GLPI-URL só é aceito se for a instância do processo ou estiver no registry de clientes."""
+    from src.core.client_registry import get_client_registry
+    allowed = {str(settings.glpi_base_url or "").rstrip("/")}
+    for c in get_client_registry().get_all_clients().values():
+        if c.get("glpi_url"):
+            allowed.add(str(c["glpi_url"]).rstrip("/"))
+    return url.rstrip("/") in allowed
+
+
 # ============= STREAMABLE HTTP SESSION MANAGEMENT =============
 # Armazena sessões ativas para Streamable HTTP (Gemini requirement)
 mcp_sessions: dict[str, dict] = {}
@@ -178,6 +189,14 @@ async def mcp_handler_http(request: Request, mcp_request: MCPRequest) -> MCPResp
     session_manager.set_current_user_key(user_key)
     session_manager._check_rate_limit(user_key)
     
+    # POC Nango: instância GLPI por requisição. Sem headers -> config do processo (GLPI_MCP_CONFIG).
+    tenant_url = headers_dict.get("x-glpi-url", "")
+    if tenant_url and not _tenant_url_allowed(tenant_url):
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=403, content={"jsonrpc": "2.0", "id": mcp_request.id,
+            "error": {"code": -32001, "message": "X-GLPI-URL nao esta na allowlist"}})
+    session_manager.set_current_tenant(tenant_url, headers_dict.get("x-glpi-app-token", ""))
+
     # Extrair user_token do header do cliente MCP (cada usuário envia seu próprio token)
     user_token = headers_dict.get("x-glpi-user-token", "")
     session_manager.set_current_user_token(user_token)

@@ -219,7 +219,8 @@ def _absolute_url(url: str) -> str:
         return url
     from src.config.settings import settings
 
-    base = str(settings.glpi_base_url or "").rstrip("/")
+    from src.auth.session_manager import session_manager as _sm  # POC Nango: instância do request
+    base = str(_sm.get_current_tenant()[0] or settings.glpi_base_url or "").rstrip("/")
     return f"{base}{url}" if base else url
 
 

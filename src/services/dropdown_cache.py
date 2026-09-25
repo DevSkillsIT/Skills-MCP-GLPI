@@ -49,16 +49,31 @@ class DropdownCache:
 
     def __init__(self) -> None:
         # _cache[itemtype][item_id] = name
-        self._cache: Dict[str, Dict[int, str]] = {}
+        self._by_scope: Dict[str, Dict[str, Any]] = {}
         # _filled_at[itemtype] = monotonic timestamp do bulk-load mais recente
-        self._filled_at: Dict[str, float] = {}
         self._locks: Dict[str, asyncio.Lock] = {}
 
+    # POC Nango: estado particionado por tenant (instância+usuário) — evita misturar
+    # nomes/opções de GLPIs diferentes no mesmo processo.
+    def _scoped_state(self) -> Dict[str, Any]:
+        from src.auth.session_manager import session_manager
+        return self._by_scope.setdefault(session_manager.tenant_scope(), {})
+
+    @property
+    def _cache(self) -> Dict[str, Dict[int, str]]:
+        return self._scoped_state().setdefault("cache", {})
+
+    @property
+    def _filled_at(self) -> Dict[str, float]:
+        return self._scoped_state().setdefault("filled_at", {})
+
     def _lock_for(self, itemtype: str) -> asyncio.Lock:
-        lock = self._locks.get(itemtype)
+        from src.auth.session_manager import session_manager
+        itemtype_key = f"{session_manager.tenant_scope()}:{itemtype}"
+        lock = self._locks.get(itemtype_key)
         if lock is None:
             lock = asyncio.Lock()
-            self._locks[itemtype] = lock
+            self._locks[itemtype_key] = lock
         return lock
 
     def _is_fresh(self, itemtype: str) -> bool:
