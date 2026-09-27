@@ -120,6 +120,11 @@ class SessionManager:
             logger.error(f"Failed to initialize GLPI session: {e}")
             # Continuar com app token se falhar sessão
 
+    @staticmethod
+    def _tok_ref(token: str) -> str:
+        """Referência de log para um token: digest curto, nunca um pedaço do valor."""
+        return f"tok#{hashlib.sha256(token.encode()).hexdigest()[:8]}" if token else "tok#vazio"
+
     # ---------------- tenant por requisição (POC Nango) ----------------
     def set_current_tenant(self, base_url: str = "", app_token: str = "") -> None:
         """Define a instância GLPI do request (o que veio nos headers, sem completar)."""
@@ -198,7 +203,7 @@ class SessionManager:
             return session_info["client"]
         
         # Criar nova sessão para este user_token
-        logger.info(f"Creating new GLPI session for user_token: {user_token[:10]}...")
+        logger.info(f"Creating new GLPI session for user_token: {self._tok_ref(user_token)}")
         
         # Headers específicos para este usuário
         user_headers = {
@@ -236,10 +241,10 @@ class SessionManager:
                 session_token = session_data.get("session_token")
                 if session_token:
                     client.headers["Session-Token"] = session_token
-                    logger.info(f"GLPI session created for user_token: {user_token[:10]}...")
+                    logger.info(f"GLPI session created for user_token: {self._tok_ref(user_token)}")
             else:
                 logger.error(
-                    f"initSession FAILED user={user_token[:10]}... "
+                    f"initSession FAILED user={self._tok_ref(user_token)} "
                     f"status={response.status_code} body={response.text[:300]}"
                 )
         except Exception as e:
@@ -283,7 +288,7 @@ class SessionManager:
         try:
             token = self._current_user_token.get()
             if token:
-                logger.debug(f"get_current_user_token: Got from context: {token[:10]}...")
+                logger.debug(f"get_current_user_token: Got from context: {self._tok_ref(token)}")
                 return token
         except LookupError:
             logger.warning("get_current_user_token: No context - using fallback")
@@ -293,7 +298,7 @@ class SessionManager:
         # Fallback para token do .env (para testes/desenvolvimento)
         token = settings.glpi_user_token
         if token:
-            logger.debug(f"get_current_user_token: Using .env fallback: {token[:10]}...")
+            logger.debug(f"get_current_user_token: Using .env fallback: {self._tok_ref(token)}")
         else:
             logger.error("get_current_user_token: NO TOKEN AVAILABLE!")
         return token

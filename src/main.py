@@ -240,7 +240,7 @@ async def mcp_handler_http(request: Request, mcp_request: MCPRequest) -> MCPResp
         for key, value in headers_dict.items():
             # Mask any credential-bearing header, not just *token* ones.
             if _SENSITIVE_HEADER.search(key):
-                logger.debug(f"  {key}: {value[:10]}..." if len(value) > 10 else f"  {key}: {value}")
+                logger.debug(f"  {key}: <{len(value)} chars>")
             else:
                 logger.debug(f"  {key}: {value}")
         logger.debug("=" * 80)
@@ -270,7 +270,7 @@ async def mcp_handler_http(request: Request, mcp_request: MCPRequest) -> MCPResp
     user_token = headers_dict.get("x-glpi-user-token", "")
     session_manager.set_current_user_token(user_token)
     if user_token:
-        logger.debug(f"USER TOKEN ENCONTRADO: {user_token[:10]}...")
+        logger.debug(f"USER TOKEN ENCONTRADO: {session_manager._tok_ref(user_token)}")
     else:
         # Not an error: `initialize` / `notifications/initialized` legitimately
         # carry no user token. Calls that actually need it fail later, explicitly.

@@ -211,3 +211,43 @@ def test_fora_do_modo_comportamento_antigo(client, monkeypatch):
     r = client.post("/mcp", json=rpc("tools/call", {"name": "x"}))
     assert r.status_code == 200
     fake.assert_called_once()
+
+
+# ---------------------------------------------------------------- credencial fora do log
+async def test_log_da_sessao_nao_mostra_pedaco_do_user_token(modo, monkeypatch, caplog):
+    import logging
+    import src.auth.session_manager as sm_mod
+
+    class ClienteRecusado:
+        def __init__(self, *a, headers=None, **kw):
+            self.headers = dict(headers or {})
+        async def get(self, *a, **kw):
+            class R:
+                status_code = 400
+                text = '["ERROR_WRONG_APP_TOKEN_PARAMETER"]'
+            return R()
+        async def aclose(self):
+            pass
+
+    monkeypatch.setattr(sm_mod.httpx, "AsyncClient", ClienteRecusado)
+    user_token = "TOKPREFIXO" + "resto-do-token-do-cliente"
+
+    async def run():
+        session_manager.set_current_tenant(URL_OK, "APP-DO-CLIENTE")
+        session_manager.set_current_user_token(user_token)
+        with pytest.raises(AuthenticationError):
+            await session_manager._get_session_for_user(user_token)
+    with caplog.at_level(logging.DEBUG):
+        await asyncio.get_running_loop().create_task(run(), context=contextvars.copy_context())
+    assert "Creating new GLPI session" in caplog.text  # o log existe...
+    assert "TOKPREFIXO" not in caplog.text             # ...mas sem pedaço do token
+    assert "APP-DO-CLIENTE" not in caplog.text
+
+
+def test_dump_de_headers_em_debug_nao_mostra_pedaco_da_credencial(modo, client, caplog):
+    import logging
+    with caplog.at_level(logging.DEBUG, logger="mcp-glpi"):
+        client.post("/mcp", json=rpc("tools/list"), headers={**bearer(), **CRED})
+    assert "x-glpi-user-token" in caplog.text
+    for valor in (CRED["x-glpi-app-token"], CRED["x-glpi-user-token"], TOKEN_OK):
+        assert valor[:6] not in caplog.text
