@@ -2097,6 +2097,9 @@ class MCPHandler:
                         "de processo (texto-guia), nao consultas de dados."
                     ),
                 }
+            elif method == "ping":
+                # MCP ping: liveness only, answered without any GLPI credential.
+                result = {}
             elif method == "tools/list":
                 result = await self.handle_list_tools()
             elif method == "tools/call":

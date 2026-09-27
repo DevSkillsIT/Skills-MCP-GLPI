@@ -37,6 +37,19 @@ class Settings(BaseSettings):
     glpi_app_token: str = Field(default="", alias="GLPI_APP_TOKEN")
     glpi_user_token: str = Field(default="", alias="GLPI_USER_TOKEN")
 
+    # ============= Multi-company process (behind ContextForge) =============
+    # ON: the GLPI credential comes ONLY from the request (x-glpi-url,
+    # x-glpi-app-token, x-glpi-user-token); the process never falls back to
+    # glpi_app_token / glpi_user_token / glpi_base_url for data, and every
+    # /mcp request needs a Bearer from mcp_auth_tokens (fail-closed when empty).
+    credencial_por_requisicao: bool = Field(
+        default=False, alias="GLPI_CREDENCIAL_POR_REQUISICAO"
+    )
+    # Comma-separated Bearer tokens accepted on /mcp (same shape as the Omie
+    # OMIE_MCP_AUTH_TOKENS). Empty outside the multi-company mode = no auth,
+    # which is how the per-client PM2 processes run today.
+    mcp_auth_tokens: str = Field(default="", alias="GLPI_MCP_AUTH_TOKENS")
+
     # ============= Client Identity (Multi-tenant) =============
     client_name: str = Field(default="default", alias="CLIENT_NAME")
     client_slug: str = Field(default="default", alias="CLIENT_SLUG")
@@ -261,6 +274,11 @@ class Settings(BaseSettings):
             flat["MCP_HOST"] = http["host"]
         if http.get("port"):
             flat["MCP_PORT"] = http["port"]
+        if "credencial_por_requisicao" in http:
+            flat["GLPI_CREDENCIAL_POR_REQUISICAO"] = http["credencial_por_requisicao"]
+        if http.get("auth_tokens"):
+            toks = http["auth_tokens"]
+            flat["GLPI_MCP_AUTH_TOKENS"] = ",".join(toks) if isinstance(toks, list) else str(toks)
 
         # Seção client
         client = data.get("client", {})

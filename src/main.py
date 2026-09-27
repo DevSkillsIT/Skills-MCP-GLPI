@@ -4,10 +4,11 @@ Suporta Streamable HTTP Transport (Claude + Gemini).
 """
 
 from fastapi import FastAPI, Request, Depends, Response
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from contextlib import asynccontextmanager
 from datetime import datetime
 import asyncio
+import hmac
 import logging
 import re
 import uuid
@@ -30,13 +31,46 @@ _SENSITIVE_HEADER = re.compile(
 
 # ============= TENANT POR REQUISIÇÃO (POC Nango) =============
 def _tenant_url_allowed(url: str) -> bool:
-    """X-GLPI-URL só é aceito se for a instância do processo ou estiver no registry de clientes."""
+    """X-GLPI-URL só é aceito se estiver no registry de clientes (ou for a instância do processo).
+
+    No modo credencial-por-requisicao a instância do processo NÃO entra: ali ela não é de cliente.
+    """
     from src.core.client_registry import get_client_registry
-    allowed = {str(settings.glpi_base_url or "").rstrip("/")}
+    allowed = set() if settings.credencial_por_requisicao else {str(settings.glpi_base_url or "").rstrip("/")}
     for c in get_client_registry().get_all_clients().values():
         if c.get("glpi_url"):
             allowed.add(str(c["glpi_url"]).rstrip("/"))
     return url.rstrip("/") in allowed
+
+
+# ============= MODO MULTIEMPRESA (atrás do ContextForge) =============
+# Métodos que respondem SEM credencial de cliente: o gateway os chama sozinho
+# (descoberta, health check, prompts/get) e nenhum deles lê dado do GLPI.
+CATALOG_METHODS = frozenset({
+    "initialize", "ping", "tools/list", "prompts/list", "prompts/get",
+    "resources/list", "resources/templates/list",
+})
+CREDENTIAL_HEADERS = ("x-glpi-url", "x-glpi-app-token", "x-glpi-user-token")
+
+
+def _is_catalog_method(method: str) -> bool:
+    return method in CATALOG_METHODS or method.startswith("notifications/")
+
+
+def _accepted_mcp_tokens() -> list[str]:
+    return [t.strip() for t in str(settings.mcp_auth_tokens or "").split(",") if t.strip()]
+
+
+def _bearer_ok(request: Request) -> bool:
+    """Bearer do NOSSO MCP, comparado em tempo constante contra cada token aceito."""
+    auth = request.headers.get("authorization", "")
+    if not auth.startswith("Bearer "):
+        return False
+    token = auth[len("Bearer "):].strip().encode()
+    ok = False
+    for accepted in _accepted_mcp_tokens():
+        ok |= hmac.compare_digest(token, accepted.encode())
+    return ok
 
 
 # ============= STREAMABLE HTTP SESSION MANAGEMENT =============
@@ -49,6 +83,16 @@ async def lifespan(app: FastAPI):
     """Context manager para gerenciar ciclo de vida da aplicação."""
     # Startup
     logger.info("MCP GLPI starting...")
+    if settings.credencial_por_requisicao:
+        # Sem credencial no processo: não há sessão padrão a abrir.
+        logger.info(
+            "Modo credencial-por-requisicao: %d token(s) do MCP aceitos, sem sessao padrao",
+            len(_accepted_mcp_tokens()),
+        )
+        yield
+        logger.info("MCP GLPI shutting down...")
+        await session_manager.disconnect()
+        return
     try:
         await http_client.connect()
         await session_manager.connect()  # Conectar session_manager para os services
@@ -71,6 +115,22 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
+
+
+@app.middleware("http")
+async def require_mcp_token(request: Request, call_next):
+    """Exige o Bearer do NOSSO MCP em todo /mcp quando há tokens ou no modo multiempresa.
+
+    Roda antes de ler o corpo: requisição sem token não chega ao parser nem ao handler.
+    Com o modo ligado e a lista vazia, falha fechado (401 em tudo).
+    """
+    enforce = settings.credencial_por_requisicao or bool(_accepted_mcp_tokens())
+    if enforce and request.url.path.rstrip("/") == "/mcp" and not _bearer_ok(request):
+        return JSONResponse(
+            status_code=401,
+            content={"error": "unauthorized", "message": "Authorization: Bearer <token> e obrigatorio."},
+        )
+    return await call_next(request)
 
 
 @app.get("/health", tags=["Health"])
@@ -189,10 +249,19 @@ async def mcp_handler_http(request: Request, mcp_request: MCPRequest) -> MCPResp
     session_manager.set_current_user_key(user_key)
     session_manager._check_rate_limit(user_key)
     
-    # POC Nango: instância GLPI por requisição. Sem headers -> config do processo (GLPI_MCP_CONFIG).
+    # Multiempresa: método que lê ou grava dado exige a credencial COMPLETA nesta requisição.
+    if settings.credencial_por_requisicao and not _is_catalog_method(mcp_request.method or ""):
+        missing = [h for h in CREDENTIAL_HEADERS if not headers_dict.get(h, "").strip()]
+        if missing:
+            return JSONResponse(status_code=400, content={"jsonrpc": "2.0", "id": mcp_request.id,
+                "error": {"code": -32001, "message": (
+                    "Este servidor exige a credencial do GLPI em cada requisicao: headers "
+                    + ", ".join(CREDENTIAL_HEADERS) + ". Faltando: " + ", ".join(missing) + ".")}})
+
+    # POC Nango: instância GLPI por requisição. Sem headers -> config do processo (GLPI_MCP_CONFIG),
+    # exceto no modo credencial-por-requisicao (sem fallback; ver session_manager.get_current_tenant).
     tenant_url = headers_dict.get("x-glpi-url", "")
     if tenant_url and not _tenant_url_allowed(tenant_url):
-        from fastapi.responses import JSONResponse
         return JSONResponse(status_code=403, content={"jsonrpc": "2.0", "id": mcp_request.id,
             "error": {"code": -32001, "message": "X-GLPI-URL nao esta na allowlist"}})
     session_manager.set_current_tenant(tenant_url, headers_dict.get("x-glpi-app-token", ""))
@@ -224,7 +293,6 @@ async def mcp_handler_http(request: Request, mcp_request: MCPRequest) -> MCPResp
         id=response.get("id")
     )
     # Return with Mcp-Session-Id header (required for Streamable HTTP transport)
-    from fastapi.responses import JSONResponse
     return JSONResponse(
         content=mcp_response.model_dump(exclude_none=True),
         headers={"Mcp-Session-Id": session_id},

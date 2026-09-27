@@ -46,11 +46,10 @@ class SessionManager:
         )
         # Pool de sessões por user_token: {user_token: {client, session_token, last_used}}
         self._user_sessions: Dict[str, Dict[str, Any]] = {}
-        # POC Nango: instância GLPI do request atual (base_url, app_token).
-        # Default = config do processo (GLPI_MCP_CONFIG) -> compatível com os processos atuais.
+        # POC Nango: instância GLPI do request atual (base_url, app_token), como veio no request.
+        # Vazio = config do processo, EXCETO no modo credencial-por-requisicao (get_current_tenant).
         self._current_tenant: contextvars.ContextVar[Tuple[str, str]] = contextvars.ContextVar(
-            "current_tenant",
-            default=(str(settings.glpi_base_url or "").rstrip("/"), settings.glpi_app_token or ""),
+            "current_tenant", default=("", "")
         )
         self._session_idle_ttl: int = int(getattr(settings, "session_timeout", 3600) or 3600)
         # ContextVar para user_token do request atual
@@ -123,13 +122,21 @@ class SessionManager:
 
     # ---------------- tenant por requisição (POC Nango) ----------------
     def set_current_tenant(self, base_url: str = "", app_token: str = "") -> None:
-        """Define a instância GLPI do request. Vazio = config do processo."""
-        base_url = str(base_url or settings.glpi_base_url or "").rstrip("/")
-        app_token = app_token or settings.glpi_app_token or ""
-        self._current_tenant.set((base_url, app_token))
+        """Define a instância GLPI do request (o que veio nos headers, sem completar)."""
+        self._current_tenant.set((str(base_url or "").rstrip("/"), app_token or ""))
 
     def get_current_tenant(self) -> Tuple[str, str]:
-        return self._current_tenant.get()
+        """Instância do request; vazio cai na config do processo, menos no modo multiempresa.
+
+        @MX:WARN: [AUTO] no modo credencial-por-requisicao nada aqui pode vir de settings.
+        @MX:REASON: o processo multiempresa atende varios clientes; completar com a config
+        do processo entregava dado de outra empresa a quem mandou so o user token (27/09).
+        """
+        base_url, app_token = self._current_tenant.get()
+        if settings.credencial_por_requisicao:
+            return base_url, app_token
+        return (base_url or str(settings.glpi_base_url or "").rstrip("/"),
+                app_token or settings.glpi_app_token or "")
 
     def tenant_scope(self) -> str:
         """Digest de (instância, app-token, user-token): partição de todos os caches."""
@@ -160,6 +167,13 @@ class SessionManager:
         IMPORTANTE: O user_token deve ser fornecido pelo cliente MCP via header X-GLPI-User-Token.
         Isso garante que cada usuário opere com suas próprias permissões GLPI.
         """
+        if settings.credencial_por_requisicao:
+            base_url, app_token = self.get_current_tenant()
+            if not (user_token and base_url and app_token):
+                raise AuthenticationError(
+                    "Credencial do GLPI ausente: este servidor exige x-glpi-url, "
+                    "x-glpi-app-token e x-glpi-user-token em cada requisicao."
+                )
         if not user_token:
             # Sem user_token do cliente, verificar se tem fallback no .env
             fallback_token = settings.glpi_user_token
@@ -273,7 +287,9 @@ class SessionManager:
                 return token
         except LookupError:
             logger.warning("get_current_user_token: No context - using fallback")
-        
+
+        if settings.credencial_por_requisicao:
+            return ""  # multiempresa: nunca o token guardado no processo
         # Fallback para token do .env (para testes/desenvolvimento)
         token = settings.glpi_user_token
         if token:
