@@ -2011,7 +2011,14 @@ class MCPHandler:
                 result = {
                     "protocolVersion": "2024-11-05",
                     "serverInfo": {"name": "mcp-glpi", "version": "2.0.0"},
-                    "capabilities": {"tools": {}, "prompts": {}, "resources": {}},
+                    # prompts/resources com objeto NÃO vazio: o ContextForge v1.0.10 trata `{}` como "não suporta"
+                    # e não descobre o catálogo (corrigido no main deles, PR #6758, sem release). Pela spec do MCP,
+                    # `listChanged: False` significa o mesmo que `{}`.
+                    "capabilities": {
+                        "tools": {},
+                        "prompts": {"listChanged": False},
+                        "resources": {"subscribe": False, "listChanged": False},
+                    },
                     "instructions": (
                         f"Servidor MCP GLPI - Gerenciamento de chamados, ativos, usuarios, ITIL e webhooks ({n_tools} tools)\n\n"
                         "=== CATEGORIAS DE TOOLS ===\n\n"

@@ -202,6 +202,17 @@ def test_ping_responde_objeto_vazio():
     assert resp.get("error") is None and resp["result"] == {}
 
 
+
+def test_initialize_anuncia_prompts_e_resources_com_objeto_nao_vazio():
+    """O ContextForge v1.0.10 testa `if capabilities.get("prompts")`: um `{}` vazio conta como falso e ele não
+    descobre prompts nem resources (corrigido no main deles pelo PR #6758, sem release). `listChanged: False` diz o
+    mesmo que `{}` pela spec do MCP e faz a descoberta acontecer."""
+    resp = asyncio.run(main_mod.mcp_handler.handle_request(rpc("initialize")))
+    caps = resp["result"]["capabilities"]
+    assert caps["prompts"] == {"listChanged": False}
+    assert caps["resources"] == {"subscribe": False, "listChanged": False}
+    assert all(bool(caps[k]) for k in ("prompts", "resources"))
+
 # ---------------------------------------------------------------- fora do modo: nada muda
 def test_fora_do_modo_comportamento_antigo(client, monkeypatch):
     monkeypatch.setitem(settings.__dict__, "credencial_por_requisicao", False)
