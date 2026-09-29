@@ -143,6 +143,15 @@ class SessionManager:
         return (base_url or str(settings.glpi_base_url or "").rstrip("/"),
                 app_token or settings.glpi_app_token or "")
 
+    def has_request_credential(self) -> bool:
+        """True when THIS request carried the three x-glpi-* values (never the process config)."""
+        try:
+            base_url, app_token = self._current_tenant.get()
+            user_token = self._current_user_token.get()
+        except LookupError:
+            return False
+        return bool(base_url and app_token and user_token)
+
     def tenant_scope(self) -> str:
         """Digest de (instância, app-token, user-token): partição de todos os caches."""
         base_url, app_token = self.get_current_tenant()

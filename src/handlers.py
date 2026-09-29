@@ -2195,10 +2195,28 @@ class MCPHandler:
                 result = {"prompts": PROMPTS_CATALOG}
             elif method == "prompts/get":
                 # SPEC-GLPI-ENHANCE-001/F07: Native prompts/get via handler
-                from src.prompts_handlers.prompts import handle_get_prompt
+                from src.prompts_handlers.prompts import (
+                    PROMPTS_CATALOG, TEMPLATE_ONLY_PROMPTS, credential_guide, handle_get_prompt,
+                )
+                from src.auth.session_manager import session_manager
                 prompt_name = params.get("name")
-                prompt_args = params.get("arguments", {})
-                prompt_result = await handle_get_prompt(name=prompt_name, arguments=prompt_args)
+                prompt_args = params.get("arguments") or {}
+                prompt_cfg = next((p for p in PROMPTS_CATALOG if p["name"] == prompt_name), None)
+                missing_required = [
+                    a["name"] for a in (prompt_cfg or {}).get("arguments", [])
+                    if a.get("required") and a["name"] not in prompt_args
+                ]
+                # @MX:ANCHOR: a data prompt without the caller's credential answers with a guide.
+                # @MX:REASON: ContextForge calls prompts/get without the client's x-glpi-* headers
+                # (measured 28/09/2026): 6 prompts failed and 4 printed fake zeros. Unknown names and
+                # missing required arguments still go to the handler, which reports them.
+                if (settings.credencial_por_requisicao and prompt_cfg is not None
+                        and not missing_required
+                        and prompt_name not in TEMPLATE_ONLY_PROMPTS
+                        and not session_manager.has_request_credential()):
+                    prompt_result = credential_guide(prompt_name, prompt_args)
+                else:
+                    prompt_result = await handle_get_prompt(name=prompt_name, arguments=prompt_args)
                 result = {
                     "messages": [
                         {

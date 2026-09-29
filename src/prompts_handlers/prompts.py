@@ -7,6 +7,7 @@ Desenvolvido para MSPs brasileiros com foco em produtividade.
 """
 
 from typing import Dict, Any, List, NoReturn
+import json
 from datetime import datetime, timedelta
 import logging
 
@@ -52,6 +53,43 @@ def _query_failed(step: str, exc: Exception) -> NoReturn:
     code = exc.code if isinstance(exc, GLPIError) and exc.code >= 400 else 502
     logger.warning(f"prompt query failed ({step}): {reason}")
     raise GLPIError(code, f"Nao foi possivel consultar o GLPI ({step}): {reason}") from exc
+
+
+# @MX:NOTE: measured 28/09/2026 (spy on the GLPI session, multiempresa mode, no credential): these
+# three are process checklists and never touch GLPI. The other 12 read data (GLPI or the knowledge
+# base). tests/test_prompts_sem_credencial.py fails if a "template" prompt starts reading data.
+TEMPLATE_ONLY_PROMPTS = frozenset({
+    "glpi_onboarding_checklist",
+    "glpi_change_management",
+    "glpi_hardware_request",
+})
+
+
+def credential_guide(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """Answer for a data prompt requested WITHOUT the caller's GLPI credential.
+
+    ContextForge calls prompts/get on its own, without the client's x-glpi-* headers. Querying
+    nothing and saying so beats both failing and printing zeros. The bridge tool
+    glpi_get_prompt_template is a tools/call, so it carries the credential and returns the same
+    report with real data.
+    """
+    call = (f"glpi_get_prompt_template(name=\"{name}\", "
+            f"arguments={json.dumps(arguments or {}, ensure_ascii=False)})")
+    text = (
+        f"> 📋 **PROMPT `{name}`: precisa da credencial do GLPI de quem pede.**\n\n"
+        "Este relatorio e montado com dados reais do GLPI, e esta chamada chegou sem os headers "
+        "x-glpi-url, x-glpi-app-token e x-glpi-user-token. Nenhum dado foi consultado e nenhum "
+        "numero foi calculado.\n\n"
+        "Para obter o relatorio com os dados, chame a tool abaixo. Ela usa a credencial da sua "
+        f"conexao e devolve este mesmo relatorio:\n\n    {call}\n"
+    )
+    return {
+        "prompt_name": name,
+        "compact": text,
+        "detailed": text,
+        "metadata": {"reason": "missing_credential", "tool": "glpi_get_prompt_template",
+                     "arguments": arguments or {}},
+    }
 
 
 # ============= CATÁLOGO DE PROMPTS =============
