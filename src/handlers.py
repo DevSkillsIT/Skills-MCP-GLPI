@@ -6,6 +6,7 @@ Roteamento JSON-RPC 2.0 para execução das tools
 
 from typing import Dict, Any, List, Optional, Tuple
 import json
+import re
 from datetime import datetime
 
 # SPEC-GLPI-ENHANCE-001/F04: Consolidated tools
@@ -52,6 +53,32 @@ _ARGUMENT_ALIASES: Tuple[frozenset, ...] = (
     frozenset({"query", "search", "search_text", "text", "q"}),
     frozenset({"limit", "max_results", "page_size"}),
 )
+
+
+_UNEXPECTED_KWARG = re.compile(r"unexpected keyword argument '([^']+)'")
+
+
+def tool_error_result(text: str) -> Dict[str, Any]:
+    """Result of a tool that ran and failed: MCP ``isError`` with readable text."""
+    return {"content": [{"type": "text", "text": text}], "isError": True}
+
+
+def describe_failure(exc: GLPIError) -> str:
+    """Error text an agent can act on: says WHICH item or parameter failed.
+
+    ``NotFoundError`` only carries "Ticket not found" in its message; the id lives in
+    ``details``. Without it the agent cannot tell which of several calls failed.
+    """
+    msg = exc.message
+    details = exc.details or {}
+    ident = details.get("identifier")
+    if ident and str(ident) not in msg:
+        resource = details.get("resource")
+        msg = f"{msg}: {resource} {ident}" if resource else f"{msg}: {ident}"
+    field = details.get("field")
+    if field and field not in msg:
+        msg = f"{msg} (parametro '{field}')"
+    return msg
 
 
 def _normalize_argument_aliases(
@@ -1832,6 +1859,21 @@ class MCPHandler:
             # @MX:NOTE: re-raise limpo, mensagem ja esta clara no exception original
             logger.error(f"tools/call validation error for {tool_name}: {e.message}")
             raise
+        except TypeError as e:
+            # An argument the handler does not declare surfaces here as a Python TypeError.
+            # Tell the agent which argument is wrong and what it may send instead.
+            unexpected = _UNEXPECTED_KWARG.search(str(e))
+            if unexpected is None:
+                logger.error(f"tools/call unexpected error for {tool_name}: {e}", exc_info=True)
+                raise GLPIError(500, f"Tool '{tool_name}' falhou: {str(e)}") from None
+            schema = self.tools.get(tool_name, {}).get("input_schema") or {}
+            accepted = ", ".join(sorted(schema.get("properties") or {})) or "(nenhum)"
+            logger.error(f"tools/call unknown argument for {tool_name}: {unexpected.group(1)}")
+            raise ValidationError(
+                f"A tool '{tool_name}' nao aceita o argumento '{unexpected.group(1)}'. "
+                f"Argumentos aceitos: {accepted}.",
+                unexpected.group(1),
+            ) from None
         except Exception as e:
             # @MX:NOTE: stack completo no log, mensagem unica para o LLM (Bug #9 — flatten)
             logger.error(
@@ -2115,8 +2157,23 @@ class MCPHandler:
 
                 if not tool_name:
                     raise ValidationError("Tool name is required", "name")
+                # Protocol errors: the call never became a tool execution.
+                if tool_name not in self.tools:
+                    raise MethodNotFoundError(tool_name)
+                if arguments is None:
+                    arguments = {}
+                if not isinstance(arguments, dict):
+                    raise ValidationError("Arguments must be a JSON object", "arguments")
 
-                result = await self.handle_call_tool(tool_name, arguments)
+                # @MX:ANCHOR: a failing tool answers INSIDE the result (isError), never as JSON-RPC error.
+                # @MX:REASON: MCP separates protocol errors from tool execution errors; the model reads
+                # the latter to fix its call. Gateways (ContextForge v1.0.11, measured 28/09/2026) turn an
+                # upstream JSON-RPC error into "unhandled errors in a TaskGroup", so "ticket 999 does not
+                # exist" or "limit must be an integer" never reached the agent.
+                try:
+                    result = await self.handle_call_tool(tool_name, arguments)
+                except GLPIError as e:
+                    result = tool_error_result(describe_failure(e))
             elif method == "resources/list":
                 # SPEC-GLPI-ENHANCE-001/F06: MCP Resources
                 from src.resources import list_resources
