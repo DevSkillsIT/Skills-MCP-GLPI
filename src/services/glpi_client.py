@@ -10,9 +10,39 @@ from datetime import datetime
 from src.config import settings
 from src.logger import logger
 from src.models.exceptions import (
+    GLPIError,
     NotFoundError
 )
 from src.auth.session_manager import session_manager
+
+
+#: Subitens cujo 404 do GLPI significa LISTA VAZIA, nao falha.
+#:
+#: `GET /TicketFollowup/<id>/Document_Item` devolve 404 quando o followup nao tem
+#: anexo — que e o caso comum. O chamador em `ticket_service._fu_docs` ja trata
+#: isso como normal: ele varre ("ITILFollowup", "TicketFollowup") num try/except
+#: que faz `continue`, porque nao sabe de antemao qual nome este GLPI usa nem se
+#: ha documento. So que o log acontece DUAS CAMADAS ABAIXO, em `get()` e em
+#: `get_subitems()`, onde essa intencao nao existe — e cada resultado esperado
+#: saia como dois ERROR.
+#:
+#: Medido no mcp-glpi-<cliente> em 02/09/2026: 12 de 12 ocorrencias de "Get subitems
+#: failed" eram TicketFollowup/Document_Item. Nenhum outro subitem aparece. Por
+#: isso a lista tem um item so: o que esta aqui foi MEDIDO, nao suposto. Se outro
+#: subitem comecar a poluir o log, meça e acrescente.
+_SUBITENS_CUJO_404_E_VAZIO: tuple = ("Document_Item",)
+
+
+def _e_ausencia_esperada(endpoint: str, erro: Exception) -> bool:
+    """`True` quando o erro e um 404 que significa "nao ha nenhum", nao "quebrou".
+
+    Existe como funcao unica porque o MESMO evento e registrado em dois lugares
+    (`get` e `get_subitems`). Duplicar a condicao deixaria um dos dois em ERROR e
+    a limpeza pela metade — o log continuaria gritando, com metade do volume.
+    """
+    if not isinstance(erro, GLPIError) or erro.code != 404:
+        return False
+    return endpoint.rstrip("/").endswith(_SUBITENS_CUJO_404_E_VAZIO)
 
 
 def emit_criteria(
@@ -152,7 +182,10 @@ class GLPIClient:
                 return result
                 
         except Exception as e:
-            logger.error(f"GET request failed for {endpoint}: {e}")
+            if _e_ausencia_esperada(endpoint, e):
+                logger.debug(f"GET sem resultado para {endpoint}: {e}")
+            else:
+                logger.error(f"GET request failed for {endpoint}: {e}")
             raise
     
     async def get_with_pagination(
@@ -429,7 +462,14 @@ class GLPIClient:
             return result
             
         except Exception as e:
-            logger.error(f"Get subitems failed for {item_type}/{item_id}/{subitem_type}: {e}")
+            if _e_ausencia_esperada(endpoint, e):
+                logger.debug(
+                    f"Sem {subitem_type} em {item_type}/{item_id} (404 = lista vazia)"
+                )
+            else:
+                logger.error(
+                    f"Get subitems failed for {item_type}/{item_id}/{subitem_type}: {e}"
+                )
             raise
     
     async def get_health_status(self) -> Dict[str, Any]:
