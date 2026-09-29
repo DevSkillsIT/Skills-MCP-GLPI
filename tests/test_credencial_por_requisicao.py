@@ -61,10 +61,16 @@ def bearer(tok: str = TOKEN_OK) -> dict:
 # ---------------------------------------------------------------- (a) credencial completa
 @pytest.mark.parametrize("falta", ["x-glpi-url", "x-glpi-app-token", "x-glpi-user-token"])
 def test_tools_call_sem_um_dos_tres_headers_e_recusado(modo, client, falta):
+    """Recusa de tools/call vai DENTRO do resultado (isError), com o header que falta.
+
+    Um HTTP 400 virava, no ContextForge v1.0.11, "400 Bad Request for url
+    'http://172.16.1.24:8828/mcp'": o agente perdia o motivo e via a URL interna (28/09).
+    """
     hs = {**bearer(), **{k: v for k, v in CRED.items() if k != falta}}
     r = client.post("/mcp", json=rpc("tools/call", {"name": "glpi_search_admin_resources"}), headers=hs)
-    assert r.status_code == 400
-    msg = r.json()["error"]["message"]
+    assert r.status_code == 200
+    assert r.json()["result"]["isError"] is True
+    msg = r.json()["result"]["content"][0]["text"]
     assert falta in msg and "x-glpi-url" in msg
     for valor in CRED.values():  # a resposta nunca ecoa a credencial
         assert valor not in r.text
@@ -73,7 +79,9 @@ def test_tools_call_sem_um_dos_tres_headers_e_recusado(modo, client, falta):
 
 def test_tools_call_sem_nenhum_header_e_recusado(modo, client):
     r = client.post("/mcp", json=rpc("tools/call", {"name": "glpi_search_admin_resources"}), headers=bearer())
-    assert r.status_code == 400
+    assert r.status_code == 200
+    assert r.json()["result"]["isError"] is True
+    assert "x-glpi-user-token" in r.json()["result"]["content"][0]["text"]
     modo.assert_not_called()
 
 
@@ -90,9 +98,19 @@ def test_tools_call_com_os_tres_headers_passa(modo, client):
     modo.assert_called_once()
 
 
-def test_x_glpi_url_fora_da_allowlist_continua_403(modo, client):
+def test_x_glpi_url_fora_da_allowlist_recusa_tools_call_com_isError(modo, client):
     hs = {**bearer(), **CRED, "x-glpi-url": "https://glpi-intruso.example"}
     r = client.post("/mcp", json=rpc("tools/call", {"name": "x"}), headers=hs)
+    assert r.status_code == 200
+    assert r.json()["result"]["isError"] is True
+    assert "allowlist" in r.json()["result"]["content"][0]["text"]
+    assert "glpi-intruso" not in r.text  # nao ecoa o que o cliente mandou
+    modo.assert_not_called()
+
+
+def test_x_glpi_url_fora_da_allowlist_continua_403_nos_outros_metodos(modo, client):
+    hs = {**bearer(), **CRED, "x-glpi-url": "https://glpi-intruso.example"}
+    r = client.post("/mcp", json=rpc("resources/read", {"uri": "glpi://entities"}), headers=hs)
     assert r.status_code == 403
     modo.assert_not_called()
 
@@ -100,7 +118,7 @@ def test_x_glpi_url_fora_da_allowlist_continua_403(modo, client):
 def test_instancia_do_processo_nao_entra_na_allowlist(modo, client):
     hs = {**bearer(), **CRED, "x-glpi-url": GUARDADO["glpi_base_url"]}
     r = client.post("/mcp", json=rpc("tools/call", {"name": "x"}), headers=hs)
-    assert r.status_code == 403
+    assert r.status_code == 200 and r.json()["result"]["isError"] is True
     modo.assert_not_called()
 
 

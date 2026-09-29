@@ -216,6 +216,22 @@ async def mcp_session_terminate(request: Request):
     return {"status": "session_terminated", "session_id": session_id}
 
 
+def _credential_refused(mcp_request: MCPRequest, status: int, message: str):
+    """Credential gate refusal. Never echoes the values the client sent.
+
+    ``tools/call`` gets a tool result with ``isError`` (HTTP 200): behind ContextForge v1.0.11 an
+    HTTP 400 reached the agent as "400 Bad Request for url 'http://172.16.1.24:8828/mcp'", losing
+    the reason and exposing the internal URL (measured 28/09/2026). Other methods keep the status.
+    """
+    from src.handlers import tool_error_result
+
+    if mcp_request.method == "tools/call":
+        return JSONResponse(content={"jsonrpc": "2.0", "id": mcp_request.id,
+                                     "result": tool_error_result(message)})
+    return JSONResponse(status_code=status, content={"jsonrpc": "2.0", "id": mcp_request.id,
+                                                     "error": {"code": -32001, "message": message}})
+
+
 def _rate_limited_response(mcp_request: MCPRequest, exc: RateLimitError):
     """Rate limit hit before dispatch: readable text instead of an unhandled 500.
 
@@ -274,17 +290,15 @@ async def mcp_handler_http(request: Request, mcp_request: MCPRequest) -> MCPResp
     if settings.credencial_por_requisicao and not _is_catalog_method(mcp_request.method or ""):
         missing = [h for h in CREDENTIAL_HEADERS if not headers_dict.get(h, "").strip()]
         if missing:
-            return JSONResponse(status_code=400, content={"jsonrpc": "2.0", "id": mcp_request.id,
-                "error": {"code": -32001, "message": (
-                    "Este servidor exige a credencial do GLPI em cada requisicao: headers "
-                    + ", ".join(CREDENTIAL_HEADERS) + ". Faltando: " + ", ".join(missing) + ".")}})
+            return _credential_refused(mcp_request, 400, (
+                "Este servidor exige a credencial do GLPI em cada requisicao: headers "
+                + ", ".join(CREDENTIAL_HEADERS) + ". Faltando: " + ", ".join(missing) + "."))
 
     # POC Nango: instância GLPI por requisição. Sem headers -> config do processo (GLPI_MCP_CONFIG),
     # exceto no modo credencial-por-requisicao (sem fallback; ver session_manager.get_current_tenant).
     tenant_url = headers_dict.get("x-glpi-url", "")
     if tenant_url and not _tenant_url_allowed(tenant_url):
-        return JSONResponse(status_code=403, content={"jsonrpc": "2.0", "id": mcp_request.id,
-            "error": {"code": -32001, "message": "X-GLPI-URL nao esta na allowlist"}})
+        return _credential_refused(mcp_request, 403, "X-GLPI-URL nao esta na allowlist deste servidor")
     session_manager.set_current_tenant(tenant_url, headers_dict.get("x-glpi-app-token", ""))
 
     # Extrair user_token do header do cliente MCP (cada usuário envia seu próprio token)
