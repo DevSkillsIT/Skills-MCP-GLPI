@@ -469,7 +469,7 @@ class MCPHandler:
                 "input_schema": {
                     "type": "object",
                     "properties": {
-                        "name": {"type": "string", "description": "Nome do relatorio/prompt a executar no GLPI (ex: 'sla_dashboard', 'ticket_trends'). Use glpi_list_available_prompts para ver os 15 disponiveis."},
+                        "name": {"type": "string", "description": "Nome do relatorio/prompt a executar no GLPI (ex: 'glpi_sla_performance', 'glpi_ticket_trends'; o prefixo glpi_ e opcional). Use glpi_list_available_prompts para ver os 15 disponiveis."},
                         "arguments": {"type": "object", "description": "Argumentos do relatorio no formato chave-valor (ex: {'periodo': '30d'}). Cada relatorio aceita argumentos especificos — consulte glpi_list_available_prompts para detalhes."},
                     },
                     "required": ["name"],
@@ -2120,7 +2120,7 @@ class MCPHandler:
                         "- Buscar solucao para erro de banco:\n"
                         "    glpi_search_knowledge_unified(query='ORA-00942 table does not exist')\n"
                         "- Rodar relatorio de SLA dos ultimos 30 dias:\n"
-                        "    glpi_get_prompt_template(name='sla_dashboard', arguments={'period_days': 30})\n"
+                        "    glpi_get_prompt_template(name='glpi_sla_performance', arguments={'period_days': 30})\n"
                         f"{ai_example_block}\n"
                         "=== WORKFLOWS COMUNS ===\n"
                         "- 'Quantos chamados abertos hoje?': search_helpdesk_tickets com date_after=hoje + date_before=hoje. Conte os retornados (campo 'total' do paginador).\n"

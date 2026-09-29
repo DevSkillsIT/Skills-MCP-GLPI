@@ -228,3 +228,43 @@ class TestPromptNaoTransformaFalhaEmZero:
                           AsyncMock(side_effect=AuthenticationError("Credencial do GLPI ausente"))):
             with pytest.raises(AuthenticationError):
                 await self._prompt("glpi_ticket_trends", {})
+
+
+# ---------------------------------------------------------------- tool-ponte de prompts
+
+
+class TestPonteDePrompts:
+    """glpi_get_prompt_template e o caminho de quem nao tem prompts nativos (mcphub, gateways).
+
+    Antes: falha do prompt voltava como ``{"error": ...}`` num resultado de SUCESSO, e o
+    exemplo da descricao ('sla_dashboard') nao existia no catalogo.
+    """
+
+    async def test_falha_do_prompt_vira_isError(self):
+        from src.services.glpi_client import glpi_client
+        with patch.object(glpi_client, "get", AsyncMock(side_effect=GLPIError(503, "GLPI fora do ar"))):
+            resp = await mcp_handler.handle_request(_call(
+                "glpi_get_prompt_template", {"name": "glpi_ticket_trends", "arguments": {}}))
+        assert "GLPI fora do ar" in _falha_da_tool(resp)
+
+    async def test_prompt_inexistente_vira_isError_com_a_lista(self):
+        resp = await mcp_handler.handle_request(_call(
+            "glpi_get_prompt_template", {"name": "nao_existe"}))
+        assert "glpi_sla_performance" in _falha_da_tool(resp)
+
+    async def test_aceita_o_nome_sem_o_prefixo(self):
+        with patch("src.prompts_handlers.prompts.prompt_handler.get_prompt",
+                   AsyncMock(return_value={"prompt_name": "glpi_ticket_trends", "compact": "ok"})) as get:
+            resp = await mcp_handler.handle_request(_call(
+                "glpi_get_prompt_template", {"name": "ticket_trends", "arguments": {}}))
+        assert not resp["result"].get("isError")
+        assert get.await_args.args[0] == "glpi_ticket_trends"
+
+    def test_exemplos_da_descricao_existem_no_catalogo(self):
+        import re as _re
+        from src.prompts_handlers.prompts import PROMPTS_CATALOG
+        nomes = {p["name"] for p in PROMPTS_CATALOG}
+        tool = mcp_handler.tools["glpi_get_prompt_template"]
+        texto = tool["input_schema"]["properties"]["name"]["description"]
+        citados = set(_re.findall(r"'([a-z_]+)'", texto))
+        assert citados and citados <= nomes, citados - nomes

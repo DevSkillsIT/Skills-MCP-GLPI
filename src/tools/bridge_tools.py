@@ -6,6 +6,7 @@ SPEC-GLPI-ENHANCE-001/F07 — Section 4.7
 """
 
 from typing import Any, Dict, Optional
+from src.models.exceptions import NotFoundError, ValidationError
 
 from src.resources import GLPI_RESOURCES, list_resources, read_resource
 from src.formatters.glpi_formatters import format_resources_list, format_prompts_list
@@ -76,23 +77,21 @@ class BridgeTools:
         entries themselves do not carry handlers.
         """
         if not name:
-            return {"error": "Parametro 'name' obrigatorio. Use glpi_list_prompts para ver prompts disponiveis."}
+            raise ValidationError(
+                "Parametro 'name' obrigatorio. Use glpi_list_available_prompts para ver os prompts.", "name")
 
-        prompt = next((p for p in self.prompts_catalog if p.get("name") == name), None)
-        if not prompt:
-            names = [p.get("name", "") for p in self.prompts_catalog]
-            return {
-                "error": (
-                    f"Prompt '{name}' nao encontrado. "
-                    f"Disponiveis ({len(names)}): {', '.join(names)}"
-                )
-            }
+        # The catalog names carry the server prefix ("glpi_sla_performance"); agents often send the
+        # short form ("sla_performance"). Accept both, never guess beyond the prefix.
+        catalog = {p.get("name", ""): p for p in self.prompts_catalog}
+        if name not in catalog and f"glpi_{name}" in catalog:
+            name = f"glpi_{name}"
+        if name not in catalog:
+            raise NotFoundError(
+                "Prompt", f"{name}. Disponiveis ({len(catalog)}): {', '.join(catalog)}")
 
-        try:
-            return await prompt_handler.get_prompt(name, arguments or {})
-        except Exception as e:
-            logger.error(f"get_prompt_tool error for '{name}': {e}")
-            return {"error": f"Falha ao executar prompt '{name}': {e}"}
+        # Failures propagate: the dispatcher returns them as isError with the reason. Returning
+        # {"error": ...} here made a failed report look like a successful result.
+        return await prompt_handler.get_prompt(name, arguments or {})
 
     async def search_knowledge(self, query: str = "", limit: int = 10, **kwargs) -> Any:
         """Search GLPI knowledge base (KnowbaseItem).
