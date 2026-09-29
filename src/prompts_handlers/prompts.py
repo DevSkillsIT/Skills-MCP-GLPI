@@ -6,12 +6,13 @@ Skills IT - Soluções em Tecnologia
 Desenvolvido para MSPs brasileiros com foco em produtividade.
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, NoReturn
 from datetime import datetime, timedelta
 import logging
 
 from src.glpi_service import GLPIService
 from src.models import NotFoundError, ValidationError, GLPIError
+from src.models.exceptions import AuthenticationError, RateLimitError
 from src.formatters.markdown_helpers import fmt_status, fmt_priority, strip_html
 from src.services.dropdown_cache import dropdown_cache
 from src.services.ticket_service import TICKET_FIELD
@@ -35,6 +36,22 @@ def _wrap_with_disambiguation(prompt_name: str, body: str) -> str:
     if not body:
         return body
     return _PROMPT_DISAMBIGUATION.format(name=prompt_name) + body
+
+
+def _query_failed(step: str, exc: Exception) -> NoReturn:
+    """The report's MAIN query failed: raise with the reason, never continue with an empty list.
+
+    @MX:WARN: continuing with ``[]`` printed "Total no periodo: 0" / "Nenhum ativo encontrado"
+    @MX:REASON: a failed query then reads as a real zero (measured 28/09/2026 behind ContextForge,
+    where prompts/get arrives without the client's credential). Missing credential and rate limit
+    keep their type so the caller can tell "no credential" from "GLPI failed".
+    """
+    if isinstance(exc, (AuthenticationError, RateLimitError)):
+        raise exc
+    reason = exc.message if isinstance(exc, GLPIError) else str(exc)
+    code = exc.code if isinstance(exc, GLPIError) and exc.code >= 400 else 502
+    logger.warning(f"prompt query failed ({step}): {reason}")
+    raise GLPIError(code, f"Nao foi possivel consultar o GLPI ({step}): {reason}") from exc
 
 
 # ============= CATÁLOGO DE PROMPTS =============
@@ -580,8 +597,8 @@ class PromptHandler:
         try:
             entities = await self.service.list_entities()
         except Exception as exc:  # noqa: BLE001
-            logger.warning(f"list_entities failed: {exc}")
-            return None
+            # Returning None here ran the report GLOBALLY while the caller asked for one entity.
+            _query_failed("resolver a entidade", exc)
         match = next(
             (e for e in entities if entity_name.lower() in (getattr(e, "name", "") or "").lower()),
             None,
@@ -614,8 +631,7 @@ class PromptHandler:
         try:
             search_result = await _client.get("/apirest.php/search/Ticket", params=params, use_cache=False)
         except Exception as exc:  # noqa: BLE001
-            logger.warning(f"category aggregation search failed: {exc}")
-            search_result = {}
+            _query_failed("buscar os chamados do periodo", exc)
 
         items: List[Any] = []
         if isinstance(search_result, dict):
@@ -794,8 +810,7 @@ para não gerar valores fictícios.
         try:
             search_result = await _client.get("/apirest.php/search/Ticket", params=params, use_cache=False)
         except Exception as exc:  # noqa: BLE001
-            logger.warning(f"technician_productivity search failed: {exc}")
-            search_result = {}
+            _query_failed("buscar os chamados do periodo", exc)
 
         items = search_result.get("data") or [] if isinstance(search_result, dict) else []
         resolved_by_tech: Dict[str, int] = {}
@@ -1036,7 +1051,11 @@ Min. {min_occurrences} ocorrências
             elif isinstance(resp, dict):
                 satisfactions = resp.get("data") or []
         except Exception as exc:  # noqa: BLE001
-            logger.warning(f"client_satisfaction fetch failed: {exc}")
+            # 404 = this GLPI has no satisfaction survey: "not available" is the honest answer.
+            # Anything else (auth, rate limit, GLPI down) is a failed query, not an empty survey.
+            if not (isinstance(exc, GLPIError) and exc.code == 404):
+                _query_failed("buscar as pesquisas de satisfacao", exc)
+            logger.info(f"client_satisfaction: TicketSatisfaction indisponivel nesta instancia: {exc}")
 
         rated = []
         for s in satisfactions:
@@ -1214,9 +1233,8 @@ Min. {min_occurrences} ocorrências
 
         try:
             search_result = await _client.get("/apirest.php/search/Ticket", params=params, use_cache=False)
-        except Exception as exc:
-            logger.warning(f"user_ticket_history search failed: {exc}")
-            search_result = {}
+        except Exception as exc:  # noqa: BLE001
+            _query_failed("buscar os chamados do usuario", exc)
 
         # Normalizar resultado
         items = []
@@ -1321,9 +1339,8 @@ Min. {min_occurrences} ocorrências
         from src.services.asset_service import asset_service as _as
         try:
             items = await _as.search_assets(query=search_term, asset_type="Computer", limit=5)
-        except Exception as exc:
-            logger.warning(f"asset_lookup search failed: {exc}")
-            items = []
+        except Exception as exc:  # noqa: BLE001
+            _query_failed("buscar os ativos", exc)
 
         if isinstance(items, dict):
             items = items.get("data") or items.get("items") or []

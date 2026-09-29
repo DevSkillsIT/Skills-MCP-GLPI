@@ -266,7 +266,13 @@ class SessionManager:
         # Verificar se excedeu limite
         if count >= self._rate_limit_per_minute:
             logger.warning(f"Rate limit exceeded for user {user_key}: {count}/{self._rate_limit_per_minute}")
-            raise RateLimitError(f"Rate limit exceeded: {self._rate_limit_per_minute} requests per minute")
+            # Counts every GLPI API call of this user, not just MCP requests: one report prompt
+            # can spend hundreds. The agent needs the limit and the wait, not a bare 500.
+            wait = max(1, int(60 - (now - last_reset)) + 1)
+            raise RateLimitError(
+                f"Limite de {self._rate_limit_per_minute} chamadas por minuto ao GLPI atingido "
+                f"para este usuario (conta cada consulta interna ao GLPI). Tente de novo em {wait} s."
+            )
 
         # Incrementar contador
         self._rate_limits[user_key] = (count + 1, last_reset)

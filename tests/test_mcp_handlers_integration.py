@@ -27,6 +27,14 @@ def _result(response):
     return response["result"]
 
 
+def _tool_error(response):
+    """Falha de execucao da tool: vem DENTRO do resultado (isError), nao como erro JSON-RPC."""
+    assert "error" not in response, f"erro de protocolo inesperado: {response.get('error')}"
+    result = response["result"]
+    assert result.get("isError") is True, f"sem isError: {result}"
+    return result["content"][0]["text"]
+
+
 def _text(response):
     """Extrai o texto Markdown do envelope content[] de tools/call."""
     result = _result(response)
@@ -264,11 +272,8 @@ class TestMCPHandlersIntegration:
 
             response = await mcp_handler.handle_request(glpi_error_request)
 
-            assert "error" in response
-            error = response["error"]
-            assert error["code"] == -32004  # Not found mapeado conforme SPEC
-            assert "not found" in error["message"].lower()
-            assert error["data"]["type"] == "GLPIError"
+            # Falha de execucao da tool: vai no resultado com o texto do GLPI.
+            assert "not found" in _tool_error(response).lower()
 
     @pytest.mark.asyncio
     async def test_error_handling_validation_error(self):
@@ -289,14 +294,8 @@ class TestMCPHandlersIntegration:
 
         response = await mcp_handler.handle_request(validation_error_request)
 
-        assert "error" in response
-        error = response["error"]
-        assert error["code"] == -32602  # Invalid params
-        assert (
-            "validation" in error["message"].lower()
-            or "required" in error["message"].lower()
-            or "title" in error["message"].lower()
-        )
+        text = _tool_error(response).lower()
+        assert "validation" in text or "required" in text or "title" in text
 
     @pytest.mark.asyncio
     async def test_concurrent_requests_handling(self):
@@ -366,10 +365,7 @@ class TestMCPHandlersIntegration:
 
             # Defense-in-depth: input malicioso é sanitizado e rejeitado por
             # ficar curto demais após a remoção das tags.
-            assert "error" in response
-            error = response["error"]
-            assert error["code"] == -32602  # Invalid params
-            assert "at least 2 characters" in error["message"]
+            assert "at least 2 characters" in _tool_error(response)
 
     @pytest.mark.asyncio
     async def test_similarity_algorithm_integration(self):

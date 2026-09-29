@@ -45,6 +45,12 @@ def handler():
     return MCPHandler()
 
 
+def _tool_failed(response) -> bool:
+    """Falha de execucao da tool vem no resultado (isError), nao como erro JSON-RPC."""
+    assert "error" not in response, f"erro de protocolo inesperado: {response.get('error')}"
+    return response["result"].get("isError") is True
+
+
 def _request(tool, arguments):
     return {
         "jsonrpc": "2.0",
@@ -67,7 +73,7 @@ class TestPolicyIsOnThePath:
                 })
             )
 
-        assert "error" in response
+        assert _tool_failed(response)
         # E o mais importante: o GLPI nunca foi tocado.
         service.assert_not_awaited()
 
@@ -80,7 +86,7 @@ class TestPolicyIsOnThePath:
                 _request("glpi_search_helpdesk_tickets", {"limit": 2})
             )
 
-        assert "error" not in response
+        assert not _tool_failed(response)
 
     async def test_disabling_one_operation_leaves_the_others(self, handler):
         set_write_policy(WritePolicy(env={"GLPI_ALLOW_TICKET_CREATE": "false"}))
@@ -101,9 +107,9 @@ class TestPolicyIsOnThePath:
                 })
             )
 
-        assert "error" in blocked
+        assert _tool_failed(blocked)
         create.assert_not_awaited()
-        assert "error" not in allowed
+        assert not _tool_failed(allowed)
 
 
 class TestIdempotencyIsOnThePath:
@@ -116,8 +122,8 @@ class TestIdempotencyIsOnThePath:
             first = await handler.handle_request(_request("glpi_manage_ticket_operations", args))
             second = await handler.handle_request(_request("glpi_manage_ticket_operations", args))
 
-        assert "error" not in first
-        assert "error" not in second
+        assert not _tool_failed(first)
+        assert not _tool_failed(second)
         # Duas chamadas, UMA criacao.
         assert service.await_count == 1
 
@@ -155,8 +161,8 @@ class TestIdempotencyIsOnThePath:
             first = await handler.handle_request(_request("glpi_manage_ticket_operations", args))
             second = await handler.handle_request(_request("glpi_manage_ticket_operations", args))
 
-        assert "error" in first
-        assert "error" not in second
+        assert _tool_failed(first)
+        assert not _tool_failed(second)
         assert service.await_count == 2
 
 
@@ -191,7 +197,7 @@ class TestEveryWriteToolIsGated:
                 })
             )
 
-        assert "error" in response
+        assert _tool_failed(response)
         service.assert_not_awaited()
 
     async def test_repeating_an_itil_creation_does_not_create_twice(self, handler):

@@ -22,6 +22,7 @@ from src.http_client import http_client
 from src.middleware.webhook_auth import verify_webhook_signature
 from src.services.ai_integration import ai_integration
 from src.auth.session_manager import session_manager
+from src.models.exceptions import HTTP_TO_JSONRPC, RateLimitError
 
 # Header names whose value must never be logged in full.
 _SENSITIVE_HEADER = re.compile(
@@ -144,6 +145,22 @@ async def mcp_session_terminate(request: Request):
     return {"status": "session_terminated", "session_id": session_id}
 
 
+def _rate_limited_response(mcp_request: MCPRequest, exc: RateLimitError):
+    """Rate limit hit before dispatch: readable text instead of an unhandled 500.
+
+    ``tools/call`` gets a tool result with ``isError`` (HTTP 200) so the text reaches the agent
+    through gateways; any other method gets HTTP 429 with a JSON-RPC error.
+    """
+    from fastapi.responses import JSONResponse
+    from src.handlers import tool_error_result
+
+    if mcp_request.method == "tools/call":
+        return JSONResponse(content={"jsonrpc": "2.0", "id": mcp_request.id,
+                                     "result": tool_error_result(exc.message)})
+    return JSONResponse(status_code=429, content={"jsonrpc": "2.0", "id": mcp_request.id,
+                                                  "error": {"code": HTTP_TO_JSONRPC[429], "message": exc.message}})
+
+
 @app.post("/mcp", tags=["MCP"], response_model_exclude_none=True)
 async def mcp_handler_http(request: Request, mcp_request: MCPRequest) -> MCPResponse:
     """
@@ -176,8 +193,12 @@ async def mcp_handler_http(request: Request, mcp_request: MCPRequest) -> MCPResp
     
     user_key = session_manager._compose_user_key(headers_dict, client_ip)
     session_manager.set_current_user_key(user_key)
-    session_manager._check_rate_limit(user_key)
-    
+    try:
+        session_manager._check_rate_limit(user_key)
+    except RateLimitError as exc:
+        # Unhandled, this became "500 Internal Server Error" with no text (measured 28/09/2026).
+        return _rate_limited_response(mcp_request, exc)
+
     # Extrair user_token do header do cliente MCP (cada usuário envia seu próprio token)
     user_token = headers_dict.get("x-glpi-user-token", "")
     session_manager.set_current_user_token(user_token)
