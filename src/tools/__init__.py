@@ -15,8 +15,8 @@ __all__ = [
     "webhook_tools"
 ]
 
-# Versão do pacote
-__version__ = "1.0.0"
+# Versão do pacote: a mesma do servidor (fonte única em src/__init__.py)
+from src import __version__
 
 # Informações sobre as tools
 TOOLS_INFO = {

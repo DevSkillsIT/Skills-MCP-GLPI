@@ -345,6 +345,9 @@ Operações completas de gestão de chamados: criar, atualizar, atribuir, resolv
 > chama o GLPI: `trigger` responde "disparada com sucesso" para qualquer `ticket_id`
 > (inclusive um que não existe) e `publish` responde "realizada com sucesso" sem
 > escrever nada no chamado. Auditoria de 12/08/2026.
+>
+> Os webhooks de entrada `/webhooks/ticket/*` seguem a mesma flag: com
+> `ENABLE_AI_ANALYSIS=false` respondem `"analysis": "disabled"` e não criam job.
 
 Análise inteligente de chamados usando IA com categorização, priorização e sugestões automáticas.
 Fluxo assíncrono: `trigger` retorna um `job_id` que deve ser usado em `get_result` e `publish`.
@@ -446,6 +449,8 @@ Operações de gestão de ativos: cadastrar, detalhar, atualizar, excluir, reser
 | `date_end` | string | Condicional | Fim da reserva (`create_reservation`, `update_reservation`) |
 | `reservation_id` | integer | Condicional | ID da reserva (`update_reservation`) |
 | `comment` | string | Não | Comentário, por exemplo na reserva |
+| `confirmation_token` | string | Condicional | Token exigido na exclusão (`delete`) quando `MCP_SAFETY_GUARD=true` (igual a `MCP_SAFETY_TOKEN`). Aceita também `confirmationToken` |
+| `reason` | string | Condicional | Motivo da exclusão (mín. 10 caracteres) com safety guard ativo |
 
 **Ações disponíveis:**
 
@@ -532,6 +537,8 @@ Operações CRUD em recursos administrativos.
 | `resource_id` | integer | Condicional | ID do recurso (para get/update/delete). **Aceita 0 para `entities`** (root entity do GLPI) |
 | `name` | string | Condicional | Nome/login (para create) |
 | `email` | string | Não | Email do usuário |
+| `confirmation_token` | string | Condicional | Token exigido na exclusão (`delete`) quando `MCP_SAFETY_GUARD=true` (igual a `MCP_SAFETY_TOKEN`). Aceita também `confirmationToken` |
+| `reason` | string | Condicional | Motivo da exclusão (mín. 10 caracteres) com safety guard ativo |
 
 **Matriz de suporte por `resource` × `action`:**
 
@@ -603,6 +610,8 @@ Gestão completa de webhooks e integrações.
 | `name` | string | Condicional | Nome (para `create`) |
 | `url` | string | Condicional | URL callback HTTP(S) (para `create`) |
 | `event_type` | string | Condicional | Tipo de evento (enum abaixo) |
+| `confirmation_token` | string | Condicional | Token exigido na exclusão (`delete`) quando `MCP_SAFETY_GUARD=true` (igual a `MCP_SAFETY_TOKEN`). Aceita também `confirmationToken` |
+| `reason` | string | Condicional | Motivo da exclusão (mín. 10 caracteres) com safety guard ativo |
 
 **`event_type` — enum oficial (formato `recurso.acao`):**
 
@@ -651,7 +660,9 @@ Lista os resources MCP disponíveis para consulta. Sem parâmetros.
 
 ### 5.2 `glpi_read_resource_by_uri`
 
-Lê o conteúdo de um resource MCP específico.
+Lê o conteúdo de um resource MCP específico. URI vazia ou desconhecida é falha da tool
+(`isError: true`, com a lista de URIs aceitas), nunca um resultado de sucesso com `error`
+no corpo.
 
 | Parâmetro | Tipo | Obrigatório | Descrição |
 |-----------|------|:-----------:|-----------|

@@ -159,7 +159,7 @@ async def manage_admin(
     is_active: Optional[bool] = None,
     # --- delete-specific ---
     purge: bool = False,
-    confirmationToken: Optional[str] = None,
+    confirmation_token: Optional[str] = None,
     reason: Optional[str] = None,
     # --- group-specific ---
     is_user_group: bool = True,
@@ -242,7 +242,7 @@ async def manage_admin(
             authtype=authtype,
             is_active=is_active,
             purge=purge,
-            confirmationToken=confirmationToken,
+            confirmation_token=confirmation_token,
             reason=reason,
         )
 
@@ -259,6 +259,8 @@ async def manage_admin(
             is_requester=is_requester,
             is_assign=is_assign,
             is_notify=is_notify,
+            confirmation_token=confirmation_token,
+            reason=reason,
         )
 
     if resource == "entities":
@@ -277,6 +279,8 @@ async def manage_admin(
             town=town,
             address=address,
             comment=comment,
+            confirmation_token=confirmation_token,
+            reason=reason,
         )
 
     return create_mcp_error(
@@ -346,7 +350,7 @@ async def _manage_user(
         return await admin_tools.delete_user(
             user_id=resource_id,
             purge=kwargs.get("purge", False),
-            confirmationToken=kwargs.get("confirmationToken"),
+            confirmationToken=kwargs.get("confirmation_token"),
             reason=kwargs.get("reason"),
         )
 
@@ -414,7 +418,7 @@ async def _manage_group(
         # assimetria era acidental, não uma decisão.
         require_safety_confirmation(
             "delete_group",
-            confirmation_token=kwargs.get("confirmationToken"),
+            confirmation_token=kwargs.get("confirmation_token"),
             reason=kwargs.get("reason"),
             target_id=resource_id,
             target_type="Group",
@@ -501,7 +505,7 @@ async def _manage_location(
         # referenciada por ativos e chamados, então excluir não é local.
         require_safety_confirmation(
             "delete_location",
-            confirmation_token=kwargs.get("confirmationToken"),
+            confirmation_token=kwargs.get("confirmation_token"),
             reason=kwargs.get("reason"),
             target_id=resource_id,
             target_type="Location",

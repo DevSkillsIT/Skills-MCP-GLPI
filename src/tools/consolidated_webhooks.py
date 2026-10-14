@@ -119,7 +119,7 @@ async def manage_webhooks(
     is_active: Optional[bool] = None,
     headers: Optional[Dict[str, str]] = None,
     # delete params
-    confirmationToken: Optional[str] = None,
+    confirmation_token: Optional[str] = None,
     reason: Optional[str] = None,
     # trigger params
     data: Optional[Dict[str, Any]] = None,
@@ -139,7 +139,7 @@ async def manage_webhooks(
         secret: HMAC secret (create, update).
         is_active: Active flag (create, update).
         headers: Custom headers dict (create, update).
-        confirmationToken: Safety guard token (delete).
+        confirmation_token: Safety guard token (delete).
         reason: Deletion reason (delete).
         data: Event payload (trigger).
         webhook_ids: Specific webhook IDs to trigger (trigger).
@@ -231,7 +231,7 @@ async def manage_webhooks(
     if action == "delete":
         return await webhook_tools.delete_webhook(
             webhook_id=wh_id_str,
-            confirmationToken=confirmationToken,
+            confirmationToken=confirmation_token,
             reason=reason,
         )
 

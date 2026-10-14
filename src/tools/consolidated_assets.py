@@ -335,7 +335,7 @@ async def manage_assets(
     group_id: Optional[int] = None,
     comment: Optional[str] = None,
     # delete safety guard
-    confirmationToken: Optional[str] = None,
+    confirmation_token: Optional[str] = None,
     reason: Optional[str] = None,
     # reservation fields
     reservation_id: Optional[int] = None,
@@ -374,7 +374,7 @@ async def manage_assets(
         user_id: User ID (create/update/create_reservation).
         group_id: Group ID (create/update).
         comment: Comment (create/update/create_reservation).
-        confirmationToken: Safety token (delete).
+        confirmation_token: Safety token (delete).
         reason: Deletion reason (delete).
         reservation_id: Reservation ID (update_reservation).
         date_from: Start date filter for get_reservations (YYYY-MM-DD).
@@ -505,7 +505,7 @@ async def manage_assets(
             return await asset_tools.delete_asset(
                 asset_type=asset_type,
                 asset_id=asset_id,
-                confirmationToken=confirmationToken,
+                confirmationToken=confirmation_token,
                 reason=reason,
             )
 

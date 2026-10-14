@@ -6,7 +6,7 @@ SPEC-GLPI-ENHANCE-001/F07 — Section 4.7
 """
 
 from typing import Any, Dict, Optional
-from src.models.exceptions import NotFoundError, ValidationError
+from src.models.exceptions import GLPIError, NotFoundError, ValidationError
 
 from src.resources import GLPI_RESOURCES, list_resources, read_resource
 from src.formatters.glpi_formatters import format_resources_list, format_prompts_list
@@ -55,16 +55,17 @@ class BridgeTools:
         Delegates to read_resource which uses glpi_client internally
         (handles auth via SessionManager context vars).
         """
+        # Failures raise: the dispatcher returns them as isError with the reason.
+        # Returning {"error": ...} made a failed read look like a successful result.
+        available = ", ".join(r["uri"] for r in GLPI_RESOURCES)
         if not uri:
-            return {
-                "error": "Parametro 'uri' obrigatorio. "
-                f"URIs disponiveis: {', '.join(r['uri'] for r in GLPI_RESOURCES)}"
-            }
+            raise ValidationError(
+                f"Parametro 'uri' obrigatorio. URIs disponiveis: {available}", "uri")
         try:
             result = await read_resource(uri)
-            return result.get("text", str(result))
-        except ValueError as e:
-            return {"error": str(e)}
+        except ValueError:
+            raise NotFoundError("Resource", f"{uri}. URIs disponiveis: {available}") from None
+        return result.get("text", str(result))
 
     async def list_prompts_tool(self, **kwargs) -> Any:
         """List available professional prompts as Markdown table."""
@@ -102,7 +103,7 @@ class BridgeTools:
         NOTE: GLPI 11 renumbered these vs GLPI 10 (was 4=answer, 8=category, 7=view).
         """
         if not query or len(query) < 2:
-            return {"error": "Parametro 'query' obrigatorio (minimo 2 caracteres)."}
+            raise ValidationError("Parametro 'query' obrigatorio (minimo 2 caracteres).", "query")
         limit = min(max(limit, 1), 50)
 
         # @MX:NOTE: field 7 (answer) is fetched, not only filtered on.
@@ -129,9 +130,12 @@ class BridgeTools:
             rows, total, stage, terms = await run_text_search(
                 query, _KB_TEXT_FIELDS, _run, limit
             )
+        except GLPIError:
+            raise
         except Exception as e:
+            # A failed search is not "no articles": let the dispatcher report it.
             logger.error(f"search_knowledge GLPI error: {e}")
-            return {"articles": [], "query": query, "error": str(e)}
+            raise GLPIError(502, f"Falha ao consultar a base de conhecimento: {e}") from None
 
         result = {"data": rows, "totalcount": total if total is not None else len(rows)}
 

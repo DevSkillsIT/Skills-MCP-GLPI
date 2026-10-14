@@ -13,6 +13,7 @@ import re
 import uuid
 import uvicorn
 
+from src import __version__
 from src.config import settings
 from src.logger import logger
 from src.utils.helpers import response_truncator
@@ -58,7 +59,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="MCP GLPI Server",
     description="MCP (Model Context Protocol) server for GLPI integration",
-    version="1.0.0",
+    version=__version__,
     lifespan=lifespan
 )
 
@@ -70,7 +71,7 @@ async def health_check():
     return {
         "status": "healthy",
         "service": "mcp-glpi",
-        "version": "1.0.0",
+        "version": __version__,
         "timestamp": datetime.utcnow().isoformat(),
         "transport": "streamable-http"
     }
@@ -235,6 +236,29 @@ async def mcp_handler_http(request: Request, mcp_request: MCPRequest) -> MCPResp
 
 # ============= WEBHOOKS (BUG-CRIT-02) =============
 
+def _webhook_reply(ticket_id, analysis=None, **extra):
+    """Reply for an inbound ticket webhook.
+
+    @MX:NOTE: `analysis` states what the server did with the event.
+    @MX:REASON: with ENABLE_AI_ANALYSIS=false the handlers still called the
+    in-memory AI stub and answered "received" plus a job_id, so the sender
+    believed an analysis was queued. "received" only means the event was
+    authenticated and read; `analysis` is "queued" (a job exists), "disabled"
+    (ENABLE_AI_ANALYSIS=false, nothing was queued) and absent for events that
+    never trigger analysis.
+    """
+    reply = {"status": "received", "ticket_id": ticket_id}
+    if analysis is not None:
+        reply["analysis"] = analysis
+    reply.update(extra)
+    return reply
+
+
+def _analysis_flag():
+    """"disabled" when AI analysis is switched off, otherwise None."""
+    return None if settings.enable_ai_analysis else "disabled"
+
+
 @app.post("/webhooks/ticket/created", tags=["Webhooks"])
 async def webhook_ticket_created(request: Request, _=Depends(verify_webhook_signature)):
     """
@@ -244,12 +268,16 @@ async def webhook_ticket_created(request: Request, _=Depends(verify_webhook_sign
     payload = await request.json()
     ticket_id = payload.get("ticket_id")
     
+    if not settings.enable_ai_analysis:
+        logger.info(f"Webhook ticket/created: ticket_id={ticket_id}, AI analysis disabled, no job queued")
+        return _webhook_reply(ticket_id, "disabled")
+
     if ticket_id:
         job_id = await ai_integration.trigger_analysis(ticket_id)
         logger.info(f"Webhook ticket/created: ticket_id={ticket_id}, job_id={job_id}")
-        return {"status": "received", "ticket_id": ticket_id, "job_id": job_id}
-    
-    return {"status": "received", "ticket_id": None}
+        return _webhook_reply(ticket_id, "queued", job_id=job_id)
+
+    return _webhook_reply(None)
 
 
 @app.post("/webhooks/ticket/updated", tags=["Webhooks"])
@@ -261,7 +289,7 @@ async def webhook_ticket_updated(request: Request, _=Depends(verify_webhook_sign
     payload = await request.json()
     ticket_id = payload.get("ticket_id")
     logger.info(f"Webhook ticket/updated: ticket_id={ticket_id}")
-    return {"status": "received", "ticket_id": ticket_id}
+    return _webhook_reply(ticket_id, _analysis_flag())
 
 
 @app.post("/webhooks/ticket/closed", tags=["Webhooks"])
@@ -273,7 +301,7 @@ async def webhook_ticket_closed(request: Request, _=Depends(verify_webhook_signa
     payload = await request.json()
     ticket_id = payload.get("ticket_id")
     logger.info(f"Webhook ticket/closed: ticket_id={ticket_id}")
-    return {"status": "received", "ticket_id": ticket_id}
+    return _webhook_reply(ticket_id, _analysis_flag())
 
 
 @app.post("/webhooks/ticket/followup", tags=["Webhooks"])
@@ -285,7 +313,7 @@ async def webhook_ticket_followup(request: Request, _=Depends(verify_webhook_sig
     payload = await request.json()
     ticket_id = payload.get("ticket_id")
     logger.info(f"Webhook ticket/followup: ticket_id={ticket_id}")
-    return {"status": "received", "ticket_id": ticket_id}
+    return _webhook_reply(ticket_id, _analysis_flag())
 
 
 # ============= METRICS (GAP-CRIT-02) =============

@@ -54,7 +54,7 @@ Para gestores de TI, coordenadores e diretores.
 → { "name": "glpi_ticket_trends", "arguments": { "period_days": 90 } }
 ```
 
-**Retorna:** Total de chamados no período (até 500) e as 5 categorias mais frequentes, com contagem e percentual. As categorias são contadas sobre os primeiros 100 chamados do período, não sobre o total.
+**Retorna:** Total de chamados no período (até 500) e as 5 categorias mais frequentes, com contagem e percentual. As categorias são contadas sobre uma amostra (os primeiros 100 chamados do período) e o percentual divide pelo tamanho da amostra, não pelo total; a saída informa "Amostra: N de M tickets" (e `metadata.sampled`).
 
 ---
 
@@ -126,7 +126,7 @@ Para gestores de TI, coordenadores e diretores.
 → { "name": "glpi_recurring_problems", "arguments": { "min_occurrences": 5 } }
 ```
 
-**Retorna:** Top problemas recorrentes, frequência, categoria, impacto estimado, sugestões de prevenção.
+**Retorna:** Top problemas recorrentes, frequência, categoria, impacto estimado, sugestões de prevenção. As contagens vêm de uma amostra (até 200 chamados), informada na saída junto do total do período.
 
 ---
 

@@ -166,15 +166,15 @@ seven defects of one family — output a reader takes as fact when it is not.
   clickable anywhere. Prefixed at render time rather than in the ETL, which also repairs
   everything already indexed.
   - `src/services/kb_search/service.py`
-- **Filtering tickets by a person's name returned nothing.** `requester="Azeredo Da Silva
-  Guimaraes Erica"` — the name exactly as the listing prints it — matched zero tickets and
+- **Filtering tickets by a person's name returned nothing.** `requester="Alvarenga Da Costa
+  Pereira Maria"` — the name exactly as the listing prints it — matched zero tickets and
   said so without an error. GLPI keeps a person in three columns (`name` = login,
   `firstname`, `realname`) and the Search API compares one of them at a time, so the
-  displayed full name exists in none of them: `realname` holds "Azeredo Da Silva
-  Guimaraes" and `firstname` holds "Erica". `requester` and `assigned_tech` now resolve
+  displayed full name exists in none of them: `realname` holds "Alvarenga Da Costa
+  Pereira" and `firstname` holds "Maria". `requester` and `assigned_tech` now resolve
   through `/User` — tokenised, surname prepositions dropped, probed across all three
   columns, candidates ranked by how many tokens they cover — and filter by user id. Any
-  fragment works (`guimar`, `Erica`, the login, the full displayed name); several matches
+  fragment works (`perei`, `Maria`, the login, the full displayed name); several matches
   become an OR group, because ambiguity in a *filter* should widen the result, not refuse
   the question.
   - `src/services/ticket_service.py::_find_users_by_any_name_part`, `::_person_criterion`
@@ -272,8 +272,53 @@ seven defects of one family — output a reader takes as fact when it is not.
   versions opened 40 connections to GLPI in one gather.
   - `src/tools/assets.py::_resolve_software_names`
 
+### Fixed — safety guard, bridge failures, honest webhooks (2026-10-14)
+
+- **The safety guard now works end to end for every delete.** With `MCP_SAFETY_GUARD=true`,
+  deletes in `glpi_manage_asset_operations`, `glpi_manage_admin_resources` and
+  `glpi_manage_webhook_integrations` could be refused but never confirmed: their schemas did
+  not declare `confirmation_token` / `reason`, and the server rejects undeclared arguments.
+  The three schemas now declare both fields, the handlers take `confirmation_token`
+  (`confirmationToken` is still accepted), and group and location deletes — whose token
+  and reason were never forwarded to the guard — now receive them. The guard's refusal
+  names the parameters the caller can actually send. With the guard off, nothing changes.
+  A new test enumerates every `delete` action in the tool definitions and drives guard-on:
+  refused without a token, refused with a wrong one, accepted with a valid one; a new
+  destructive action without a row fails the suite.
+  - `src/handlers.py`, `src/tools/consolidated_assets.py`, `src/tools/consolidated_admin.py`,
+    `src/tools/consolidated_webhooks.py`, `src/utils/safety_guard.py`
+- **The resource and knowledge bridge tools report failures as `isError`.**
+  `glpi_read_resource_by_uri` (empty or unknown URI) and `glpi_search_knowledge_articles`
+  (missing query) returned `{"error": ...}` inside a successful result; a failed knowledge
+  search returned an empty article list, indistinguishable from "no articles". Same contract
+  as the prompt bridge.
+  - `src/tools/bridge_tools.py`
+- **Inbound ticket webhooks no longer pretend to queue work.** With `ENABLE_AI_ANALYSIS=false`
+  (default) `/webhooks/ticket/{created,updated,closed,followup}` called the in-memory AI stub
+  and `created` answered a `job_id`. They now answer `"analysis": "disabled"` and create no
+  job. With the flag on, `created` answers `"analysis": "queued"` plus `job_id`; the other
+  events never queue analysis.
+  - `src/main.py`
+- **`glpi_ticket_trends` percentages divide by the sample.** Categories were counted over
+  the first 100 tickets but divided by the period total (up to 500), so 100 of 100 printed
+  66.7% for a period of 150. The output now states "Amostra: N de M tickets" and divides by
+  N; `glpi_recurring_problems` reports its sample the same way. The period total uses the
+  search `totalcount` when GLPI reports it.
+  - `src/prompts_handlers/prompts.py::_aggregate_ticket_categories`
+- **One version everywhere.** `initialize` reported 2.0.0, the FastAPI app and `/health`
+  1.0.0, the docs 2.2.0. All of them read `src.__version__` (2.2.0, the latest release).
+- **Dead code removed.** `MCPHandler._get_tool_description` and `_get_tool_schema` (legacy
+  tables keyed by tool names that no longer exist, no call sites) and a stale "14
+  consolidated tools" comment.
+
+### Added — license file
+
+- **`LICENSE` (MIT, Skills IT, 2025-2026)**, which the README already declared and linked.
+
 ### Security
 
+- **A real person's name replaced by a fictitious one** in the changelog entry, a source
+  comment and a test about filtering tickets by a person's name. History is not rewritten.
 - **Client-specific names removed from tests and end-to-end run instructions.**
 - **Credentials pasted into tickets are redacted before indexing.** A KB makes ticket
   text semantically discoverable, which raises the cost of leaving a password in it, so

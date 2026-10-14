@@ -416,20 +416,18 @@ confirmation at all.** Verified against a live instance: a delete for a
 non-existent id returned "not found" from GLPI, meaning the request went through.
 If the id had existed, the record would be gone.
 
+With `MCP_SAFETY_GUARD=true` (and a `MCP_SAFETY_TOKEN` of at least 8 characters) every
+delete in every manage tool — tickets, assets, users, groups, locations, webhooks and
+ITIL records — is refused until the call also carries `confirmation_token` (equal to
+`MCP_SAFETY_TOKEN`) and `reason` (at least 10 characters). Both fields are declared in the
+input schema of each of those tools. The camelCase spelling `confirmationToken` is still
+accepted. A test enumerates every delete action in the tool definitions and drives it
+guard-on: refused without a token, accepted with a valid one.
+
 The write policy (`GLPI_READ_ONLY`, `GLPI_ALLOW_<OPERATION>`) is independent and
 always active, and every delete operation defaults to disabled there. That is the
 protection you actually get out of the box; the guard adds the human challenge on
 top of it.
-
-### Asset, admin and webhook deletes cannot receive the guard token
-
-The guard needs `confirmation_token` and `reason`. Only the ticket and ITIL tools declare
-those fields. The schemas of `glpi_manage_asset_operations`,
-`glpi_manage_admin_resources` and `glpi_manage_webhook_integrations` do not, and the
-server rejects arguments a tool does not declare. With `MCP_SAFETY_GUARD=true`, a delete
-on those resources therefore cannot be confirmed through MCP. Until this is fixed, the
-write policy (`GLPI_ALLOW_<OPERATION>_DELETE`, disabled by default) is the control that
-applies to them.
 
 ### Knowledge base search does not derive the tenant from the token
 

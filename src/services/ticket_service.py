@@ -292,9 +292,9 @@ def _build_ticket_criteria(kwargs: Dict[str, Any]) -> List[Dict[str, Any]]:
         criteria.append({"field": TICKET_FIELD["urgency"], "searchtype": "equals", "value": urgency})
 
     # @MX:NOTE: pessoas (solicitante/tecnico) NAO entram aqui.
-    # @MX:REASON: o nome que a listagem EXIBE ("Azeredo Da Silva Guimaraes
-    # Erica") nao e o texto que a Search API PROCURA no campo 4/5 — la o valor
-    # comparado e o login (`ericaguimaraes`). Um `contains` com o nome completo
+    # @MX:REASON: o nome que a listagem EXIBE ("Alvarenga Da Costa Pereira
+    # Maria") nao e o texto que a Search API PROCURA no campo 4/5 — la o valor
+    # comparado e o login (`mariapereira`). Um `contains` com o nome completo
     # nunca casa, e o filtro devolvia zero chamados sem erro nenhum. Resolver
     # pessoa exige consultar /User, o que e async; feito em
     # TicketService._expand_person_filters depois desta montagem.
@@ -1630,9 +1630,9 @@ class TicketService:
         @MX:REASON: no GLPI o nome de uma pessoa esta partido em tres colunas
         (`name` = login, `firstname`, `realname` = sobrenomes) e a Search API
         compara UMA delas por vez. Quem pergunta escreve o nome como a
-        listagem o exibe — "Azeredo Da Silva Guimaraes Erica" — que nao existe
-        inteiro em coluna nenhuma: `realname` guarda "Azeredo Da Silva
-        Guimaraes" e `firstname` guarda "Erica". Procurar a string inteira em
+        listagem o exibe — "Alvarenga Da Costa Pereira Maria" — que nao existe
+        inteiro em coluna nenhuma: `realname` guarda "Alvarenga Da Costa
+        Pereira" e `firstname` guarda "Maria". Procurar a string inteira em
         qualquer coluna da zero, e zero chamado e uma resposta que parece um
         fato ("essa pessoa nao abriu nada") quando e so um filtro que nao
         casou. Entao: quebra em tokens, procura o mais distintivo nas tres

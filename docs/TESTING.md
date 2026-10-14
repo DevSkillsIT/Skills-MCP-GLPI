@@ -41,7 +41,7 @@ Resposta esperada:
 {
   "status": "healthy",
   "service": "mcp-glpi",
-  "version": "1.0.0",
+  "version": "2.2.0",
   "transport": "streamable-http"
 }
 ```

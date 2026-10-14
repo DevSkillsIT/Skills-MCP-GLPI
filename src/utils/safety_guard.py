@@ -45,7 +45,7 @@ class SafetyGuard:
     Gerenciador de segurança para operações destrutivas.
     
     Quando ativado, requer:
-    - confirmationToken: Token que deve corresponder ao MCP_SAFETY_TOKEN
+    - confirmation_token: Token que deve corresponder ao MCP_SAFETY_TOKEN
     - reason: Motivo da operação (mínimo 10 caracteres)
     """
     
@@ -157,20 +157,20 @@ class SafetyGuard:
         if not confirmation_token:
             error_msg = (
                 f"SAFETY GUARD: Operação '{operation}' requer confirmação. "
-                f"Forneça 'confirmationToken' e 'reason' (mín. {self.MIN_REASON_LENGTH} caracteres). "
+                f"Forneça 'confirmation_token' e 'reason' (mín. {self.MIN_REASON_LENGTH} caracteres). "
                 f"Ação: {self.get_protection_message(operation)}"
             )
             if target_id:
                 error_msg += f" [ID: {target_id}]"
             logger.warning(f"Safety Guard blocked {operation}: no token provided")
-            raise ValidationError(error_msg, "confirmationToken")
+            raise ValidationError(error_msg, "confirmation_token")
         
         # Verificar se token corresponde
         if not self._tokens_match(confirmation_token):
             logger.warning(f"Safety Guard blocked {operation}: invalid token")
             raise ValidationError(
                 f"SAFETY GUARD: Token de confirmação inválido para '{operation}'",
-                "confirmationToken"
+                "confirmation_token"
             )
         
         # Verificar reason
@@ -225,7 +225,7 @@ def require_safety_confirmation(
     Uso:
         require_safety_confirmation(
             "delete_ticket",
-            confirmation_token=kwargs.get("confirmationToken"),
+            confirmation_token=confirmation_token,
             reason=kwargs.get("reason"),
             target_id=ticket_id,
             target_type="Ticket"

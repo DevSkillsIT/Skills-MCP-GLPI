@@ -2,7 +2,9 @@
 MCP GLPI - Model Context Protocol server for GLPI ITSM integration.
 """
 
-__version__ = "1.0.0"
+# Single source of truth for the server version: serverInfo (initialize), /health
+# and the FastAPI app all read it. Bump it together with the CHANGELOG release.
+__version__ = "2.2.0"
 __author__ = "Skills IT"
 __description__ = "MCP server for GLPI ITSM platform integration"
 

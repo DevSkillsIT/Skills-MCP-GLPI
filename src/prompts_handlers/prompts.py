@@ -6,7 +6,7 @@ Skills IT - Soluções em Tecnologia
 Desenvolvido para MSPs brasileiros com foco em produtividade.
 """
 
-from typing import Dict, Any, List, NoReturn
+from typing import Dict, Any, List, NoReturn, Optional
 from datetime import datetime, timedelta
 import logging
 
@@ -608,7 +608,9 @@ class PromptHandler:
     async def _aggregate_ticket_categories(self, window_days: int, sample: int = 100):
         """Conta tickets por categoria (itilcategories_id) numa janela de dias.
 
-        Retorna (dict {nome_categoria: contagem}, total_tickets_no_periodo).
+        Retorna (dict {nome_categoria: contagem}, total_tickets_no_periodo,
+        tickets_amostrados). As contagens por categoria vem SO dos amostrados:
+        quem calcula percentual deve dividir por `amostrados`, nunca pelo total.
         Reutilizado por glpi_ticket_trends e glpi_recurring_problems.
 
         @MX:NOTE: search options nao expoem itilcategories_id direto; fazemos
@@ -634,8 +636,12 @@ class PromptHandler:
             _query_failed("buscar os chamados do periodo", exc)
 
         items: List[Any] = []
+        period_total: Optional[int] = None
         if isinstance(search_result, dict):
             items = search_result.get("data") or []
+            reported = search_result.get("totalcount")
+            if isinstance(reported, int) and reported >= len(items):
+                period_total = reported
 
         sem = _asyncio.Semaphore(8)
 
@@ -668,7 +674,8 @@ class PromptHandler:
         for cid, count in counts.items():
             label = cat_names.get(cid) or f"Sem Categoria (#{cid})"
             named[label] = named.get(label, 0) + count
-        return named, len(items)
+        sampled = len(items[:sample])
+        return named, (period_total if period_total is not None else len(items)), sampled
 
     async def _prompt_ticket_trends(self, args: Dict) -> Dict:
         """Análise de tendências por categoria — dados REAIS via agregação."""
@@ -679,12 +686,17 @@ class PromptHandler:
         except (TypeError, ValueError):
             _days = 30
 
-        named, total = await self._aggregate_ticket_categories(_days, sample=100)
+        named, total, sampled = await self._aggregate_ticket_categories(_days, sample=100)
+        sample_note = (
+            f"Amostra: {sampled} de {total} tickets do período "
+            "(categorias e percentuais calculados sobre a amostra)"
+        )
         top_categories = sorted(named.items(), key=lambda x: x[1], reverse=True)[:5]
 
         compact = f"""📊 Tendências de Tickets - {period_days} dias
 {'Cliente: ' + entity_name if entity_name else 'Global'}
 Total no período: {total}
+{sample_note}
 
 🔝 Top 5 Categorias:
 """
@@ -697,6 +709,7 @@ Total no período: {total}
 
 **Período:** Últimos {period_days} dias
 **Total de Tickets:** {total}
+**Amostra:** {sampled} de {total} tickets (categorias e percentuais calculados sobre a amostra)
 **Cliente:** {entity_name if entity_name else 'Global'}
 
 ## 📊 Distribuição por Categoria
@@ -705,7 +718,7 @@ Total no período: {total}
 |---------|-----------|------------|------------|
 """
         for i, (cat, count) in enumerate(top_categories, 1):
-            pct = (count / total * 100) if total > 0 else 0
+            pct = (count / sampled * 100) if sampled > 0 else 0
             detailed += f"| {i} | {cat} | {count} | {pct:.1f}% |\n"
         if not top_categories:
             detailed += "| (sem dados) | | | |\n"
@@ -714,7 +727,7 @@ Total no período: {total}
             "prompt_name": "glpi_ticket_trends",
             "compact": compact,
             "detailed": detailed,
-            "metadata": {"period_days": period_days, "total": total}
+            "metadata": {"period_days": period_days, "total": total, "sampled": sampled}
         }
 
     async def _prompt_asset_roi(self, args: Dict) -> Dict:
@@ -974,7 +987,7 @@ estimado aqui para não produzir números fictícios.
 
         # Agrega categorias dos tickets recentes (mesma tecnica de ticket_trends)
         window_days = 180
-        categories, total = await self._aggregate_ticket_categories(window_days, sample=200)
+        categories, total, sampled = await self._aggregate_ticket_categories(window_days, sample=200)
 
         recurring = sorted(
             [(name, count) for name, count in categories.items() if count >= min_occurrences],
@@ -996,7 +1009,7 @@ Min. {min_occurrences} ocorrências
         detailed = f"""# Análise de Problemas Recorrentes
 
 **Período analisado:** Últimos {window_days} dias
-**Total de tickets amostrados:** {total}
+**Total de tickets amostrados:** {sampled} (de {total} no período)
 **Threshold:** Mínimo {min_occurrences} ocorrências
 **Cliente:** {entity_name or 'Global'}
 
@@ -1025,7 +1038,7 @@ Min. {min_occurrences} ocorrências
             "prompt_name": "glpi_recurring_problems",
             "compact": compact,
             "detailed": detailed,
-            "metadata": {"min_occurrences": min_occurrences, "window_days": window_days, "total": total}
+            "metadata": {"min_occurrences": min_occurrences, "window_days": window_days, "total": total, "sampled": sampled}
         }
 
     async def _prompt_client_satisfaction(self, args: Dict) -> Dict:

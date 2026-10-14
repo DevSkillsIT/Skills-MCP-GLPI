@@ -108,7 +108,7 @@ nunca na configuração do servidor:
 | `DELETE` | `/mcp` | Encerrar sessão |
 | `GET` | `/health` | Health check |
 | `GET` | `/metrics` | Métricas Prometheus (só se `prometheus_client` estiver instalado) |
-| `POST` | `/webhooks/ticket/{created,updated,closed,followup}` | Recebe notificações do GLPI, assinadas por HMAC-SHA256 (`X-GLPI-Signature`). Encaminham a análise ao serviço de IA, que ainda é um stub em memória: não há efeito no GLPI (ver `TOOLS-REFERENCE.md`, 1.3) |
+| `POST` | `/webhooks/ticket/{created,updated,closed,followup}` | Recebe notificações do GLPI, assinadas por HMAC-SHA256 (`X-GLPI-Signature`). Com `ENABLE_AI_ANALYSIS=false` (padrão) respondem `"analysis": "disabled"` e **não** criam job algum; só `created` enfileira análise (`"analysis": "queued"` + `job_id`) quando a flag está ligada, e o serviço de IA ainda é um stub em memória sem efeito no GLPI (ver `TOOLS-REFERENCE.md`, 1.3) |
 
 ## Resiliência da conexão com o GLPI
 
@@ -159,9 +159,9 @@ o servidor.
 
 > O portão de política cobre todas as escritas: chamados, ativos, admin, webhooks e ITIL.
 > O safety guard de confirmação (`MCP_SAFETY_GUARD=true`, com `confirmation_token` +
-> `reason`) é uma camada separada e só age sobre exclusões. Hoje as tools de ativos, admin
-> e webhooks não declaram esses campos, então exclusões nesses recursos não podem ser
-> confirmadas pelo MCP enquanto o guard estiver ligado (ver a seção de limitações do README).
+> `reason`) é uma camada separada e só age sobre exclusões. Todas as tools `manage` que
+> excluem (chamados, ativos, admin, webhooks e ITIL) declaram esses dois campos no schema;
+> com o guard ligado, a exclusão sem eles é recusada e, com os valores corretos, é executada.
 
 ## Idempotência
 

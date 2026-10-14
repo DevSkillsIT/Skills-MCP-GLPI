@@ -373,7 +373,7 @@ class TestPersonFilterByAnyNamePart:
 
     O GLPI guarda a pessoa em tres colunas (`name` = login, `firstname`,
     `realname`) e compara uma por vez. Quem pergunta escreve o nome como a
-    tabela o mostra — "Azeredo Da Silva Guimaraes Erica" — que nao existe
+    tabela o mostra — "Alvarenga Da Costa Pereira Maria" — que nao existe
     inteiro em coluna nenhuma. O filtro devolvia zero chamados, sem erro.
     """
 
@@ -382,12 +382,12 @@ class TestPersonFilterByAnyNamePart:
         from src.services.ticket_service import ticket_service
 
         users = [
-            {"id": 102, "name": "ericaguimaraes", "firstname": "Erica",
-             "realname": "Azeredo Da Silva Guimaraes"},
+            {"id": 102, "name": "mariapereira", "firstname": "Maria",
+             "realname": "Alvarenga Da Costa Pereira"},
         ]
         with patch("src.services.ticket_service.glpi_client.get",
                    new=AsyncMock(return_value=users)):
-            criterion = await ticket_service._person_criterion(4, "Azeredo Da Silva Guimaraes Erica")
+            criterion = await ticket_service._person_criterion(4, "Alvarenga Da Costa Pereira Maria")
 
         assert criterion == {"field": 4, "searchtype": "equals", "value": 102}
 
@@ -395,11 +395,11 @@ class TestPersonFilterByAnyNamePart:
     async def test_partial_surname_also_resolves(self):
         from src.services.ticket_service import ticket_service
 
-        users = [{"id": 102, "name": "ericaguimaraes", "firstname": "Erica",
-                  "realname": "Azeredo Da Silva Guimaraes"}]
+        users = [{"id": 102, "name": "mariapereira", "firstname": "Maria",
+                  "realname": "Alvarenga Da Costa Pereira"}]
         with patch("src.services.ticket_service.glpi_client.get",
                    new=AsyncMock(return_value=users)):
-            criterion = await ticket_service._person_criterion(4, "guimar")
+            criterion = await ticket_service._person_criterion(4, "perei")
 
         assert criterion["value"] == 102
 
