@@ -341,9 +341,18 @@ async def _manage_user(
             "location_id", "usertitle_id", "usercategory_id",
             "registration_number", "comment", "is_active",
         )
+        # @MX:NOTE: GLPI names foreign keys `<table>_id`, not the tool's `<thing>_id`.
+        # @MX:REASON: the tool forwarded `location_id`, `profile_id`, `entity_id`... as
+        # they came; GLPI ignores unknown columns, so "mudar a localizacao do usuario"
+        # answered success having changed nothing. create_user already maps them.
+        glpi_column = {
+            "entity_id": "entities_id", "profile_id": "profiles_id",
+            "location_id": "locations_id", "usertitle_id": "usertitles_id",
+            "usercategory_id": "usercategories_id",
+        }
         for key in passthrough_keys:
             if kwargs.get(key) is not None:
-                update_fields[key] = kwargs[key]
+                update_fields[glpi_column.get(key, key)] = kwargs[key]
         return await admin_tools.update_user(resource_id, **update_fields)
 
     if action == "delete":

@@ -133,6 +133,14 @@ Operações completas de gestão de chamados: criar, atualizar, atribuir, resolv
 | `entity_name` | string | Não | Nome da entidade |
 | `user_id` | integer | Condicional | ID do técnico (para `assign`) |
 | `solution` | string | Condicional | Solução técnica (para `resolve`/`close`) |
+| `urgency` | integer | Não | Urgência 1 (muito baixa) a 5 (muito alta) (`create`, `update`; padrão no create: 3). Eixo distinto de `priority` |
+| `type` | string | Não | Tipo do chamado, só no `create`: `incident` (padrão) ou `request` |
+| `category_id` | integer | Não | ID da categoria ITIL (`create`, `update`) |
+| `requester_id` | integer | Não | ID do usuário solicitante (`create`) |
+| `assignee_id` | integer | Não | ID do técnico atribuído (`create`, `update`); depois da abertura, `assign` também atribui |
+| `location_id` | integer | Não | ID da localização do chamado (`create`) |
+| `resolution` | string | Não | Alias **legado** de `solution`, só em `close`. Se os dois vierem, `resolution` vence |
+| `solution_type` | integer | Não | ID do tipo de solução no GLPI, só em `close` (padrão: 5) |
 | `ticket_number` | string | Não | Número do chamado (para `get_by_number`) |
 | `threshold` | number | Não | Similaridade 0.0–1.0 para `find_similar` (padrão: 0.3) |
 | `max_results` | integer | Não | Máx. tickets similares em `find_similar` (padrão: 10, máx: 50) |
@@ -394,6 +402,11 @@ Busca no inventário de equipamentos e ativos de TI.
 | `location_id` | integer | Não | ID da localização |
 | `manufacturer_id` | integer | Não | ID do fabricante |
 | `user_id` | integer | Não | ID do usuário vinculado. Prefira `assigned_user`, que também aceita nome |
+| `username` | string | Não | Login do usuário vinculado (`scope=computers` e busca por texto). Prefira `assigned_user` |
+| `device_type` | string | Não | Tipo listado em `scope=devices` (padrão `NetworkEquipment`): `NetworkEquipment`, `Peripheral`, `Phone`, `Printer`, `Monitor`, `Computer` |
+| `is_active` | boolean | Não | Só itens reserváveis ativos (`scope=reservable`) |
+| `itemtype` | string | Não | Tipo do item reservável (`scope=reservable`): `Computer`, `Monitor`, `Peripheral`, `Phone`, `Printer`, `NetworkEquipment` |
+| `fields` | array | Não | IDs numéricos das colunas de busca do GLPI a devolver (só com `query`) |
 | `sort_by` | string | Não | `name`, `id`, `serial`, `location`, `manufacturer`, `model`, `status`, `user`, `date_mod` |
 | `order` | string | Não | `asc` ou `desc`. Sem `sort_by`, aplica a direção ao nome do ativo |
 | `entity_id` | integer | Não | **Opcional** — o token já fixa o tenant. Use só para uma sub-entidade |
@@ -444,7 +457,16 @@ Operações de gestão de ativos: cadastrar, detalhar, atualizar, excluir, reser
 | `asset_id` | integer | Condicional | ID do ativo |
 | `name` | string | Condicional | Nome do ativo (para `create`) |
 | `serial_number` | string | Não | Número de série |
-| `user_id` | integer | Não | Usuário vinculado (`create`) ou usuário da reserva (`create_reservation`) |
+| `user_id` | integer | Não | Responsável pelo ativo (`create`, `update`) ou usuário da reserva (`create_reservation`) |
+| `other_serial` | string | Não | Número de série alternativo/inventário (`create`, `update`) |
+| `status` | integer | Não | ID do estado do ativo, o `states_id` (`create`, `update`) |
+| `entity_id` | integer | Não | **Opcional** — o token já fixa o tenant (`create`, `update`) |
+| `location_id` | integer | Não | ID da localização (`create`, `update`) |
+| `manufacturer_id` | integer | Não | ID do fabricante (`create`, `update`) |
+| `model_id` | integer | Não | ID do modelo (`create`, `update`) |
+| `group_id` | integer | Não | ID do grupo responsável (`create`, `update`) |
+| `date_from` | string | Não | Início do período das reservas, ISO 8601 `AAAA-MM-DD` (`get_reservations`) |
+| `date_to` | string | Não | Fim do período das reservas, ISO 8601 `AAAA-MM-DD` (`get_reservations`) |
 | `date_start` | string | Condicional | Início da reserva (`create_reservation`), formato `AAAA-MM-DD HH:MM:SS` |
 | `date_end` | string | Condicional | Fim da reserva (`create_reservation`, `update_reservation`) |
 | `reservation_id` | integer | Condicional | ID da reserva (`update_reservation`) |
@@ -537,6 +559,16 @@ Operações CRUD em recursos administrativos.
 | `resource_id` | integer | Condicional | ID do recurso (para get/update/delete). **Aceita 0 para `entities`** (root entity do GLPI) |
 | `name` | string | Condicional | Nome/login (para create) |
 | `email` | string | Não | Email do usuário |
+| `password`, `password2` | string | Não | **SENSÍVEIS.** Senha do usuário local (mín. 6 caracteres) e confirmação; só `create` de `users`. Vão ao GLPI e nunca são devolvidas nem registradas em log |
+| `authtype` | integer | Não | Autenticação do usuário (`create`): `1` local (padrão), `2` e-mail, `3` LDAP |
+| `firstname`, `realname`, `phone`, `phone2`, `mobile`, `registration_number` | string | Não | Dados do usuário (`users`: `create`, `update`) |
+| `is_active` | boolean | Não | Usuário ativo (`users`; `create` padrão `true`) |
+| `profile_id`, `usertitle_id`, `usercategory_id`, `location_id` | integer | Não | Vínculos do usuário (`users`: `create`, `update`) |
+| `group_id` | integer | Não | Grupo ao qual adicionar o usuário (`users`: **só `create`**) |
+| `entity_id` / `entity_name` | integer / string | Não | **Opcional** — o token já fixa o tenant. `entity_name` só no `create` |
+| `comment` | string | Não | Comentário (`users`, `groups`, `locations`) |
+| `is_user_group`, `is_technical_group`, `is_requester`, `is_assign`, `is_notify` | boolean | Não | Atributos do grupo (`groups`). Padrões no create: `true`, `false`, `true`, `true`, `true` |
+| `parent_location_id`, `building`, `room`, `town`, `address` | integer / string | Não | Dados da localização (`locations`: `create`, `update`) |
 | `confirmation_token` | string | Condicional | Token exigido na exclusão (`delete`) quando `MCP_SAFETY_GUARD=true` (igual a `MCP_SAFETY_TOKEN`). Aceita também `confirmationToken` |
 | `reason` | string | Condicional | Motivo da exclusão (mín. 10 caracteres) com safety guard ativo |
 
@@ -549,6 +581,9 @@ Operações CRUD em recursos administrativos.
 | `locations` | ✅ | ✅ | ✅ | ✅ (vai para a lixeira do GLPI; `purge` não é exposto nesta tool) |
 | `entities` | ✅ (id=0 permitido) | ❌ | ❌ | ❌ |
 
+> ℹ️ A atualização de usuário envia as chaves estrangeiras com o nome de coluna do GLPI
+> (`location_id` → `locations_id` etc.); antes seguiam com o nome da tool e o GLPI as ignorava.
+>
 > ℹ️ O parâmetro `purge` não está no schema de `glpi_manage_admin_resources`. Para excluir
 > definitivamente um usuário ou uma localização, use a própria interface do GLPI.
 

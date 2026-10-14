@@ -332,6 +332,34 @@ seven defects of one family — output a reader takes as fact when it is not.
 - **Removed the stale `TOOLS_INFO` (48 tools) and `get_tools_summary` from `src/tools`**; no
   call sites.
 
+### Fixed — every handler parameter is declared in the schema (2026-10-14)
+
+- **Parameters the code handled but the schema did not list are now declared**, so clients
+  that build calls from `tools/list` can send them. Ticket manage: `urgency` (1-5), `type`
+  (`incident`/`request`), `category_id`, `requester_id`, `assignee_id`, `location_id`,
+  `solution_type`, and `resolution` documented as the legacy alias of `solution`. Asset
+  search: `username`, `device_type`, `is_active`, `itemtype`, `fields`. Asset manage:
+  `other_serial`, `status`, `entity_id`, `location_id`, `manufacturer_id`, `model_id`,
+  `group_id`, `date_from`, `date_to`. Admin manage: the user, group and location fields
+  (`password`/`password2` marked sensitive, `authtype` 1/2/3, group flags, location fields).
+  `tools/list` input schemas grew from about 33 to 40 thousand characters.
+  - `purge` stays undeclared on `glpi_manage_admin_resources` on purpose: a permanent purge
+    is not exposed through MCP.
+  - Declared values are now validated: `urgency` outside 1-5 and a `type` other than
+    `incident`/`request` are refused (before, `type="change"` was accepted and sent as 3,
+    which is not a ticket type).
+  - `src/handlers.py`
+- **Updating a user now writes foreign keys under GLPI's column names.** `location_id`,
+  `profile_id`, `entity_id`, `usertitle_id` and `usercategory_id` were forwarded unchanged and
+  GLPI ignored them, so the call reported success having changed nothing. `create` already
+  mapped them.
+  - `src/tools/consolidated_admin.py::_manage_user`
+- **A test now keeps the schema and the handlers in step**: every handler parameter of every
+  registered tool must be declared, the only exception being `purge`. Another test checks
+  that passwords never appear in user responses, formatters or DEBUG logs, and that a failing
+  create does not carry the request body into the error text or logs (verified: it does not).
+  - `tests/test_schema_declares_handler_params.py`, `tests/test_declared_params_behavior.py`
+
 ### Added — license file
 
 - **`LICENSE` (MIT, Skills IT, 2025-2026)**, which the README already declared and linked.
