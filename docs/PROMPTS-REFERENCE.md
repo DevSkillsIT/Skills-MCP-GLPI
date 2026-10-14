@@ -12,6 +12,7 @@ Prompts são modelos pré-configurados que geram relatórios, análises e checkl
 2. Execute o prompt desejado:
    - Tool: `glpi_get_prompt_template`
    - Params: `{ "name": "nome_do_prompt", "arguments": { ... } }`
+   - O prefixo `glpi_` é opcional no `name`. Falhas voltam como `isError: true` com a causa.
 
 ---
 
@@ -53,7 +54,7 @@ Para gestores de TI, coordenadores e diretores.
 → { "name": "glpi_ticket_trends", "arguments": { "period_days": 90 } }
 ```
 
-**Retorna:** Volume de chamados por semana, categorias com mais crescimento, horários de pico, comparativo com período anterior.
+**Retorna:** Total de chamados no período (até 500) e as 5 categorias mais frequentes, com contagem e percentual. As categorias são contadas sobre os primeiros 100 chamados do período, não sobre o total.
 
 ---
 
@@ -63,15 +64,15 @@ Para gestores de TI, coordenadores e diretores.
 
 | Argumento | Tipo | Obrigatório | Descrição |
 |-----------|------|:-----------:|-----------|
-| `entity_name` | string | **Sim** | Nome da entidade |
+| `entity_name` | string | Não | Nome do cliente (sem ele, usa todas as entidades) |
 
 **Exemplo:**
 ```
-"Análise de ROI dos ativos da Skills IT"
+"Análise de ROI dos ativos da Acme Corp"
 → { "name": "glpi_asset_roi", "arguments": { "entity_name": "Acme Corp" } }
 ```
 
-**Retorna:** Custo total de aquisição, custo de manutenção (chamados relacionados), utilização média, idade média do parque, recomendações de substituição.
+**Retorna:** Contagem real de ativos por tipo (computadores, monitores, impressoras, equipamentos de rede). Custo e ROI só aparecem com valor de compra cadastrado no GLPI; sem esse dado, o relatório informa que não está disponível, em vez de estimar.
 
 ---
 
@@ -140,7 +141,7 @@ Para gestores de TI, coordenadores e diretores.
 
 **Exemplo:**
 ```
-"Satisfação da Skills IT no trimestre"
+"Satisfação da Acme Corp no trimestre"
 → { "name": "glpi_client_satisfaction", "arguments": { "entity_name": "Acme Corp", "period_days": 90 } }
 ```
 
@@ -209,8 +210,8 @@ Para analistas de suporte N1/N2/N3 e técnicos de campo.
 
 **Exemplo:**
 ```
-"Checklist de onboarding para Maria Souza na Skills IT"
-→ { "name": "glpi_onboarding_checklist", "arguments": { "username": "Maria Souza", "entity_name": "Acme Corp" } }
+"Checklist de onboarding do novo colaborador na Acme Corp"
+→ { "name": "glpi_onboarding_checklist", "arguments": { "username": "novo.colaborador", "entity_name": "Acme Corp" } }
 ```
 
 **Retorna:** Checklist com: criação de conta, e-mail, VPN, estação de trabalho, acessos aos sistemas, treinamentos.

@@ -55,7 +55,7 @@ curl -s -X POST $GLPI_MCP_URL/mcp \
   jq '.result.tools | length'
 ```
 
-Resultado esperado: `14`
+Resultado esperado: `17` (18 com `ENABLE_AI_ANALYSIS=true`)
 
 Listar nomes de todas as tools:
 ```bash
@@ -470,8 +470,9 @@ PYTHONPATH=. pytest tests/test_models.py -v -s
 
 ### "GLPI user_token required"
 ```json
-{"error": {"code": -32099, "message": "GLPI user_token required..."}}
+{"result": {"content": [{"type": "text", "text": "GLPI user_token required..."}], "isError": true}}
 ```
+Falha de tool volta como resultado com `isError: true`, não como erro JSON-RPC.
 Adicione o header `X-GLPI-User-Token` com seu token pessoal do GLPI.
 
 ### 401 - Authentication failed

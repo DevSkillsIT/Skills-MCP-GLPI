@@ -455,7 +455,8 @@ Params: {
 ```
 Tool: glpi_manage_ticket_operations
 Params: { "action": "delete", "ticket_id": 9999 }
-→ Requer confirmationToken+reason se MCP_SAFETY_GUARD=true.
+→ Exige GLPI_ALLOW_TICKET_DELETE=true (desligado por padrão). Com MCP_SAFETY_GUARD=true,
+   também exige confirmation_token + reason (mín. 10 caracteres).
 ```
 
 ---

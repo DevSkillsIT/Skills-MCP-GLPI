@@ -15,7 +15,7 @@ Claude / Gemini CLI
 ┌──────────────────────┐
 │   MCP GLPI Server    │
 │   FastAPI + uvicorn  │
-│   18 Tools │ 15 Prompts │ 4 Resources
+│   17 Tools (18 c/ IA) │ 15 Prompts │ 4 Resources
 └──────────┬───────────┘
            │ REST API v1 (apirest.php)
            ▼
@@ -76,19 +76,24 @@ PYTHONPATH=. GLPI_MCP_CONFIG=path/to/glpi-config.json \
   python -m uvicorn src.main:app --host 0.0.0.0 --port 8824
 
 # Modo produção (PM2)
-pm2 start ecosystem.http.config.js
+# O arquivo de ecossistema do PM2 depende do ambiente e não acompanha o repositório.
+pm2 start <seu-ecosystem>.config.js
 ```
 
 ## Configuração no Claude Code
 
-Adicione ao `.mcp.json` do projeto:
+Adicione ao `.mcp.json` do projeto. O token é pessoal de cada usuário e vai no header,
+nunca na configuração do servidor:
 
 ```json
 {
   "mcpServers": {
     "glpi": {
       "type": "streamable-http",
-      "url": "http://localhost:8824/mcp"
+      "url": "http://localhost:8824/mcp",
+      "headers": {
+        "X-GLPI-User-Token": "<seu-user-token>"
+      }
     }
   }
 }
@@ -102,6 +107,8 @@ Adicione ao `.mcp.json` do projeto:
 | `GET` | `/mcp` | SSE (notificações servidor→cliente) |
 | `DELETE` | `/mcp` | Encerrar sessão |
 | `GET` | `/health` | Health check |
+| `GET` | `/metrics` | Métricas Prometheus (só se `prometheus_client` estiver instalado) |
+| `POST` | `/webhooks/ticket/{created,updated,closed,followup}` | Recebe notificações do GLPI, assinadas por HMAC-SHA256 (`X-GLPI-Signature`). Encaminham a análise ao serviço de IA, que ainda é um stub em memória: não há efeito no GLPI (ver `TOOLS-REFERENCE.md`, 1.3) |
 
 ## Resiliência da conexão com o GLPI
 
@@ -139,18 +146,22 @@ O nome da variável por operação é `GLPI_ALLOW_` + o nome da operação em ma
 `.` trocado por `_`. Exemplos: `ticket.create` → `GLPI_ALLOW_TICKET_CREATE`;
 `asset.reservation_create` → `GLPI_ALLOW_ASSET_RESERVATION_CREATE`.
 
-**Padrões:** operações não destrutivas vêm **habilitadas**; as seis exclusões vêm
+**Padrões:** operações não destrutivas vêm **habilitadas**; as onze exclusões vêm
 **desabilitadas** e precisam ser ligadas explicitamente —
 `GLPI_ALLOW_TICKET_DELETE`, `GLPI_ALLOW_ASSET_DELETE`, `GLPI_ALLOW_USER_DELETE`,
-`GLPI_ALLOW_GROUP_DELETE`, `GLPI_ALLOW_LOCATION_DELETE`, `GLPI_ALLOW_WEBHOOK_DELETE`.
+`GLPI_ALLOW_GROUP_DELETE`, `GLPI_ALLOW_LOCATION_DELETE`, `GLPI_ALLOW_WEBHOOK_DELETE`,
+`GLPI_ALLOW_PROBLEM_DELETE`, `GLPI_ALLOW_CHANGE_DELETE`, `GLPI_ALLOW_PROJECT_DELETE`,
+`GLPI_ALLOW_CONTRACT_DELETE` e `GLPI_ALLOW_SUPPLIER_DELETE`.
 
 Uma escrita bloqueada responde com erro explicando qual variável ligar — não com um
 sucesso silencioso. As variáveis são lidas na inicialização: alterá-las exige reiniciar
 o servidor.
 
-> O portão de política cobre as tools consolidadas de chamados, ativos, admin e
-> webhooks. As escritas ITIL passam pelo safety guard de confirmação
-> (`confirmation_token` + `reason`).
+> O portão de política cobre todas as escritas: chamados, ativos, admin, webhooks e ITIL.
+> O safety guard de confirmação (`MCP_SAFETY_GUARD=true`, com `confirmation_token` +
+> `reason`) é uma camada separada e só age sobre exclusões. Hoje as tools de ativos, admin
+> e webhooks não declaram esses campos, então exclusões nesses recursos não podem ser
+> confirmadas pelo MCP enquanto o guard estiver ligado (ver a seção de limitações do README).
 
 ## Idempotência
 
@@ -229,6 +240,11 @@ memória e **não exigem token algum**. Só `tools/call` autentica no GLPI. Um c
 que lista as tools e falha em todas está com problema de credencial, não de
 conexão.
 
+Falhas dentro de uma tool voltam como **resultado** da chamada com `isError: true` e o
+texto da causa, para o agente ler e corrigir a chamada. Não há código JSON-RPC
+distinguindo a causa: o que separa os casos é a **mensagem**. Erros de protocolo
+(tool inexistente, argumento que não é objeto) continuam sendo erros JSON-RPC.
+
 **E credencial válida ≠ permissão suficiente.** O `X-GLPI-User-Token` autentica um
 USUÁRIO do GLPI, e o `initSession` assume o **perfil padrão** dele. Um usuário com
 perfil *Self-Service* abre sessão sem erro, mas `GET /Ticket/{id}` de um chamado que
@@ -237,16 +253,16 @@ leituras de chamado falham e a listagem não, olhe o perfil, não o token. Use
 `glpi_manage_admin_resources(resource='users', action='get', resource_id=...)`, que
 mostra os perfis do usuário.
 
-Ambas as falhas de autenticação retornam o mesmo código JSON-RPC **`-32001`**; o
-que distingue a causa é a **mensagem**:
+As duas falhas de autenticação chegam como `isError: true`; o que distingue a causa é a
+**mensagem**:
 
 | Mensagem | Causa | O que fazer |
 |----------|-------|-------------|
 | `GLPI user_token required. Configure X-GLPI-User-Token header…` | O header **não chegou** ao servidor | Verifique se o cliente MCP está enviando `X-GLPI-User-Token` (em proxies, se o header é repassado) |
 | `Token de usuario do GLPI invalido ou expirado…` | O header chegou, mas o **GLPI recusou** o valor | Gere um novo token em *Administração > Usuários > [usuário] > Chaves de acesso remoto* |
 
-> `-32099` é outra coisa: é o envelope genérico de falha inesperada **dentro de uma
-> tool** (`Tool 'X' falhou: …`). Não indique problema de token só por vê-lo.
+> Uma falha inesperada dentro de uma tool aparece como `Tool 'X' falhou: …`, também com
+> `isError: true`. Não indique problema de token só por ver essa mensagem.
 
 ### 3. O token é por instância do GLPI
 
@@ -261,7 +277,7 @@ instância, não para um só.
 
 ## Próximos Passos
 
-- [Referência Completa de Tools](./TOOLS-REFERENCE.md) — 17 ferramentas com parâmetros e exemplos
+- [Referência Completa de Tools](./TOOLS-REFERENCE.md) — 17 ferramentas com parâmetros e exemplos (18 com `ENABLE_AI_ANALYSIS=true`)
 - [Referência de Prompts](./PROMPTS-REFERENCE.md) — 15 prompts prontos para relatórios gerenciais
 - [Exemplos de Uso](./EXAMPLES.md) — Cenários completos passo a passo
 - [CHANGELOG](../CHANGELOG.md) — Histórico de versões e correções
@@ -277,4 +293,6 @@ instância, não para um só.
 - **Entity ID=0 é válido:** o entity root do GLPI (MSP) pode ser consultado com `resource_id=0` em `glpi_manage_admin_resources`.
 - **Webhooks são nativos do GLPI 11** — persistem a reinícios do MCP e aparecem na interface do GLPI. IDs são hashes alfanuméricos (não inteiros).
 - **event_type usa ponto:** `ticket.created`, não `ticket_created`.
+- **Análise IA desligada por padrão:** `ENABLE_AI_ANALYSIS=false` esconde `glpi_manage_ticket_ai_analysis` do `tools/list`. Só ligue depois de existir um agente real por trás.
+- **Prompts pelo nome curto:** `glpi_get_prompt_template` aceita `sla_performance` no lugar de `glpi_sla_performance`.
 - **`get_details` de Computer** traz OS + discos + CPU + memória + rede + software em uma única resposta Markdown.

@@ -2,7 +2,7 @@
 
 # 🚀 Skills MCP GLPI v2.2
 
-### 18 Production-Grade Tools with 70-85% Token Efficiency and Enterprise-Grade Safety
+### 17 Production-Grade Tools (18 with the opt-in AI analysis) with 70-85% Token Efficiency and Enterprise-Grade Safety
 
 [![MCP Protocol](https://img.shields.io/badge/MCP-2024--11--05-blue)](https://modelcontextprotocol.io/)
 [![Python](https://img.shields.io/badge/Python-3.11+-green)](https://www.python.org/)
@@ -10,11 +10,11 @@
 [![Pydantic](https://img.shields.io/badge/Pydantic-v2-purple)](https://docs.pydantic.dev/)
 [![Transport](https://img.shields.io/badge/Transport-Streamable%20HTTP-orange)](https://modelcontextprotocol.io/docs/concepts/transports)
 [![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
-[![Status](https://img.shields.io/badge/Status-Production%20Ready-brightgreen)](https://github.com/DevSkillsIT/mcp-glpi)
+[![Status](https://img.shields.io/badge/Status-Production%20Ready-brightgreen)](https://github.com/DevSkillsIT/Skills-MCP-GLPI)
 
 **Connect Claude Code, Gemini CLI, ChatGPT, VS Code Copilot, and Cursor to your GLPI instance**
 
-[Why v2.0](#-why-v20) • [18 Tools](#-18-tools) • [Quick Start](#-quick-start) • [Resources](#-mcp-resources) • [Support](#-support)
+[Why v2.0](#-why-v20) • [17 Tools](#-17-tools-1-opt-in) • [Quick Start](#-quick-start) • [Resources](#-mcp-resources) • [Support](#-support)
 
 </div>
 
@@ -22,7 +22,7 @@
 
 ## 📖 About The Project
 
-**Skills MCP GLPI v2.2** is a production-ready Model Context Protocol (MCP) server for GLPI (IT Service Management) with a revolutionary token-optimization architecture. Built by **Skills IT**, this MCP consolidates 68 specialized tools into 18 enterprise-grade tools with Markdown responses, tool annotations, and MCP resources.
+**Skills MCP GLPI v2.2** is a production-ready Model Context Protocol (MCP) server for GLPI (IT Service Management) with a revolutionary token-optimization architecture. Built by **Skills IT**, this MCP consolidates 68 specialized tools into 17 active enterprise-grade tools (18 defined; the AI analysis tool is off by default) with Markdown responses, tool annotations, and MCP resources.
 
 Compatible with **GLPI 10.x** (legacy API v1) and **GLPI 11.x** (current stable).
 
@@ -40,7 +40,7 @@ The v1.0 approach (68 tools, raw JSON responses) caused **token explosion** — 
 
 | Aspect | v1.0 | v2.2 |
 |--------|------|------|
-| **Tools** | 68 fragmented | **18 consolidated** ✨ |
+| **Tools** | 68 fragmented | **17 consolidated** ✨ |
 | **Response Format** | Raw JSON (verbose) | **Markdown (compact)** ✨ |
 | **Token Efficiency** | ~100K per operation | **15-30K per operation** ✨ |
 | **Tool Annotations** | None | **Read-only & destructive hints** ✨ |
@@ -54,7 +54,7 @@ The v1.0 approach (68 tools, raw JSON responses) caused **token explosion** — 
 ## 🎯 Key Improvements
 
 ### 1. **Consolidated Toolkit**
-- **18 production tools** organized by domain (Tickets, ITIL, Assets, Admin, Webhooks, Knowledge, Bridge)
+- **17 active tools** organized by domain (Tickets, ITIL, Assets, Admin, Webhooks, Knowledge, Bridge, Free-criteria search), plus the opt-in AI analysis tool
 - **search_* + manage_*** pattern: Clear separation of read-only vs mutation operations
 - Each tool handles 4-8 related operations, reducing context overhead
 
@@ -65,7 +65,7 @@ Markdown-formatted responses instead of JSON reduce token consumption dramatical
 
 ### 3. **Enterprise Safety**
 - Tool annotations for LLM safety (readOnlyHint, destructiveHint)
-- Aggressive rate limits (default=10, max=50 per request)
+- Result limits per call (default=10, max=50), and a per-user rate limit (`RATE_LIMIT_REQUESTS_PER_MINUTE`, default 60)
 - HTML stripping from GLPI TinyMCE fields
 - Automatic internal field filtering
 - **Idempotent creates** — repeating the same create does not create it twice
@@ -107,12 +107,12 @@ search if the catalogue is unavailable.
                                 │ MCP Protocol (HTTP JSON-RPC)
                                 ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    Skills MCP GLPI v2.0 Server                   │
+│                    Skills MCP GLPI v2.2 Server                   │
 │                         localhost:8824                           │
 │  ┌────────────────────────────────────────────────────────────┐ │
 │  │                    FastAPI + Formatters                    │ │
 │  │  ┌──────────────┐ ┌──────────────┐ ┌──────────────────┐   │ │
-│  │  │   18 Tools   │ │ 4 Resources  │ │  15 Prompts     │   │ │
+│  │  │   17 Tools   │ │ 4 Resources  │ │  15 Prompts     │   │ │
 │  │  │ (Markdown)   │ │ (Static URIs)│ │ (Parameterized) │   │ │
 │  │  └──────────────┘ └──────────────┘ └──────────────────┘   │ │
 │  │  ┌───────────────┬──────────────┬──────────────────────┐   │ │
@@ -145,8 +145,8 @@ search if the catalogue is unavailable.
 
 ```bash
 # Clone the repository
-git clone https://github.com/DevSkillsIT/mcp-glpi.git
-cd mcp-glpi
+git clone https://github.com/DevSkillsIT/Skills-MCP-GLPI.git
+cd Skills-MCP-GLPI
 
 # Create virtual environment
 python3 -m venv venv
@@ -187,7 +187,7 @@ LOG_LEVEL=INFO
 # Development
 python -m uvicorn src.main:app --host 0.0.0.0 --port 8824 --reload
 
-# Production (with PM2)
+# Production (with PM2; the ecosystem file is environment-specific and not versioned here)
 pm2 start ecosystem.config.cjs
 ```
 
@@ -217,9 +217,9 @@ curl http://localhost:8824/health
 
 ---
 
-## 🧰 18 Tools
+## 🧰 17 Tools (+1 opt-in)
 
-### 🎫 Tickets (3 tools)
+### 🎫 Tickets (2 tools + 1 opt-in)
 
 | Tool | Description |
 |------|-------------|
@@ -244,8 +244,8 @@ curl http://localhost:8824/health
 
 | Tool | Description |
 |------|-------------|
-| `glpi_search_asset_inventory` | Search computers/monitors/software/devices/reservations. Filters: **assigned_user** (name or id), **status**, **location_id**, **manufacturer_id**, plus **sort_by/order** |
-| `glpi_manage_asset_operations` | CRUD + reservations: get/get_details (enriched with OS/disks/CPU/mem/net/software)/create/update/delete/get_reservations/create_reservation |
+| `glpi_search_asset_inventory` | Search by `scope` (all, computers, monitors, software, devices, reservations, reservable, stats). Filters: **assigned_user** (name or id), **status**, **location_id**, **manufacturer_id**, plus **sort_by/order** |
+| `glpi_manage_asset_operations` | CRUD + reservations: get/get_details (enriched with OS/disks/CPU/mem/net/software)/create/update/delete/get_reservations/create_reservation/update_reservation |
 
 ### 👥 Admin (2 tools)
 
@@ -421,6 +421,16 @@ always active, and every delete operation defaults to disabled there. That is th
 protection you actually get out of the box; the guard adds the human challenge on
 top of it.
 
+### Asset, admin and webhook deletes cannot receive the guard token
+
+The guard needs `confirmation_token` and `reason`. Only the ticket and ITIL tools declare
+those fields. The schemas of `glpi_manage_asset_operations`,
+`glpi_manage_admin_resources` and `glpi_manage_webhook_integrations` do not, and the
+server rejects arguments a tool does not declare. With `MCP_SAFETY_GUARD=true`, a delete
+on those resources therefore cannot be confirmed through MCP. Until this is fixed, the
+write policy (`GLPI_ALLOW_<OPERATION>_DELETE`, disabled by default) is the control that
+applies to them.
+
 ### Knowledge base search does not derive the tenant from the token
 
 `glpi_search_knowledge_unified` filters by client only when the caller passes
@@ -459,16 +469,21 @@ All tools include safety hints for LLM reasoning:
 ```json
 {
   "name": "glpi_manage_ticket_operations",
-  "readOnlyHint": "Use search_* tools for read-only lookups",
-  "destructiveHint": "delete operation requires confirmationToken"
+  "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": true,
+    "idempotentHint": false,
+    "openWorldHint": true
+  }
 }
 ```
 
-### Aggressive Rate Limiting
+### Result Limits
 
-- **Default:** 10 results per request
-- **Maximum:** 50 results per request
+- **Default:** 10 results per call
+- **Maximum:** 50 results per call
 - Prevents context overflow and token waste
+- Rate limiting is separate: `RATE_LIMIT_REQUESTS_PER_MINUTE` (default 60) applies per user token and client address. Calls from localhost are exempt. The counter includes every internal GLPI call, so one report prompt can consume many units
 
 ### HTML Stripping
 
@@ -513,7 +528,7 @@ plausible and wrong:
 
 ### From v1.0
 
-v2.x consolidates 68 fragmented tools into 18:
+v2.x consolidates 68 fragmented tools into 17 active tools (18 defined, one opt-in):
 
 **Key Changes:**
 - Use `glpi_search_*` for read-only operations (searches, lists, lookups)
@@ -568,6 +583,7 @@ Each user configures their own `X-GLPI-User-Token`:
 | `MCP_SAFETY_TOKEN` | Conditional | Confirmation token if Safety Guard enabled |
 | `RATE_LIMIT_REQUESTS_PER_MINUTE` | No | Rate limiting (default: 60) |
 | `LOG_LEVEL` | No | Logging level (default: INFO) |
+| `ENABLE_AI_ANALYSIS` | No | Registers `glpi_manage_ticket_ai_analysis` (default: false). See the Tickets section |
 
 **Request resilience**
 
@@ -690,8 +706,8 @@ pytest tests/ --cov=src --cov-report=html
 pytest tests/test_models.py -v
 ```
 
-**Test Coverage:** 1,333 automated tests (plus 12 skipped) covering unit, integration,
-contract and E2E scenarios.
+**Test Coverage:** 1,515 automated tests passing (plus 12 skipped) at the 2026-09-28
+release, covering unit, integration, contract and E2E scenarios.
 
 Among them is a **contract test on description quality**: tool and prompt descriptions
 are the retrieval surface that MCP hubs index and match semantically, so a thin
@@ -773,7 +789,7 @@ Contributions are welcome! Fork the repository, create a feature branch, and ope
 ## 📞 Support
 
 ### Bug Reports
-[Open an issue](https://github.com/DevSkillsIT/mcp-glpi/issues) with reproduction steps and environment details.
+[Open an issue](https://github.com/DevSkillsIT/Skills-MCP-GLPI/issues) with reproduction steps and environment details.
 
 ### Email
 Technical support: contato@skillsit.com.br

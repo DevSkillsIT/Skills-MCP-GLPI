@@ -241,8 +241,40 @@ seven defects of one family — output a reader takes as fact when it is not.
   header says `Pagina 1/30 (total: 119)` instead of announcing a page as the whole.
   - `src/formatters/glpi_formatters.py::format_assets_list`
 
+### Fixed — failures reach the agent (2026-09-28)
+
+- **A tool failure is a result, not a JSON-RPC error.** Any `GLPIError` raised inside a tool
+  (not found, validation, write policy, rate limit, GLPI API failure) returns
+  `isError: true` with readable text, so the model can read the cause and fix the call.
+  Gateways turned the old JSON-RPC errors (`-32001`, `-32602`, `-32099`) into opaque
+  failures. Unknown tool, missing `name` and non-object `arguments` remain protocol errors.
+  An argument the tool does not declare now names the argument and lists the accepted ones.
+  - `src/handlers.py::handle_request`, `tool_error_result`, `describe_failure`
+- **Rate-limit hits are readable.** `tools/call` answers with `isError` (HTTP 200) that
+  states the limit and when to retry; other methods answer 429. The limit counts every
+  internal GLPI call, so one report prompt can consume many units.
+  - `src/main.py::_rate_limited_response`
+- **A failed report query is never a zero.** Report prompts raised nothing when the main
+  query failed and printed "Total: 0", "0 resolved" or "no asset found". The failure now
+  raises with the step and the reason. `_resolve_entity_id` no longer falls back to the
+  global scope when the lookup fails.
+  - `src/prompts_handlers/prompts.py`
+- **`glpi_get_prompt_template` reports failures and accepts short names.** A failed or
+  unknown prompt returns `isError` (for an unknown name, with the list of prompts). The
+  `glpi_` prefix is optional, so `sla_performance` resolves to `glpi_sla_performance`.
+  - `src/tools/bridge_tools.py::get_prompt_tool`
+- **A followup without attachment is logged at DEBUG.** `GET .../Document_Item` returns 404
+  when there is no attachment, which is the common case. Only that subitem is treated as
+  "nothing there"; other 404s and status codes stay ERROR.
+  - `src/services/glpi_client.py`
+- **Software-name resolution is bounded to 5 requests in flight.** The existing cap limited
+  how many versions were resolved, not how many at once, so a machine with 40 uncached
+  versions opened 40 connections to GLPI in one gather.
+  - `src/tools/assets.py::_resolve_software_names`
+
 ### Security
 
+- **Client-specific names removed from tests and end-to-end run instructions.**
 - **Credentials pasted into tickets are redacted before indexing.** A KB makes ticket
   text semantically discoverable, which raises the cost of leaving a password in it, so
   the secret never reaches the vector, the FTS index or a rendered result. Redaction is

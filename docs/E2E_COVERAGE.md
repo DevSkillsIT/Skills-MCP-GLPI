@@ -38,7 +38,7 @@ limit respected, invalid-source graceful, Markdown table shape.
 
 | Capability | No token | With `GLPI_MCP_E2E_USER_TOKEN` |
 |------------|----------|-------------------------------|
-| GLPI-backed tools (search/get/manage) & `glpi://entities` | **skipped** (server returns -32001) | fully asserted |
+| GLPI-backed tools (search/get/manage) & `glpi://entities` | **skipped** (server returns `isError` with "user_token required") | fully asserted |
 | KB search, static resources, prompts, annotations | fully asserted | fully asserted |
 
 The token is per-GLPI-instance: each deployment points at its own GLPI server, so a

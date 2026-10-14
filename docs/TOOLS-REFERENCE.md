@@ -127,7 +127,7 @@ Operações completas de gestão de chamados: criar, atualizar, atribuir, resolv
 | `title` | string | Condicional | Título (obrigatório para `create`) |
 | `description` | string | Condicional | Descrição do problema (obrigatório para `create`) |
 | `content` | string | Condicional | Conteúdo do acompanhamento (para `add_followup`) |
-| `status` | string | Não | Status: `new`, `processing`, `pending`, `solved`, `closed` |
+| `status` | string | Não | Status: `new`, `assigned`, `planned`, `pending`, `solved`, `closed` |
 | `priority` | integer | Não | Prioridade 1-5 |
 | `entity_id` | integer | Não | ID da entidade |
 | `entity_name` | string | Não | Nome da entidade |
@@ -441,6 +441,11 @@ Operações de gestão de ativos: cadastrar, detalhar, atualizar, excluir, reser
 | `asset_id` | integer | Condicional | ID do ativo |
 | `name` | string | Condicional | Nome do ativo (para `create`) |
 | `serial_number` | string | Não | Número de série |
+| `user_id` | integer | Não | Usuário vinculado (`create`) ou usuário da reserva (`create_reservation`) |
+| `date_start` | string | Condicional | Início da reserva (`create_reservation`), formato `AAAA-MM-DD HH:MM:SS` |
+| `date_end` | string | Condicional | Fim da reserva (`create_reservation`, `update_reservation`) |
+| `reservation_id` | integer | Condicional | ID da reserva (`update_reservation`) |
+| `comment` | string | Não | Comentário, por exemplo na reserva |
 
 **Ações disponíveis:**
 
@@ -532,10 +537,13 @@ Operações CRUD em recursos administrativos.
 
 | Resource | get | create | update | delete |
 |----------|:---:|:------:|:------:|:------:|
-| `users` | ✅ | ✅ | ✅ | ✅ (soft delete por padrão, purge opcional) |
-| `groups` | ✅ | ✅ | ✅ | ✅ (purge=true por padrão) |
-| `locations` | ✅ | ✅ | ✅ | ✅ (purge=true por padrão) |
+| `users` | ✅ | ✅ | ✅ | ✅ (sempre desativação lógica; `purge` não é exposto nesta tool) |
+| `groups` | ✅ | ✅ | ✅ | ✅ (exclusão definitiva, `purge=true` fixo) |
+| `locations` | ✅ | ✅ | ✅ | ✅ (vai para a lixeira do GLPI; `purge` não é exposto nesta tool) |
 | `entities` | ✅ (id=0 permitido) | ❌ | ❌ | ❌ |
+
+> ℹ️ O parâmetro `purge` não está no schema de `glpi_manage_admin_resources`. Para excluir
+> definitivamente um usuário ou uma localização, use a própria interface do GLPI.
 
 **Exemplos:**
 ```
@@ -680,8 +688,11 @@ Executa um prompt específico com argumentos customizados.
 
 | Parâmetro | Tipo | Obrigatório | Descrição |
 |-----------|------|:-----------:|-----------|
-| `name` | string | **Sim** | Nome do prompt |
+| `name` | string | **Sim** | Nome do prompt. O prefixo `glpi_` é opcional (`sla_performance` = `glpi_sla_performance`) |
 | `arguments` | object | Não | Argumentos chave-valor para o prompt |
+
+> Nome desconhecido ou falha do relatório volta como `isError: true`, com a causa e, para
+> nome desconhecido, a lista dos prompts disponíveis. Nunca como sucesso vazio.
 
 **Exemplo:**
 ```
@@ -988,7 +999,7 @@ então uma retentativa do cliente (ou um clique duplo do LLM) recebe de volta o
 resultado da primeira execução, marcado com `replayed: true`, sem tocar no GLPI.
 
 Cobre as ações do tipo criação: `create`, `add_followup`, `add_task`, `add_document`,
-`link_tickets`, `request_validation` e `create_reservation`.
+`link_tickets`, `link_ticket` (ITIL), `request_validation` e `create_reservation`.
 
 O armazenamento padrão é **SQLite persistente** (`var/idempotency/store.sqlite3`), o
 que mantém a garantia entre reinícios e entre workers do mesmo servidor. Um backend
