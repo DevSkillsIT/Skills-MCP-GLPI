@@ -5,6 +5,7 @@ Roteamento JSON-RPC 2.0 para execução das tools
 """
 
 from typing import Dict, Any, List, Optional, Tuple
+import hashlib
 import json
 import re
 from datetime import datetime
@@ -416,6 +417,11 @@ class MCPHandler:
                         "name": {"type": "string", "description": "Nome do webhook (obrigatorio para create)"},
                         "url": {"type": "string", "description": "URL de destino do callback HTTP (obrigatorio para create)"},
                         "event_type": {"type": "string", "description": "Tipo de evento que dispara o webhook (obrigatorio para create e trigger). Valores aceitos: ticket.created, ticket.updated, ticket.deleted, ticket.assigned, asset.created, asset.updated, asset.deleted, asset.reserved, user.created, user.updated, user.deleted, group.created, group.updated, group.deleted", "enum": ["ticket.created", "ticket.updated", "ticket.deleted", "ticket.assigned", "asset.created", "asset.updated", "asset.deleted", "asset.reserved", "user.created", "user.updated", "user.deleted", "group.created", "group.updated", "group.deleted"]},
+                        "secret": {"type": "string", "description": "Segredo HMAC usado para assinar as entregas do webhook (create e update). SENSIVEL: e enviado ao GLPI e nunca devolvido — as respostas mostram apenas se esta configurado. Omita para nao alterar."},
+                        "is_active": {"type": "boolean", "description": "Se o webhook fica ativo (create: padrao true; update: omita para nao alterar). Para ligar ou desligar um webhook ja existente tambem existem as actions enable e disable."},
+                        "headers": {"type": "object", "description": "Cabecalhos HTTP personalizados enviados em cada entrega, em formato chave-valor de strings (create e update). No update substitui o conjunto atual.", "additionalProperties": {"type": "string"}},
+                        "data": {"type": "object", "description": "Payload do evento a disparar (apenas action=trigger). Atencao: o GLPI 11 nao expoe disparo manual por REST, entao trigger responde que nao e suportado."},
+                        "webhook_ids": {"type": "array", "description": "IDs de webhooks especificos a disparar (apenas action=trigger); omita para todos os webhooks do evento. Mesma ressalva do campo data.", "items": {"type": "string"}},
                         "confirmation_token": {"type": "string", "description": "Token de confirmacao exigido na exclusao (delete) quando o safety guard esta ativo."},
                         "reason": {"type": "string", "description": "Motivo da exclusao (delete), minimo 10 caracteres, quando o safety guard esta ativo."},
                     },
@@ -787,7 +793,13 @@ class MCPHandler:
         store = get_idempotency_store()
         # A chave é o próprio conteúdo da chamada: repetir a mesma criação com
         # os mesmos argumentos é exatamente o caso que precisa ser detido.
-        key = json.dumps(arguments, sort_keys=True, default=str, ensure_ascii=False)
+        # @MX:NOTE: the key is a digest, never the raw arguments.
+        # @MX:REASON: the store persists the key (SQLite by default). Using the
+        # JSON itself wrote webhook secrets and user passwords of every create
+        # call to disk in clear text.
+        key = hashlib.sha256(
+            json.dumps(arguments, sort_keys=True, default=str, ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
 
         return await store.run(
             operation.value,

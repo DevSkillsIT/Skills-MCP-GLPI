@@ -1,6 +1,6 @@
 """
 MCP Tools Package - Conforme SPEC.md seção 4.2
-Implementação das 48 tools MCP organizadas por categoria
+Pacote das implementações de tools; o catálogo exposto vem de src/handlers.py
 """
 
 from .tickets import ticket_tools
@@ -17,24 +17,3 @@ __all__ = [
 
 # Versão do pacote: a mesma do servidor (fonte única em src/__init__.py)
 from src import __version__
-
-# Informações sobre as tools
-TOOLS_INFO = {
-    "total_tools": 48,
-    "categories": {
-        "tickets": 12,
-        "assets": 12,
-        "admin": 12,
-        "webhooks": 12
-    },
-    "protocol": "JSON-RPC 2.0",
-    "spec_version": "SPEC-GLPI-001"
-}
-
-def get_tools_summary():
-    """Retorna resumo das tools MCP implementadas."""
-    return {
-        "version": __version__,
-        "tools_info": TOOLS_INFO,
-        "exports": __all__
-    }

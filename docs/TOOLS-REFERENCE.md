@@ -610,6 +610,11 @@ Gestão completa de webhooks e integrações.
 | `name` | string | Condicional | Nome (para `create`) |
 | `url` | string | Condicional | URL callback HTTP(S) (para `create`) |
 | `event_type` | string | Condicional | Tipo de evento (enum abaixo) |
+| `secret` | string | Não | Segredo HMAC das entregas (`create`, `update`). **Sensível:** vai ao GLPI e nunca é devolvido nem registrado em log; as respostas mostram só "Configurado" ou "Não configurado" |
+| `is_active` | boolean | Não | Webhook ativo (`create`, padrão `true`; `update`, omitido = não altera). Para um webhook existente, `enable`/`disable` também servem |
+| `headers` | object | Não | Cabeçalhos HTTP personalizados por entrega, chave-valor de strings (`create`, `update`; no `update` substitui o conjunto atual) |
+| `data` | object | Não | Payload do evento (`trigger`). O GLPI 11 não expõe disparo manual por REST: `trigger` responde que não é suportado |
+| `webhook_ids` | array | Não | IDs específicos a disparar (`trigger`); mesma ressalva |
 | `confirmation_token` | string | Condicional | Token exigido na exclusão (`delete`) quando `MCP_SAFETY_GUARD=true` (igual a `MCP_SAFETY_TOKEN`). Aceita também `confirmationToken` |
 | `reason` | string | Condicional | Motivo da exclusão (mín. 10 caracteres) com safety guard ativo |
 

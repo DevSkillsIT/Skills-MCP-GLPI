@@ -17,3 +17,11 @@ def test_legacy_lookup_tables_are_gone(name):
 def test_register_tools_docstring_does_not_state_a_stale_count():
     doc = MCPHandler._register_tools.__doc__
     assert "14 consolidated" not in doc and "68 tools" not in doc
+
+
+def test_tools_package_has_no_stale_catalogue():
+    """TOOLS_INFO claimed 48 tools in four categories; the server exposes 17 consolidated ones."""
+    import src.tools as tools_pkg
+    assert not hasattr(tools_pkg, "TOOLS_INFO")
+    assert not hasattr(tools_pkg, "get_tools_summary")
+    assert "48" not in (tools_pkg.__doc__ or "")

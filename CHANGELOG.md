@@ -311,6 +311,27 @@ seven defects of one family — output a reader takes as fact when it is not.
   tables keyed by tool names that no longer exist, no call sites) and a stale "14
   consolidated tools" comment.
 
+### Fixed — webhook parameters, secret handling (2026-10-14)
+
+- **`glpi_manage_webhook_integrations` declares `secret`, `is_active`, `headers`, `data` and
+  `webhook_ids`.** The code already handled them (the dispatcher forwards any argument the
+  function accepts), but the schema did not list them, so a client that builds calls from the
+  schema never sent them: a webhook could not be created inactive, with custom headers or with
+  an HMAC secret. Correction to the entry above: for the same reason the three manage tools did
+  accept `confirmationToken` through the dispatcher before; what was missing was the declared
+  `confirmation_token` / `reason`, and the group/location forwarding.
+  - `src/handlers.py`
+- **A webhook secret (or a user password) is no longer written to disk in clear text.** The
+  idempotency key of every create-like call was the raw JSON of its arguments, and the store
+  persists the key (SQLite by default). It is now a SHA-256 digest of that JSON; behavior is
+  otherwise identical.
+  - `src/handlers.py::_execute_guarded`
+- **The webhook create path no longer logs or raises the raw GLPI response**, which could echo
+  the secret. It logs nothing extra and the "no id" error carries no payload.
+  - `src/tools/webhooks.py::create_webhook`
+- **Removed the stale `TOOLS_INFO` (48 tools) and `get_tools_summary` from `src/tools`**; no
+  call sites.
+
 ### Added — license file
 
 - **`LICENSE` (MIT, Skills IT, 2025-2026)**, which the README already declared and linked.

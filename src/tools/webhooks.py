@@ -261,7 +261,6 @@ class WebhookTools:
         except Exception as exc:
             logger.error(f"create_webhook error: {exc}", exc_info=True)
             raise GLPIError(500, f"Falha ao criar webhook: {exc}") from None
-        logger.info(f"DEBUG GLPI Webhook POST response: {response}")
 
         new_id = None
         if isinstance(response, dict):
@@ -272,7 +271,7 @@ class WebhookTools:
                 new_id = first.get("id")
 
         if new_id is None:
-            raise GLPIError(500, f"Webhook criado mas resposta sem id: {response}")
+            raise GLPIError(500, "Webhook criado mas a resposta do GLPI veio sem id")
 
         return await self.get_webhook(str(new_id))
 
