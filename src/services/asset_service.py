@@ -172,6 +172,30 @@ def _resolve_sort(sort_by: Any = None, order: Any = None) -> tuple:
     return sort_field, normalize_order(order, default="ASC")
 
 
+#: Asset types whose table has a model column. GLPI names it per type
+#: (glpi_computers.computermodels_id ...); there is no generic `models_id`.
+_MODEL_COLUMN_TYPES = (
+    "Computer", "Monitor", "NetworkEquipment", "Peripheral", "Phone", "Printer",
+)
+
+
+def model_column(asset_type: str) -> str:
+    """GLPI column that holds the model of `asset_type`.
+
+    @MX:NOTE: `<lowercased itemtype>models_id`, e.g. Computer -> computermodels_id.
+    @MX:REASON: create and update wrote `models_id`, a column no asset table has, so a
+    model set through the tool was silently dropped. Types outside the six that have a
+    model refuse the field instead of sending a column GLPI ignores.
+    """
+    if asset_type not in _MODEL_COLUMN_TYPES:
+        raise ValidationError(
+            f"model_id nao se aplica ao tipo '{asset_type}'. Tipos com modelo: "
+            f"{', '.join(_MODEL_COLUMN_TYPES)}",
+            "model_id",
+        )
+    return f"{asset_type.lower()}models_id"
+
+
 class AssetService:
     """
     Serviço de gerenciamento de assets GLPI.
@@ -845,7 +869,7 @@ class AssetService:
             payload["manufacturers_id"] = manufacturer_id
         
         if model_id:
-            payload["models_id"] = model_id
+            payload[model_column(asset_type)] = model_id
         
         if user_id:
             payload["users_id"] = user_id
@@ -1582,15 +1606,86 @@ class AssetService:
     async def update_reservation(
         self,
         reservation_id: int,
-        **kwargs
+        date_start: Optional[str] = None,
+        date_end: Optional[str] = None,
+        comment: Optional[str] = None,
+        user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Atualiza uma reserva existente."""
-        if reservation_id <= 0:
+        """Atualiza uma reserva existente e confirma lendo de volta.
+
+        @MX:NOTE: o GLPI nomeia as colunas `begin`, `end`, `comment`, `users_id`
+        (Reservation::prepareInputForUpdate le $input["begin"] e $input["end"]).
+        @MX:REASON: antes recebia so **kwargs; date_start/date_end/comment sao
+        parametros explicitos da tool, entao o PUT ia VAZIO e a chamada respondia
+        sucesso sem alterar nada. Agora: sem campo nenhum e erro, o payload usa as
+        colunas do GLPI e a resposta so confirma o que a leitura de volta mostra.
+        """
+        if not isinstance(reservation_id, int) or reservation_id <= 0:
             raise ValidationError("reservation_id must be positive", "reservation_id")
-        await self.client.put(f"/apirest.php/Reservation/{reservation_id}", kwargs)
+
+        requested: Dict[str, Any] = {}
+        if date_start is not None:
+            requested["begin"] = date_start
+        if date_end is not None:
+            requested["end"] = date_end
+        if comment is not None:
+            requested["comment"] = comment.strip()
+        if user_id is not None:
+            requested["users_id"] = user_id
+        if not requested:
+            raise ValidationError(
+                "Nada para alterar na reserva: informe ao menos um de date_start, "
+                "date_end, comment ou user_id",
+                "date_start",
+            )
+
+        # Existe? Tambem fornece o outro extremo para validar a janela.
+        current = await self.client.get_item("Reservation", reservation_id)
+        current = current if isinstance(current, dict) else {}
+
+        parsed = {}
+        for column, field in (("begin", "date_start"), ("end", "date_end")):
+            value = requested.get(column, current.get(column))
+            if value in (None, ""):
+                continue
+            try:
+                parsed[column] = datetime.strptime(str(value), "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                raise ValidationError(
+                    f"Formato de data invalido em {field}. Use AAAA-MM-DD HH:MM:SS",
+                    field,
+                ) from None
+        if len(parsed) == 2 and parsed["begin"] >= parsed["end"]:
+            raise ValidationError(
+                "O fim da reserva (date_end) deve ser depois do inicio (date_start)",
+                "date_end",
+            )
+
+        await self.client.put(f"/apirest.php/Reservation/{reservation_id}", requested)
+
         updated = await self.client.get_item("Reservation", reservation_id)
-        return updated
-    
+        updated = updated if isinstance(updated, dict) else {}
+        not_applied = [
+            column for column, wanted in requested.items()
+            if str(updated.get(column, "")).strip() != str(wanted).strip()
+        ]
+        if not_applied:
+            raise GLPIError(
+                502,
+                f"O GLPI nao aplicou a alteracao da reserva {reservation_id} "
+                f"(campos: {', '.join(not_applied)}). Nada foi confirmado.",
+            )
+
+        changes = "; ".join(
+            f"{column}: {current.get(column, '-')} -> {updated.get(column)}"
+            for column in requested
+        )
+        return {
+            **updated,
+            "id": updated.get("id", reservation_id),
+            "message": f"Reserva {reservation_id} atualizada ({changes})",
+        }
+
     async def create_reservation(
         self,
         asset_type: str,

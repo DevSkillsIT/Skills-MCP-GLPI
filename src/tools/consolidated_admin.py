@@ -12,6 +12,7 @@ from typing import Any, Dict, Literal, Optional
 
 from src.formatters.markdown_helpers import remove_heavy_fields
 from src.tools.admin import admin_tools
+from src.utils.applicability import refuse_inapplicable
 from src.utils.safety_guard import require_safety_confirmation
 from src.utils.validators import (
     create_mcp_error,
@@ -132,6 +133,56 @@ async def search_admin(
     return result
 
 
+def applicable_for_create(resource: str) -> set:
+    """Fields valid on create of `resource` (used to word the update refusal)."""
+    return _APPLICABLE_FIELDS.get((resource, "create"), set())
+
+
+def _default(value: Any, default: Any) -> Any:
+    """`value`, or `default` when the caller left it out.
+
+    @MX:NOTE: the group flags and authtype default to None in the signature.
+    @MX:REASON: with real defaults (True/False/1) an update that only renamed a group
+    arrived carrying is_requester/is_assign/is_notify=True and rewrote them, and a
+    "was this field provided?" check was impossible. The create defaults live here.
+    """
+    return default if value is None else value
+
+
+_PROFILE_FIELDS = (
+    "name", "password", "password2", "firstname", "realname", "email", "phone", "phone2",
+    "mobile", "entity_id", "entity_name", "profile_id", "group_id", "location_id",
+    "usertitle_id", "usercategory_id", "registration_number", "comment", "authtype",
+    "is_active", "is_user_group", "is_technical_group", "is_requester", "is_assign",
+    "is_notify", "parent_location_id", "building", "room", "town", "address",
+)
+
+#: (resource, action) -> fields the operation applies. Anything else provided is refused.
+_APPLICABLE_FIELDS = {
+    ("users", "create"): {
+        "name", "password", "password2", "firstname", "realname", "email", "phone", "phone2",
+        "mobile", "entity_id", "entity_name", "profile_id", "group_id", "location_id",
+        "usertitle_id", "usercategory_id", "registration_number", "comment", "authtype",
+        "is_active"},
+    ("users", "update"): {
+        "firstname", "realname", "email", "phone", "phone2", "mobile", "entity_id",
+        "profile_id", "location_id", "usertitle_id", "usercategory_id",
+        "registration_number", "comment", "is_active"},
+    ("groups", "create"): {
+        "name", "entity_id", "entity_name", "comment", "is_user_group",
+        "is_technical_group", "is_requester", "is_assign", "is_notify"},
+    ("groups", "update"): {
+        "name", "entity_id", "comment", "is_user_group", "is_technical_group",
+        "is_requester", "is_assign", "is_notify"},
+    ("locations", "create"): {
+        "name", "entity_id", "entity_name", "parent_location_id", "building", "room",
+        "town", "address", "comment"},
+    ("locations", "update"): {
+        "name", "entity_id", "parent_location_id", "building", "room", "town",
+        "address", "comment"},
+}
+
+
 async def manage_admin(
     resource: Literal["users", "groups", "entities", "locations"],
     action: Literal["get", "create", "update", "delete"],
@@ -155,18 +206,18 @@ async def manage_admin(
     usercategory_id: Optional[int] = None,
     registration_number: Optional[str] = None,
     comment: Optional[str] = None,
-    authtype: int = 1,
+    authtype: Optional[int] = None,
     is_active: Optional[bool] = None,
     # --- delete-specific ---
     purge: bool = False,
     confirmation_token: Optional[str] = None,
     reason: Optional[str] = None,
     # --- group-specific ---
-    is_user_group: bool = True,
-    is_technical_group: bool = False,
-    is_requester: bool = True,
-    is_assign: bool = True,
-    is_notify: bool = True,
+    is_user_group: Optional[bool] = None,
+    is_technical_group: Optional[bool] = None,
+    is_requester: Optional[bool] = None,
+    is_assign: Optional[bool] = None,
+    is_notify: Optional[bool] = None,
     # --- location-specific ---
     parent_location_id: Optional[int] = None,
     building: Optional[str] = None,
@@ -214,6 +265,17 @@ async def manage_admin(
                 example=f"Example: manage_admin(resource='{resource}', action='{action}', resource_id=42)",
             )
         resource_id = validation["value"]
+
+    # An argument the operation would ignore must not produce a plain success.
+    applicable = _APPLICABLE_FIELDS.get((resource, action))
+    if applicable is not None:
+        provided = {k: v for k, v in locals().items() if k in _PROFILE_FIELDS}
+        refuse_inapplicable(
+            f"{action} de {resource}",
+            provided,
+            allowed=applicable,
+            create_only=applicable_for_create(resource) if action == "update" else (),
+        )
 
     # --- Dispatch by resource + action ---
 
@@ -329,7 +391,7 @@ async def _manage_user(
             usercategory_id=kwargs.get("usercategory_id"),
             registration_number=kwargs.get("registration_number"),
             comment=kwargs.get("comment"),
-            authtype=kwargs.get("authtype", 1),
+            authtype=_default(kwargs.get("authtype"), 1),
             is_active=kwargs.get("is_active") if kwargs.get("is_active") is not None else True,
         )
 
@@ -386,11 +448,11 @@ async def _manage_group(
             entity_id=kwargs.get("entity_id"),
             entity_name=kwargs.get("entity_name"),
             comment=kwargs.get("comment"),
-            is_user_group=kwargs.get("is_user_group", True),
-            is_technical_group=kwargs.get("is_technical_group", False),
-            is_requester=kwargs.get("is_requester", True),
-            is_assign=kwargs.get("is_assign", True),
-            is_notify=kwargs.get("is_notify", True),
+            is_user_group=_default(kwargs.get("is_user_group"), True),
+            is_technical_group=_default(kwargs.get("is_technical_group"), False),
+            is_requester=_default(kwargs.get("is_requester"), True),
+            is_assign=_default(kwargs.get("is_assign"), True),
+            is_notify=_default(kwargs.get("is_notify"), True),
         )
 
     if action == "update":

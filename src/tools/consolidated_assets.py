@@ -19,6 +19,8 @@ from src.utils.helpers import (
     logger,
 )
 from src.utils.validators import create_mcp_error, validate_positive_int
+from src.services.asset_service import model_column
+from src.utils.applicability import refuse_inapplicable
 
 # Maximum allowed limit for any list/search query
 MAX_LIMIT = 50
@@ -440,6 +442,23 @@ async def manage_assets(
                 )
             reservation_id = check["value"]
 
+        # -- An argument the action would ignore must not yield a plain success.
+        asset_fields = {
+            "name": name, "serial_number": serial_number, "other_serial": other_serial,
+            "status": status, "entity_id": entity_id, "location_id": location_id,
+            "manufacturer_id": manufacturer_id, "model_id": model_id, "group_id": group_id,
+        }
+        reservation_fields = {
+            "reservation_id": reservation_id, "date_start": date_start, "date_end": date_end,
+            "date_from": date_from, "date_to": date_to,
+        }
+        if action in ("create", "update"):
+            refuse_inapplicable(f"{action} de ativo", reservation_fields)
+        elif action == "update_reservation":
+            refuse_inapplicable(
+                "update_reservation", asset_fields,
+            )
+
         # -- Dispatch by action
 
         if action == "get":
@@ -471,30 +490,22 @@ async def manage_assets(
             )
 
         if action == "update":
+            # @MX:NOTE: GLPI column names, same mapping as create_asset.
+            # @MX:REASON: the tool's names (serial_number, status, location_id...) went to
+            # GLPI unchanged and were ignored -- the update answered success having changed
+            # nothing but the name and comment.
             update_data = dict(kwargs)
-            # Include explicitly provided fields in update_data
-            if name is not None:
-                update_data["name"] = name
-            if serial_number is not None:
-                update_data["serial_number"] = serial_number
-            if other_serial is not None:
-                update_data["other_serial"] = other_serial
-            if status is not None:
-                update_data["status"] = status
-            if entity_id is not None:
-                update_data["entity_id"] = entity_id
-            if location_id is not None:
-                update_data["location_id"] = location_id
-            if manufacturer_id is not None:
-                update_data["manufacturer_id"] = manufacturer_id
             if model_id is not None:
-                update_data["model_id"] = model_id
-            if user_id is not None:
-                update_data["user_id"] = user_id
-            if group_id is not None:
-                update_data["group_id"] = group_id
-            if comment is not None:
-                update_data["comment"] = comment
+                update_data[model_column(asset_type)] = model_id
+            for value, column in (
+                (name, "name"), (serial_number, "serial"), (other_serial, "otherserial"),
+                (status, "states_id"), (entity_id, "entities_id"),
+                (location_id, "locations_id"), (manufacturer_id, "manufacturers_id"),
+                (user_id, "users_id"), (group_id, "groups_id"),
+                (comment, "comment"),
+            ):
+                if value is not None:
+                    update_data[column] = value
             return await asset_tools.update_asset(
                 asset_type=asset_type,
                 asset_id=asset_id,
@@ -545,7 +556,10 @@ async def manage_assets(
         if action == "update_reservation":
             return await asset_tools.update_reservation(
                 reservation_id=reservation_id,
-                **kwargs,
+                date_start=date_start,
+                date_end=date_end,
+                comment=comment,
+                user_id=user_id,
             )
 
         # Should never reach here due to validation above

@@ -398,7 +398,7 @@ Busca no inventário de equipamentos e ativos de TI.
 | `asset_type` | string | Não | `Computer`, `Monitor`, `Printer`, `NetworkEquipment`, `Phone`, `Peripheral` |
 | `query` | string | Não | Busca por nome, serial ou usuário vinculado |
 | `assigned_user` | string | Não | Responsável pelo ativo — **nome** (parcial) ou ID numérico. Não se aplica a `scope=software` |
-| `status` | string | Não | Situação do ativo (`states_id`) — ID numérico do estado |
+| `status` | string | Não | Situação do ativo (`states_id`), **como texto** com o ID numérico do estado (ex.: `"2"`) |
 | `location_id` | integer | Não | ID da localização |
 | `manufacturer_id` | integer | Não | ID do fabricante |
 | `user_id` | integer | Não | ID do usuário vinculado. Prefira `assigned_user`, que também aceita nome |
@@ -459,7 +459,7 @@ Operações de gestão de ativos: cadastrar, detalhar, atualizar, excluir, reser
 | `serial_number` | string | Não | Número de série |
 | `user_id` | integer | Não | Responsável pelo ativo (`create`, `update`) ou usuário da reserva (`create_reservation`) |
 | `other_serial` | string | Não | Número de série alternativo/inventário (`create`, `update`) |
-| `status` | integer | Não | ID do estado do ativo, o `states_id` (`create`, `update`) |
+| `status` | integer | Não | Estado do ativo (`states_id`), **como número inteiro** (ex.: `2`) (`create`, `update`) |
 | `entity_id` | integer | Não | **Opcional** — o token já fixa o tenant (`create`, `update`) |
 | `location_id` | integer | Não | ID da localização (`create`, `update`) |
 | `manufacturer_id` | integer | Não | ID do fabricante (`create`, `update`) |
@@ -485,7 +485,7 @@ Operações de gestão de ativos: cadastrar, detalhar, atualizar, excluir, reser
 | `delete` | Excluir ativo | `asset_id` |
 | `get_reservations` | Reservas do ativo | `asset_id` |
 | `create_reservation` | Criar reserva | `asset_id`, `user_id`, `date_start`, `date_end` |
-| `update_reservation` | Atualizar reserva | `reservation_id` |
+| `update_reservation` | Atualizar reserva. Envia só `date_start`, `date_end`, `comment` e `user_id` informados (colunas `begin`, `end`, `comment`, `users_id` do GLPI), lê de volta e só confirma o que o GLPI aplicou; sem nenhum campo, ou se o GLPI não aplicar, é erro | `reservation_id` + ao menos um campo |
 
 **Exemplos:**
 ```
@@ -583,6 +583,14 @@ Operações CRUD em recursos administrativos.
 
 > ℹ️ A atualização de usuário envia as chaves estrangeiras com o nome de coluna do GLPI
 > (`location_id` → `locations_id` etc.); antes seguiam com o nome da tool e o GLPI as ignorava.
+>
+> ⚠️ **Argumento ignorado vira erro, não sucesso.** Em `create`/`update` de `users`, `groups` e
+> `locations` qualquer campo que a operação não aplica é recusado com o nome do campo (ex.: `group_id`,
+> `entity_name`, `password` e `authtype` só valem no `create` de usuário; `name` não muda o login no
+> `update`). Os atributos de grupo e `authtype` só assumem padrão no `create`; um `update` que só
+> renomeia o grupo não mexe nos demais. O mesmo vale para chamados (`type`, `requester_id`,
+> `location_id`, `entity_id` e `entity_name` só no `create`) e ativos (campos de reserva em
+> `create`/`update` de ativo; campos de ativo em `update_reservation`).
 >
 > ℹ️ O parâmetro `purge` não está no schema de `glpi_manage_admin_resources`. Para excluir
 > definitivamente um usuário ou uma localização, use a própria interface do GLPI.

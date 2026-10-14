@@ -27,6 +27,7 @@ from src.utils.helpers import (
     logger,
     response_truncator,
 )
+from src.utils.applicability import refuse_inapplicable
 from src.utils.safety_guard import require_safety_confirmation
 from src.utils.validators import create_mcp_error, validate_positive_int
 
@@ -482,6 +483,16 @@ async def manage_tickets(
                     "Example: manage_tickets(action='get', ticket_id=42)",
                 )
             ticket_id = check["value"]
+
+        # Fields that only mean something when the ticket is opened. Ignoring them on
+        # update would answer success having applied nothing.
+        if action == "update":
+            refuse_inapplicable(
+                "update de chamado",
+                {"type": type, "requester_id": requester_id, "location_id": location_id,
+                 "entity_id": entity_id, "entity_name": entity_name},
+                create_only=("type", "requester_id", "location_id", "entity_id", "entity_name"),
+            )
 
         # Destructive-write gate. See ITIL_WRITE_ACTIONS for why this runs even
         # though none of these operations is protected out of the box.

@@ -22,15 +22,19 @@ async def test_list_reservations_returns_data():
 
 
 @pytest.mark.asyncio
-async def test_update_reservation_calls_put_and_get_item():
+async def test_update_reservation_puts_then_reads_back_to_confirm():
     service = AssetService()
     mock_client = AsyncMock()
     mock_client.put.return_value = {}
-    mock_client.get_item.return_value = {"id": 10, "updated": True}
+    # First read: the reservation as stored. Second read: the read-back after the PUT.
+    mock_client.get_item.side_effect = [
+        {"id": 10, "comment": "antes"},
+        {"id": 10, "comment": "Test", "updated": True},
+    ]
     service.client = mock_client
 
     updated = await service.update_reservation(10, comment="Test")
     assert updated["id"] == 10
     assert updated["updated"] is True
-    mock_client.put.assert_awaited_once()
-    mock_client.get_item.assert_awaited_once()
+    mock_client.put.assert_awaited_once_with("/apirest.php/Reservation/10", {"comment": "Test"})
+    assert mock_client.get_item.await_count == 2

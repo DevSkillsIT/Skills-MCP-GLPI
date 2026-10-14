@@ -782,11 +782,24 @@ class AssetTools:
             logger.error(f"list_reservations unexpected error: {e}")
             raise GLPIError(500, f"Failed to list reservations: {str(e)}")
 
-    async def update_reservation(self, reservation_id: int, **kwargs) -> Dict[str, Any]:
+    async def update_reservation(
+        self,
+        reservation_id: int,
+        date_start: Optional[str] = None,
+        date_end: Optional[str] = None,
+        comment: Optional[str] = None,
+        user_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
         """Tool MCP: update_reservation."""
         try:
             logger.info(f"MCP Tool: update_reservation {reservation_id}")
-            updated = await asset_service.update_reservation(reservation_id, **kwargs)
+            updated = await asset_service.update_reservation(
+                reservation_id,
+                date_start=date_start,
+                date_end=date_end,
+                comment=comment,
+                user_id=user_id,
+            )
             return response_truncator.truncate_json_response(updated)
         except (ValidationError, GLPIError) as e:
             logger.error(f"update_reservation error: {e.message}")
@@ -794,7 +807,7 @@ class AssetTools:
         except Exception as e:
             logger.error(f"update_reservation unexpected error: {e}")
             raise GLPIError(500, f"Failed to update reservation: {str(e)}")
-    
+
     async def create_reservation(
         self,
         asset_type: str,

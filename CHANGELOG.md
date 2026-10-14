@@ -360,6 +360,46 @@ seven defects of one family — output a reader takes as fact when it is not.
   create does not carry the request body into the error text or logs (verified: it does not).
   - `tests/test_schema_declares_handler_params.py`, `tests/test_declared_params_behavior.py`
 
+### Fixed — no silent success on update (2026-10-14)
+
+- **`update_reservation` was a no-op.** `date_start`, `date_end` and `comment` are explicit
+  parameters of the tool, so `**kwargs` was empty and an empty PUT answered success. It now
+  sends the GLPI columns (`begin`, `end`, `comment`, `users_id`; `user_id` is accepted), validates
+  the `AAAA-MM-DD HH:MM:SS` format and the window against the stored reservation, refuses an
+  update with nothing to change, and reads the reservation back: if GLPI did not apply a field
+  the call fails instead of confirming it.
+  - `src/services/asset_service.py`, `src/tools/assets.py`, `src/tools/consolidated_assets.py`
+- **An argument an operation would ignore is now an error that names it.** User update:
+  `group_id`, `entity_name`, `password`, `password2`, `authtype` and `name` apply only to create.
+  Ticket update: `type`, `requester_id`, `location_id`, `entity_id`, `entity_name` apply only to
+  create. Fields of another resource (a `town` on a user) and reservation fields on an asset
+  create/update are refused the same way. Callers that passed these on update were getting a
+  success that applied nothing.
+  - `src/utils/applicability.py`, `src/tools/consolidated_admin.py`,
+    `src/tools/consolidated_tickets.py`, `src/tools/consolidated_assets.py`
+- **A group update no longer rewrites flags the caller did not mention.** The five group flags
+  and `authtype` had real defaults in the signature (`True`/`False`/`1`), so renaming a group
+  also set `is_requester`, `is_assign`, `is_notify` and `is_user_group` to `true` and
+  `is_technical_group` to `false`. They default to "not provided" now and take the create
+  defaults only on create.
+  - `src/tools/consolidated_admin.py`
+- **Asset update used the tool's names, not GLPI's.** `serial_number`, `other_serial`, `status`,
+  `entity_id`, `location_id`, `manufacturer_id`, `model_id`, `user_id` and `group_id` were sent
+  unchanged and GLPI ignored them; they now map to `serial`, `otherserial`, `states_id`,
+  `entities_id`, `locations_id`, `manufacturers_id`, `models_id`, `users_id`, `groups_id`, the same
+  columns `create` writes.
+  - `src/tools/consolidated_assets.py`
+- **`model_id` is written to the per-type model column.** `create_asset` wrote `models_id` and
+  the update mapping copied it, but no asset table has that column (it is
+  `computermodels_id`, `monitormodels_id`, `networkequipmentmodels_id`, `peripheralmodels_id`,
+  `phonemodels_id`, `printermodels_id`), so a model set through the tool was silently dropped.
+  Both paths now use one helper, `model_column(asset_type)`, which refuses `model_id` for a type
+  without a model column. The read side already derives the model dropdown from the column
+  name, and a test keeps it resolving `computermodels_id` to the model name.
+  - `src/services/asset_service.py::model_column`, `src/tools/consolidated_assets.py`
+- **Asset `status` descriptions state the type.** Search takes text holding the numeric state id
+  (`"2"`), manage takes an integer (`2`); both descriptions say so with an example.
+
 ### Added — license file
 
 - **`LICENSE` (MIT, Skills IT, 2025-2026)**, which the README already declared and linked.
