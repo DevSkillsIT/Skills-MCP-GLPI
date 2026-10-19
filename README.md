@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🚀 Skills MCP GLPI v2.2
+# 🚀 Skills MCP GLPI v2.3
 
 ### 17 Production-Grade Tools (18 with the opt-in AI analysis) with 70-85% Token Efficiency and Enterprise-Grade Safety
 
@@ -22,7 +22,7 @@
 
 ## 📖 About The Project
 
-**Skills MCP GLPI v2.2** is a production-ready Model Context Protocol (MCP) server for GLPI (IT Service Management) with a revolutionary token-optimization architecture. Built by **Skills IT**, this MCP consolidates 68 specialized tools into 17 active enterprise-grade tools (18 defined; the AI analysis tool is off by default) with Markdown responses, tool annotations, and MCP resources.
+**Skills MCP GLPI v2.3** is a production-ready Model Context Protocol (MCP) server for GLPI (IT Service Management) with a revolutionary token-optimization architecture. Built by **Skills IT**, this MCP consolidates 68 specialized tools into 17 active enterprise-grade tools (18 defined; the AI analysis tool is off by default) with Markdown responses, tool annotations, and MCP resources.
 
 Compatible with **GLPI 10.x** (legacy API v1) and **GLPI 11.x** (current stable).
 
@@ -38,7 +38,7 @@ Compatible with **GLPI 10.x** (legacy API v1) and **GLPI 11.x** (current stable)
 
 The v1.0 approach (68 tools, raw JSON responses) caused **token explosion** — typical GLPI queries consumed 50-100K tokens with limited reusability. v2.0 fixes this with a consolidated, Markdown-first design:
 
-| Aspect | v1.0 | v2.2 |
+| Aspect | v1.0 | v2.3 |
 |--------|------|------|
 | **Tools** | 68 fragmented | **17 consolidated** ✨ |
 | **Response Format** | Raw JSON (verbose) | **Markdown (compact)** ✨ |
@@ -107,7 +107,7 @@ search if the catalogue is unavailable.
                                 │ MCP Protocol (HTTP JSON-RPC)
                                 ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                    Skills MCP GLPI v2.2 Server                   │
+│                    Skills MCP GLPI v2.3 Server                   │
 │                         localhost:8824                           │
 │  ┌────────────────────────────────────────────────────────────┐ │
 │  │                    FastAPI + Formatters                    │ │
@@ -173,12 +173,20 @@ nano .env
 # .env
 GLPI_BASE_URL=https://your-glpi-server.com
 GLPI_APP_TOKEN=your_app_token_here
+GLPI_READ_ONLY=false
+
 MCP_PORT=8824
 MCP_HOST=0.0.0.0
-MCP_SAFETY_GUARD=true
-MCP_SAFETY_TOKEN=secure_token_min_8_chars
-RATE_LIMIT_REQUESTS_PER_MINUTE=500
+MCP_AUTH_TOKEN=your_secret_bearer_token_here   # leave empty to disable
+MCP_SAFETY_GUARD=false
+MCP_SAFETY_TOKEN=your_safety_token_here_min_8_chars
+
 LOG_LEVEL=INFO
+LOG_FILE=./logs/mcp-glpi.log
+
+CONNECTION_TIMEOUT=30
+REQUEST_TIMEOUT=60
+POOL_WORKERS=2
 ```
 
 ### Start the Server
@@ -202,12 +210,15 @@ Edit `~/.claude/settings.json`:
       "type": "streamable-http",
       "url": "http://localhost:8824/mcp",
       "headers": {
-        "X-GLPI-User-Token": "your_user_token_here"
+        "X-GLPI-User-Token": "your_user_token_here",
+        "Authorization": "Bearer your_secret_bearer_token_here"
       }
     }
   }
 }
 ```
+
+> **Note:** `Authorization: Bearer` is only required when `MCP_AUTH_TOKEN` is set in your `.env`. Remove the header (or leave `MCP_AUTH_TOKEN` empty) to run without authentication.
 
 ### Test Connection
 
@@ -505,6 +516,16 @@ Kept:    user-facing fields only
 
 ## 🔄 Migration
 
+### From v2.2 to v2.3
+
+**No breaking changes.** Every v2.2 call keeps working unchanged.
+
+- **Bearer token auth** is opt-in: set `MCP_AUTH_TOKEN` in `.env` and add
+  `Authorization: Bearer <token>` to your MCP client headers. Leave it empty and nothing
+  changes.
+- **Ticket search** now returns results across all entities automatically — no need to
+  pass `entity_id` when you want a global view.
+
 ### From v2.1 to v2.2
 
 **No breaking changes.** Every v2.1 call keeps working. What changed is additive:
@@ -577,6 +598,7 @@ Each user configures their own `X-GLPI-User-Token`:
 | `GLPI_APP_TOKEN` | Yes | GLPI App Token |
 | `MCP_PORT` | No | Server port (default: 8824) |
 | `MCP_HOST` | No | Server host (default: 0.0.0.0) |
+| `MCP_AUTH_TOKEN` | No | Bearer token protecting the `/mcp` endpoint. When set, every MCP request must carry `Authorization: Bearer <token>`. Leave empty to disable (default: empty) |
 | `MCP_SAFETY_GUARD` | No | Enable delete protection (default: false) |
 | `MCP_SAFETY_TOKEN` | Conditional | Confirmation token if Safety Guard enabled |
 | `RATE_LIMIT_REQUESTS_PER_MINUTE` | No | Rate limiting (default: 60) |
@@ -806,7 +828,7 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 *We are an MSP empowering other MSPs with intelligent automation.*
 
-**Version:** 2.2.0 | **Last Updated:** August 2026
+**Version:** 2.3.0 | **Last Updated:** October 2026
 
 🇧🇷 **Proudly Made in Brazil**
 

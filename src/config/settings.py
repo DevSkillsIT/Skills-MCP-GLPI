@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     # ============= MCP Server =============
     mcp_port: int = Field(default=8824, alias="MCP_PORT")
     mcp_host: str = Field(default="0.0.0.0", alias="MCP_HOST")
+    mcp_auth_token: str = Field(default="", alias="MCP_AUTH_TOKEN")
 
     # ============= Logging =============
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")

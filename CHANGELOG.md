@@ -456,6 +456,31 @@ seven defects of one family — output a reader takes as fact when it is not.
 
 ---
 
+## [2.3.0] — 2026-10-19
+
+Security and correctness release.
+
+### Added
+
+- **Bearer token authentication middleware** (`MCP_AUTH_TOKEN`). When set, every request
+  to `/mcp` must carry an `Authorization: Bearer <token>` header. The `/health` endpoint
+  is excluded so liveness probes keep working without credentials. Leave `MCP_AUTH_TOKEN`
+  empty (the default) to run without authentication, as before.
+  - `src/main.py::bearer_auth_middleware`
+  - `src/config/settings.py` — `mcp_auth_token` field
+  - `.env.example` — `MCP_AUTH_TOKEN` entry with inline comment
+
+### Fixed
+
+- **Ticket search now covers all entities by default.** `is_recursive` was only set to
+  `True` when an explicit `entity_id` filter was passed; without one it defaulted to
+  `False`, so the Search API scoped results to the API account's own entity and silently
+  returned zero rows for instances where tickets live in the root entity or its children.
+  Fixed by always passing `is_recursive=True`.
+  - `src/services/ticket_service.py` — `list_tickets` and `search_tickets`
+
+---
+
 ## [2.2.0] — 2026-08-10
 
 Capability, correctness and resilience release. Three themes: reaching the ITIL records

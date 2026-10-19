@@ -13,6 +13,8 @@ import re
 import uuid
 import uvicorn
 
+from fastapi import HTTPException
+
 from src import __version__
 from src.config import settings
 from src.logger import logger
@@ -62,6 +64,34 @@ app = FastAPI(
     version=__version__,
     lifespan=lifespan
 )
+
+
+@app.middleware("http")
+async def bearer_auth_middleware(request: Request, call_next):
+    """
+    Bearer token authentication middleware.
+    Protects all /mcp endpoints when MCP_AUTH_TOKEN is set.
+    /health is excluded to allow liveness probes without auth.
+    """
+    auth_token = settings.mcp_auth_token
+    if auth_token and request.url.path.startswith("/mcp"):
+        authorization = request.headers.get("Authorization", "")
+        if not authorization.startswith("Bearer "):
+            logger.warning(f"Missing Bearer token from {request.client.host}")
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=401,
+                content={"error": "unauthorized", "error_description": "Missing Bearer token"}
+            )
+        provided_token = authorization.removeprefix("Bearer ").strip()
+        if provided_token != auth_token:
+            logger.warning(f"Invalid Bearer token from {request.client.host}")
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=401,
+                content={"error": "invalid_token", "error_description": "Invalid or expired Bearer token"}
+            )
+    return await call_next(request)
 
 
 @app.get("/health", tags=["Health"])
@@ -201,10 +231,13 @@ async def mcp_handler_http(request: Request, mcp_request: MCPRequest) -> MCPResp
         return _rate_limited_response(mcp_request, exc)
 
     # Extrair user_token do header do cliente MCP (cada usuário envia seu próprio token)
-    user_token = headers_dict.get("x-glpi-user-token", "")
+    # Fallback para GLPI_USER_TOKEN do .env quando o header não está presente
+    user_token = headers_dict.get("x-glpi-user-token", "") or settings.glpi_user_token
     session_manager.set_current_user_token(user_token)
-    if user_token:
-        logger.debug(f"USER TOKEN ENCONTRADO: {user_token[:10]}...")
+    if user_token and headers_dict.get("x-glpi-user-token"):
+        logger.debug(f"USER TOKEN ENCONTRADO (header): {user_token[:10]}...")
+    elif user_token:
+        logger.debug(f"USER TOKEN ENCONTRADO (fallback .env): {user_token[:10]}...")
     else:
         # Not an error: `initialize` / `notifications/initialized` legitimately
         # carry no user token. Calls that actually need it fail later, explicitly.

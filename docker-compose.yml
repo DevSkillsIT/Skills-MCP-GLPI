@@ -1,0 +1,9 @@
+services:
+  glpi-mcp:
+    container_name: glpi-mcp
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    restart: unless-stopped
