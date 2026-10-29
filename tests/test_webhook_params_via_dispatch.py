@@ -98,8 +98,11 @@ class TestSecretIsNeverEchoed:
         """Create with the real service; only the GLPI HTTP client is replaced."""
         stored = {"id": 7, "name": "Teste", "url": "https://example.com/hook",
                   "itemtype": "Ticket", "event": "new", "secret": SECRET}
+        # The destination check (allowlist + DNS) has its own tests in
+        # test_webhook_outbound_guard.py; here only the secret handling matters.
         with patch("src.tools.webhooks.glpi_client.post", AsyncMock(return_value=post_response)), \
-             patch("src.tools.webhooks.glpi_client.get", AsyncMock(return_value=stored)):
+             patch("src.tools.webhooks.glpi_client.get", AsyncMock(return_value=stored)), \
+             patch("src.tools.webhooks._validate_url", AsyncMock()):
             return await handler.handle_call_tool(TOOL, {
                 "action": "create", "name": "Teste", "url": "https://example.com/hook",
                 "event_type": "ticket.created", "secret": SECRET,

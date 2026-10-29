@@ -12,7 +12,7 @@ Delegates all business logic to the existing WebhookTools service layer.
 from typing import Any, Dict, List, Optional
 
 from src.formatters.markdown_helpers import remove_heavy_fields
-from src.tools.webhooks import webhook_tools
+from src.tools.webhooks import _WEBHOOK_ID_RE, webhook_tools
 from src.utils.validators import create_mcp_error
 
 
@@ -25,6 +25,11 @@ def _validate_webhook_id(value) -> dict:
     value_str = str(value).strip()
     if not value_str:
         return {"valid": False, "error": "webhook_id invalido: string vazia"}
+    if not _WEBHOOK_ID_RE.fullmatch(value_str):
+        return {
+            "valid": False,
+            "error": "webhook_id invalido: use apenas letras, numeros, '-' ou '_'",
+        }
     return {"valid": True, "value": value_str}
 
 

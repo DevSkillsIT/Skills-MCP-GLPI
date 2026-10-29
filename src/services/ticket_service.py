@@ -2054,42 +2054,36 @@ class TicketService:
 
     @staticmethod
     def _read_upload_bytes(
-        file_path: Optional[str], file_base64: Optional[str], file_name: Optional[str]
+        file_base64: Optional[str], file_name: Optional[str]
     ) -> Tuple[bytes, str]:
-        """Resolve the upload payload into (bytes, file name)."""
-        if file_base64:
-            if not file_name or not str(file_name).strip():
-                raise ValidationError(
-                    "file_name e obrigatorio quando o arquivo vem em file_base64",
-                    "file_name",
-                )
-            try:
-                content = base64.b64decode(str(file_base64), validate=True)
-            except (binascii.Error, ValueError) as exc:
-                raise ValidationError(
-                    f"file_base64 nao e um base64 valido: {exc}", "file_base64"
-                ) from exc
-            return content, Path(str(file_name)).name
+        """Resolve the upload payload into (bytes, file name).
 
-        if file_path:
-            path = Path(str(file_path)).expanduser()
-            if not path.is_file():
-                raise ValidationError(
-                    f"Arquivo nao encontrado no servidor: {file_path}", "file_path"
-                )
-            return path.read_bytes(), (
-                Path(str(file_name)).name if file_name else path.name
+        @MX:ANCHOR: the file content only ever comes from the caller, as base64.
+        @MX:REASON: a server-side file_path let any MCP caller (or a model
+        steered by text inside a ticket) attach arbitrary files of the MCP host
+        to a ticket. Never read from the local disk.
+        """
+        if not file_base64:
+            raise ValidationError(
+                "Informe file_base64 + file_name com o conteudo do arquivo",
+                "file_base64",
             )
-
-        raise ValidationError(
-            "Informe file_path (caminho no servidor) ou file_base64 + file_name",
-            "file_path",
-        )
+        if not file_name or not str(file_name).strip():
+            raise ValidationError(
+                "file_name e obrigatorio quando o arquivo vem em file_base64",
+                "file_name",
+            )
+        try:
+            content = base64.b64decode(str(file_base64), validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValidationError(
+                f"file_base64 nao e um base64 valido: {exc}", "file_base64"
+            ) from exc
+        return content, Path(str(file_name)).name
 
     async def add_ticket_document(
         self,
         ticket_id: int,
-        file_path: Optional[str] = None,
         file_base64: Optional[str] = None,
         file_name: Optional[str] = None,
         title: Optional[str] = None,
@@ -2110,14 +2104,14 @@ class TicketService:
         if ticket_id <= 0:
             raise ValidationError("ticket_id must be positive", "ticket_id")
 
-        content, resolved_name = self._read_upload_bytes(file_path, file_base64, file_name)
+        content, resolved_name = self._read_upload_bytes(file_base64, file_name)
         if not content:
-            raise ValidationError("O arquivo esta vazio", "file_path")
+            raise ValidationError("O arquivo esta vazio", "file_base64")
         if len(content) > _MAX_UPLOAD_BYTES:
             raise ValidationError(
                 f"Arquivo com {len(content) // 1024}KB excede o limite de "
                 f"{_MAX_UPLOAD_BYTES // (1024 * 1024)}MB para upload",
-                "file_path",
+                "file_base64",
             )
 
         await self.get_ticket(ticket_id)

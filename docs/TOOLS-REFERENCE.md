@@ -157,8 +157,7 @@ Operações completas de gestão de chamados: criar, atualizar, atribuir, resolv
 | `group_type` | string | Não | Papel do grupo: `assigned` (padrão), `requester`, `observer` |
 | `linked_ticket_id` | integer | Condicional | Outro chamado a vincular (`link_tickets`) |
 | `link_type` | string | Não | `link` (padrão), `duplicate`, `son`, `parent` |
-| `file_path` | string | Condicional | Caminho do arquivo **no servidor** (`add_document`). Limite 25 MB |
-| `file_base64` | string | Condicional | Conteúdo do arquivo em base64 (alternativa a `file_path`). Exige `file_name` |
+| `file_base64` | string | Condicional | Conteúdo do arquivo em base64 (obrigatório em `add_document`). Exige `file_name`. Limite 25 MB |
 | `file_name` | string | Condicional | Nome com extensão (obrigatório com `file_base64`) — a extensão define o MIME type |
 | `document_title` | string | Não | Título do documento no GLPI (padrão: o nome do arquivo) |
 | `limit` | integer | Não | Máx. de eventos em `get_timeline` (padrão: 100, mantém os mais recentes) |
@@ -194,7 +193,7 @@ Operações completas de gestão de chamados: criar, atualizar, atribuir, resolv
 | `resolve` | Resolver chamado | `ticket_id`, `solution` |
 | `add_followup` | Adicionar acompanhamento | `ticket_id`, `content` |
 | `add_task` | Adicionar tarefa (com duração prevista) | `ticket_id`, `content` (+ `actiontime`, `task_category_id`, `is_private`) |
-| `add_document` | Anexar arquivo ao chamado | `ticket_id` + (`file_path` **ou** `file_base64` + `file_name`) |
+| `add_document` | Anexar arquivo ao chamado | `ticket_id`, `file_base64`, `file_name` |
 | `link_tickets` | Vincular dois chamados | `ticket_id`, `linked_ticket_id` (+ `link_type`) |
 | `request_validation` | Pedir aprovação a um usuário | `ticket_id`, `approver` |
 | `answer_validation` | Aprovar ou recusar uma aprovação | `ticket_id`, `validation_status` (+ `comment` se recusar) |
@@ -337,10 +336,11 @@ Operações completas de gestão de chamados: criar, atualizar, atribuir, resolv
 → Params: {
     "action": "add_document",
     "ticket_id": 542,
-    "file_path": "/var/log/exemplo/coleta.txt",
+    "file_base64": "<conteudo em base64>",
+    "file_name": "coleta.txt",
     "document_title": "Log da coleta"
   }
-→ Sem caminho no servidor: file_base64 + file_name (a extensão define o MIME type).
+→ A extensão de file_name define o MIME type. Caminhos no servidor não são aceitos.
 ```
 
 ---

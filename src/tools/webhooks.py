@@ -20,11 +20,17 @@ manter compat com clients existentes; convertemos para os 2 fields nativos
 no momento de create/update.
 """
 
+import asyncio
+import ipaddress
+import re
+import socket
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlsplit
 
 import httpx
 
+from src.config import settings
 from src.models.exceptions import (
     GLPIError,
     NotFoundError,
@@ -133,9 +139,92 @@ def _validate_event_type(mcp_event: str) -> None:
     _to_glpi_event(mcp_event)
 
 
-def _validate_url(url: str) -> None:
-    if not url or not url.startswith(("http://", "https://")):
-        raise ValidationError("URL deve comecar com http:// ou https://", "url")
+# @MX:ANCHOR: o id vai direto para o caminho /apirest.php/Webhook/{id}.
+# @MX:REASON: aceitar qualquer string deixava caracteres de caminho no id
+# fazerem as acoes de webhook atingirem outros itemtypes da API. Ids do GLPI
+# sao inteiros ou hashes; nada alem disso entra na URL.
+_WEBHOOK_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+
+def _clean_webhook_id(webhook_id: Any) -> str:
+    wid = str(webhook_id).strip() if webhook_id is not None else ""
+    if not wid:
+        raise ValidationError("webhook_id obrigatorio", "webhook_id")
+    if not _WEBHOOK_ID_RE.fullmatch(wid):
+        raise ValidationError(
+            "webhook_id invalido: use apenas letras, numeros, '-' ou '_'", "webhook_id"
+        )
+    return wid
+
+
+def _allowed_hosts() -> List[str]:
+    raw = getattr(settings, "webhook_allowed_hosts", "") or ""
+    return [h.strip().lower().rstrip(".") for h in str(raw).split(",") if h.strip()]
+
+
+def _host_is_allowed(host: str, allowed: List[str]) -> bool:
+    for entry in allowed:
+        if entry.startswith("."):
+            if host.endswith(entry) or host == entry[1:]:
+                return True
+        elif host == entry:
+            return True
+    return False
+
+
+def _is_forbidden_address(addr: ipaddress._BaseAddress) -> bool:
+    """Loopback, link-local (metadata de nuvem), multicast etc. nunca sao destino.
+
+    Faixas privadas (10/8, 192.168/16...) passam: um webhook para o n8n interno e
+    legitimo, e o host ja precisou estar em WEBHOOK_ALLOWED_HOSTS para chegar aqui.
+    """
+    mapped = getattr(addr, "ipv4_mapped", None)
+    if mapped is not None:
+        addr = mapped
+    return (
+        addr.is_loopback
+        or addr.is_link_local
+        or addr.is_multicast
+        or addr.is_unspecified
+        or addr.is_reserved
+    )
+
+
+async def _validate_url(url: str) -> None:
+    """Valida o destino de um webhook antes de gravar ou de chamar.
+
+    @MX:ANCHOR: o destino precisa estar em WEBHOOK_ALLOWED_HOSTS e nao pode
+    resolver para loopback / link-local.
+    @MX:REASON: create/test aceitavam qualquer http(s)://. O agente (ou um
+    texto injetado num chamado) podia cadastrar um webhook que envia todo
+    chamado novo para um servidor de terceiros, ou usar test para fazer o
+    servidor MCP chamar servicos internos.
+    """
+    parsed = urlsplit(url or "")
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise ValidationError("URL deve comecar com http:// ou https:// e ter um host", "url")
+    if parsed.username or parsed.password:
+        raise ValidationError("URL do webhook nao pode conter usuario/senha", "url")
+
+    host = parsed.hostname.lower().rstrip(".")
+    allowed = _allowed_hosts()
+    if not _host_is_allowed(host, allowed):
+        raise ValidationError(
+            f"Host '{host}' nao esta em WEBHOOK_ALLOWED_HOSTS. Peca ao operador do "
+            "MCP para incluir o destino na lista antes de cadastrar o webhook.",
+            "url",
+        )
+
+    try:
+        infos = await asyncio.get_running_loop().getaddrinfo(host, parsed.port or None)
+    except socket.gaierror:
+        raise ValidationError(f"Host do webhook nao resolve: {host}", "url") from None
+    for info in infos:
+        addr = ipaddress.ip_address(info[4][0].split("%")[0])
+        if _is_forbidden_address(addr):
+            raise ValidationError(
+                f"Host '{host}' resolve para um endereco nao permitido ({addr})", "url"
+            )
 
 
 class WebhookTools:
@@ -199,10 +288,7 @@ class WebhookTools:
     # -----------------------------------------------------------------
     async def get_webhook(self, webhook_id: str) -> Dict[str, Any]:
         logger.info(f"WebhookTools.get_webhook {webhook_id}")
-        if not webhook_id or not str(webhook_id).strip():
-            raise ValidationError("webhook_id obrigatorio", "webhook_id")
-
-        wid = str(webhook_id).strip()
+        wid = _clean_webhook_id(webhook_id)
         try:
             raw = await glpi_client.get(f"{self._ENDPOINT}/{wid}", use_cache=False)
         except GLPIError as exc:
@@ -236,7 +322,7 @@ class WebhookTools:
         event_type = input_sanitizer.sanitize_string(event_type)
         if not name:
             raise ValidationError("name obrigatorio", "name")
-        _validate_url(url)
+        await _validate_url(url)
 
         glpi_itemtype, glpi_event = _to_glpi_event(event_type)
 
@@ -289,10 +375,7 @@ class WebhookTools:
         headers: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         logger.info(f"WebhookTools.update_webhook {webhook_id}")
-        if not webhook_id:
-            raise ValidationError("webhook_id obrigatorio", "webhook_id")
-
-        wid = str(webhook_id).strip()
+        wid = _clean_webhook_id(webhook_id)
         # Confirma existencia primeiro (retorna NotFoundError limpo)
         await self.get_webhook(wid)
 
@@ -301,7 +384,7 @@ class WebhookTools:
             updates["name"] = input_sanitizer.sanitize_string(name)
         if url is not None:
             url = input_sanitizer.sanitize_string(url)
-            _validate_url(url)
+            await _validate_url(url)
             updates["url"] = url
         if event_type is not None:
             glpi_itemtype, glpi_event = _to_glpi_event(event_type)
@@ -333,10 +416,7 @@ class WebhookTools:
         reason: Optional[str] = None,
     ) -> Dict[str, Any]:
         logger.info(f"WebhookTools.delete_webhook {webhook_id}")
-        if not webhook_id:
-            raise ValidationError("webhook_id obrigatorio", "webhook_id")
-
-        wid = str(webhook_id).strip()
+        wid = _clean_webhook_id(webhook_id)
         require_safety_confirmation(
             "delete_webhook",
             confirmation_token=confirmationToken,
@@ -365,6 +445,8 @@ class WebhookTools:
         target_url = webhook.get("url", "")
         if not target_url:
             raise ValidationError("Webhook nao tem URL configurada", "url")
+        # A URL pode ter sido gravada pela interface do GLPI, sem passar por aqui.
+        await _validate_url(target_url)
 
         payload = {
             "event": "test",
@@ -376,7 +458,9 @@ class WebhookTools:
         }
 
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
+            # Sem seguir redirect (o destino final escaparia da validacao) e sem
+            # devolver o corpo da resposta (vira canal de leitura de servicos).
+            async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
                 http_resp = await client.post(
                     target_url, json=payload, headers=webhook.get("custom_headers") or {}
                 )
@@ -385,7 +469,6 @@ class WebhookTools:
                 "url": target_url,
                 "test_result": "success" if http_resp.is_success else "failed",
                 "response_code": http_resp.status_code,
-                "response_body": http_resp.text[:500],
                 "timestamp": datetime.now().isoformat(),
             }
         except httpx.HTTPError as exc:

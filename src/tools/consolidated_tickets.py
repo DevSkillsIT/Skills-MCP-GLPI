@@ -373,7 +373,6 @@ async def manage_tickets(
     linked_ticket_id: Optional[int] = None,
     link_type: Optional[Any] = "link",
     # add_document
-    file_path: Optional[str] = None,
     file_base64: Optional[str] = None,
     file_name: Optional[str] = None,
     document_title: Optional[str] = None,
@@ -427,7 +426,6 @@ async def manage_tickets(
                  (assign_group, default assigned).
         linked_ticket_id: The other ticket ID (link_tickets).
         link_type: link (1), duplicate (2), son (3) or parent (4) (link_tickets).
-        file_path: Server-side path of the file to attach (add_document).
         file_base64: Base64 payload of the file to attach (add_document).
         file_name: File name, required with file_base64 (add_document).
         document_title: Document title in GLPI, defaults to the file name
@@ -759,7 +757,6 @@ async def manage_tickets(
         if action == "add_document":
             document_result = await ticket_service.add_ticket_document(
                 ticket_id,
-                file_path=file_path,
                 file_base64=file_base64,
                 file_name=file_name,
                 title=input_sanitizer.sanitize_string(document_title)

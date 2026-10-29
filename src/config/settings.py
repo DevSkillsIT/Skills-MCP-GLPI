@@ -124,6 +124,10 @@ class Settings(BaseSettings):
     webhook_secret: str = Field(
         default="default-webhook-secret", alias="WEBHOOK_SECRET"
     )
+    # Hosts para onde um webhook pode apontar (separados por virgula; ".dominio"
+    # aceita subdominios). Vazio = nenhum: sem lista, um webhook criado pelo
+    # agente poderia mandar todo chamado novo para um servidor de terceiros.
+    webhook_allowed_hosts: str = Field(default="", alias="WEBHOOK_ALLOWED_HOSTS")
 
     # ============= AI Analysis (RF-AI) =============
     # The AI analysis tool is an in-memory orchestrator with no GLPI-side agent
@@ -302,6 +306,9 @@ class Settings(BaseSettings):
         safety = data.get("safety", {})
         if safety.get("webhook_secret"):
             flat["WEBHOOK_SECRET"] = safety["webhook_secret"]
+        if safety.get("webhook_allowed_hosts"):
+            hosts = safety["webhook_allowed_hosts"]
+            flat["WEBHOOK_ALLOWED_HOSTS"] = ",".join(hosts) if isinstance(hosts, list) else hosts
 
         # Seção knowledge_base (busca unificada de KB) — passada inteira.
         if data.get("knowledge_base") is not None:

@@ -680,14 +680,15 @@ async def test_add_document_derives_mime_from_extension():
 
 
 @pytest.mark.asyncio
-async def test_add_document_reads_file_from_disk(tmp_path):
-    target = tmp_path / "relatorio.csv"
-    target.write_bytes(b"col1,col2\n1,2\n")
+async def test_add_document_uses_title_and_reports_size():
     session, client = _upload_mocks()
     with patch("src.services.ticket_service.glpi_client.session", session), \
          patch("src.services.ticket_service.glpi_client.get", AsyncMock(return_value=TICKET)):
         result = await ticket_service.add_ticket_document(
-            42, file_path=str(target), title="Relatorio mensal"
+            42,
+            file_base64=base64.b64encode(b"col1,col2\n1,2\n").decode(),
+            file_name="relatorio.csv",
+            title="Relatorio mensal",
         )
 
     _, body, _ = _parse_upload(client)
@@ -747,9 +748,22 @@ async def test_add_document_rejects_invalid_base64():
 
 
 @pytest.mark.asyncio
-async def test_add_document_rejects_missing_file():
-    with pytest.raises(ValidationError):
-        await ticket_service.add_ticket_document(42, file_path="/nao/existe/arquivo.txt")
+async def test_add_document_never_reads_server_files(tmp_path):
+    """A server-side path must not be accepted: it would leak .env, configs, keys."""
+    secret = tmp_path / ".env"
+    secret.write_text("GLPI_USER_TOKEN=segredo")
+    with pytest.raises(TypeError):
+        await ticket_service.add_ticket_document(42, file_path=str(secret))
+
+
+@pytest.mark.asyncio
+async def test_manage_tickets_does_not_accept_file_path():
+    from src.handlers import MCPHandler
+
+    props = MCPHandler().tools["glpi_manage_ticket_operations"]["input_schema"]["properties"]
+    assert "file_path" not in props
+    with pytest.raises(TypeError):
+        await manage_tickets(action="add_document", ticket_id=42, file_path="/etc/passwd")
 
 
 def test_encode_multipart_wire_format():

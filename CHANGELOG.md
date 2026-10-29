@@ -406,6 +406,23 @@ seven defects of one family — output a reader takes as fact when it is not.
 
 ### Security
 
+- **`add_document` no longer reads files from the server's disk.** `file_path` was an
+  unrestricted server-side path: any caller — or a model steered by text inside a ticket —
+  could attach arbitrary files of the MCP host (including its own configuration and secrets)
+  to a ticket. The parameter is gone; the file now only arrives as `file_base64` +
+  `file_name`, and a call that still sends `file_path` is refused with an error naming it.
+  - `src/services/ticket_service.py`, `src/tools/consolidated_tickets.py`, `src/handlers.py`
+- **Webhooks can no longer exfiltrate tickets or reach internal services.**
+  - The destination host must be listed in `WEBHOOK_ALLOWED_HOSTS` (comma-separated; a
+    `.domain` entry also accepts its subdomains). **Empty means no destination is allowed** —
+    before, the agent could register a webhook that sends every new ticket to a third party.
+  - Destinations resolving to loopback, link-local (cloud metadata), multicast, unspecified or
+    reserved addresses are refused, even when listed. URLs with embedded credentials are refused.
+  - `test` re-validates the stored URL (it may have been set in the GLPI UI), does not follow
+    redirects and no longer returns the response body.
+  - `webhook_id` only accepts letters, digits, `-` and `_`. It is interpolated into the GLPI
+    API path, so path characters could make webhook actions hit other itemtypes.
+  - `src/tools/webhooks.py`, `src/tools/consolidated_webhooks.py`, `src/config/settings.py`
 - **A real person's name replaced by a fictitious one** in the changelog entry, a source
   comment and a test about filtering tickets by a person's name. History is not rewritten.
 - **Client-specific names removed from tests and end-to-end run instructions.**
