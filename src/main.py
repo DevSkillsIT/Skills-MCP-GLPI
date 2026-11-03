@@ -220,7 +220,7 @@ def _credential_refused(mcp_request: MCPRequest, status: int, message: str):
     """Credential gate refusal. Never echoes the values the client sent.
 
     ``tools/call`` gets a tool result with ``isError`` (HTTP 200): behind ContextForge v1.0.11 an
-    HTTP 400 reached the agent as "400 Bad Request for url 'http://172.16.1.24:8828/mcp'", losing
+    HTTP 400 reached the agent as "400 Bad Request for url 'http://10.0.0.5:8828/mcp'", losing
     the reason and exposing the internal URL (measured 28/09/2026). Other methods keep the status.
     """
     from src.handlers import tool_error_result

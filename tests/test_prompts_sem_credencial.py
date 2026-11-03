@@ -85,7 +85,7 @@ async def test_checklist_sem_credencial_devolve_o_modelo(multiempresa, nome):
 
 async def test_com_credencial_roda_o_prompt(monkeypatch):
     monkeypatch.setitem(settings.__dict__, "credencial_por_requisicao", True)
-    session_manager.set_current_tenant("https://suporte.meucomputador.com.br", "APP")
+    session_manager.set_current_tenant("https://glpi.cliente-a.example", "APP")
     session_manager.set_current_user_token("USER")
     real = AsyncMock(return_value={"prompt_name": "glpi_ticket_trends", "compact": "dados reais"})
     with patch("src.prompts_handlers.prompts.prompt_handler.get_prompt", real):

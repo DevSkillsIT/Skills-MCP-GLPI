@@ -10,18 +10,20 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
 
+import src.core.client_registry as client_registry
 import src.main as main_mod
 from src.auth.session_manager import session_manager
 from src.config import settings
 from src.models.exceptions import AuthenticationError
 
 TOKEN_OK = "tok-do-nosso-mcp-0001"
-URL_OK = "https://suporte.meucomputador.com.br"
+URL_OK = "https://glpi.cliente-a.example"
 CRED = {
     "x-glpi-url": URL_OK,
     "x-glpi-app-token": "APP-DO-CLIENTE",
@@ -42,6 +44,9 @@ def modo(monkeypatch):
         monkeypatch.setitem(settings.__dict__, k, v)
     fake = AsyncMock(side_effect=lambda req: {"jsonrpc": "2.0", "id": req.get("id"), "result": {"ok": True}})
     monkeypatch.setattr(main_mod.mcp_handler, "handle_request", fake)
+    # The allowlist comes from the client registry; pin it so the test never reads the host's real file.
+    registro = SimpleNamespace(get_all_clients=lambda: {"cliente-a": {"glpi_url": URL_OK}})
+    monkeypatch.setattr(client_registry, "get_client_registry", lambda: registro)
     return fake
 
 
@@ -64,7 +69,7 @@ def test_tools_call_sem_um_dos_tres_headers_e_recusado(modo, client, falta):
     """Recusa de tools/call vai DENTRO do resultado (isError), com o header que falta.
 
     Um HTTP 400 virava, no ContextForge v1.0.11, "400 Bad Request for url
-    'http://172.16.1.24:8828/mcp'": o agente perdia o motivo e via a URL interna (28/09).
+    'http://10.0.0.5:8828/mcp'": o agente perdia o motivo e via a URL interna (28/09).
     """
     hs = {**bearer(), **{k: v for k, v in CRED.items() if k != falta}}
     r = client.post("/mcp", json=rpc("tools/call", {"name": "glpi_search_admin_resources"}), headers=hs)
